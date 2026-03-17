@@ -87,6 +87,7 @@ struct ReviewComment {
 struct App {
     snapshot: ReviewSnapshot,
     active_file_index: usize,
+    file_explorer_open: bool,
     code_cursor_line: usize,
     code_viewport_top: usize,
     raw_cursor_line: usize,
@@ -104,6 +105,7 @@ impl App {
         let mut app = Self {
             snapshot,
             active_file_index: 0,
+            file_explorer_open: true,
             code_cursor_line: 0,
             code_viewport_top: 0,
             raw_cursor_line: 0,
@@ -164,6 +166,10 @@ impl App {
                 if self.active_file().is_some() {
                     self.input_mode = InputMode::Comment(String::new());
                 }
+            }
+            KeyCode::Char('e') => {
+                self.pending_sequence = PendingSequence::None;
+                self.toggle_file_explorer();
             }
             KeyCode::Tab => {
                 self.pending_sequence = PendingSequence::None;
@@ -572,6 +578,15 @@ impl App {
         }
     }
 
+    fn toggle_file_explorer(&mut self) {
+        self.file_explorer_open = !self.file_explorer_open;
+        if self.file_explorer_open {
+            self.set_status("Explorer opened.");
+        } else {
+            self.set_status("Explorer closed.");
+        }
+    }
+
     fn half_page_step(&self) -> usize {
         (self.viewport_height.max(1) / 2).max(1)
     }
@@ -658,7 +673,7 @@ impl App {
     fn footer_text(&self) -> String {
         match &self.input_mode {
             InputMode::Normal => format!(
-                "{} | {} queued | : commands | i comment | gd/tab toggle | [c/]c change | [f/]f file",
+                "{} | {} queued | e explorer | : commands | i comment | gd/tab toggle | [c/]c change | [f/]f file",
                 self.status_message,
                 self.comments.len()
             ),
@@ -718,46 +733,53 @@ fn restore_terminal(
 fn render(frame: &mut Frame<'_>, app: &mut App) {
     let vertical =
         Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).split(frame.area());
-    let layout = Layout::horizontal([
-        Constraint::Length(32),
-        Constraint::Length(1),
-        Constraint::Min(10),
-    ])
-    .split(vertical[0]);
+    let content_area = if app.file_explorer_open {
+        let layout = Layout::horizontal([
+            Constraint::Length(32),
+            Constraint::Length(1),
+            Constraint::Min(10),
+        ])
+        .split(vertical[0]);
 
-    let mut list_state = ListState::default();
-    list_state.select((!app.snapshot.files.is_empty()).then_some(app.active_file_index));
+        let mut list_state = ListState::default();
+        list_state.select((!app.snapshot.files.is_empty()).then_some(app.active_file_index));
 
-    let file_items = if app.snapshot.files.is_empty() {
-        vec![ListItem::new("No changed files")]
+        let file_items = if app.snapshot.files.is_empty() {
+            vec![ListItem::new("No changed files")]
+        } else {
+            app.snapshot
+                .files
+                .iter()
+                .map(|file| {
+                    let comment_count = app.comment_count_for_file(file.display_path());
+                    let mut label = format!("[{}] {}", file.patch.change, file.display_path());
+                    if comment_count > 0 {
+                        let _ = write!(label, " !{comment_count}");
+                    }
+                    ListItem::new(label)
+                })
+                .collect()
+        };
+        let file_list = List::new(file_items)
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(file_list, layout[0], &mut list_state);
+
+        let separator = vec![
+            Line::styled("│", Style::default().fg(Color::DarkGray));
+            layout[1].height as usize
+        ];
+        frame.render_widget(Paragraph::new(separator), layout[1]);
+        layout[2]
     } else {
-        app.snapshot
-            .files
-            .iter()
-            .map(|file| {
-                let comment_count = app.comment_count_for_file(file.display_path());
-                let mut label = format!("[{}] {}", file.patch.change, file.display_path());
-                if comment_count > 0 {
-                    let _ = write!(label, " !{comment_count}");
-                }
-                ListItem::new(label)
-            })
-            .collect()
+        vertical[0]
     };
-    let file_list = List::new(file_items)
-        .highlight_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("> ");
-    frame.render_stateful_widget(file_list, layout[0], &mut list_state);
 
-    let separator =
-        vec![Line::styled("│", Style::default().fg(Color::DarkGray),); layout[1].height as usize];
-    frame.render_widget(Paragraph::new(separator), layout[1]);
-
-    let content_height = layout[2].height as usize;
+    let content_height = content_area.height as usize;
     app.sync_viewport(content_height.max(1));
 
     let content = match app.active_file() {
@@ -795,7 +817,7 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
     };
 
     let content_view = Paragraph::new(content);
-    frame.render_widget(content_view, layout[2]);
+    frame.render_widget(content_view, content_area);
 
     let footer = Paragraph::new(app.footer_text()).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, vertical[1]);
@@ -1274,5 +1296,16 @@ mod tests {
         assert!(!app.handle_key(key(KeyCode::Char('t'))));
         assert!(!app.handle_key(key(KeyCode::Enter)));
         assert_eq!(app.comments.len(), 1);
+    }
+
+    #[test]
+    fn app_toggles_file_explorer_with_e() {
+        let mut app = App::new(sample_snapshot());
+
+        assert!(app.file_explorer_open);
+        assert!(!app.handle_key(key(KeyCode::Char('e'))));
+        assert!(!app.file_explorer_open);
+        assert!(!app.handle_key(key(KeyCode::Char('e'))));
+        assert!(app.file_explorer_open);
     }
 }
