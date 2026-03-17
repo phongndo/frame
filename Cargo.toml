@@ -1,6 +1,16 @@
 [workspace]
-members = ["crates/frame", "crates/frame-core", "crates/frame-git", "crates/frame-view"]
-default-members = ["crates/frame", "crates/frame-core", "crates/frame-git", "crates/frame-view"]
+members = [
+    "crates/frame",
+    "crates/frame-core",
+    "crates/frame-git",
+    "crates/frame-view",
+]
+default-members = [
+    "crates/frame",
+    "crates/frame-core",
+    "crates/frame-git",
+    "crates/frame-view",
+]
 resolver = "2"
 
 [workspace.package]
