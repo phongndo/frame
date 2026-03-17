@@ -1,16 +1,15 @@
 [package]
-name = "frame"
+name = "frame-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 publish = false
-description = "Placeholder CLI crate for the Frame application."
+description = "Core patch parsing and review-domain types for Frame."
 
 [dependencies]
-frame-git = { version = "0.1.0", path = "../frame-git" }
-frame-view = { version = "0.1.0", path = "../frame-view" }
+thiserror.workspace = true
 
 [lints]
 workspace = true

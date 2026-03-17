@@ -1,14 +1,15 @@
 [package]
-name = "libframe"
+name = "frame-git"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 publish = false
-description = "Placeholder library crate for future reusable diff and review primitives."
+description = "Git-backed snapshot loading for Frame."
 
 [dependencies]
+frame-core = { version = "0.1.0", path = "../frame-core" }
 thiserror.workspace = true
 
 [lints]

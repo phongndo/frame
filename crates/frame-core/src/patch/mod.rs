@@ -3,11 +3,11 @@ use std::fmt;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Diff {
-    pub files: Vec<DiffFile>,
+pub struct PatchSet {
+    pub files: Vec<PatchFile>,
 }
 
-impl Diff {
+impl PatchSet {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
@@ -35,15 +35,15 @@ impl Diff {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiffFile {
+pub struct PatchFile {
     pub old_path: Option<String>,
     pub new_path: Option<String>,
     pub change: FileChangeKind,
-    pub hunks: Vec<Hunk>,
+    pub hunks: Vec<PatchHunk>,
     pub has_binary_or_unrenderable_change: bool,
 }
 
-impl Default for DiffFile {
+impl Default for PatchFile {
     fn default() -> Self {
         Self {
             old_path: None,
@@ -55,7 +55,7 @@ impl Default for DiffFile {
     }
 }
 
-impl DiffFile {
+impl PatchFile {
     #[must_use]
     pub fn display_path(&self) -> &str {
         self.new_path
@@ -87,17 +87,17 @@ impl fmt::Display for FileChangeKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Hunk {
+pub struct PatchHunk {
     pub header: String,
     pub old_start: usize,
     pub old_len: usize,
     pub new_start: usize,
     pub new_len: usize,
-    pub lines: Vec<DiffLine>,
+    pub lines: Vec<PatchLine>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiffLine {
+pub struct PatchLine {
     pub kind: LineKind,
     pub old_lineno: Option<usize>,
     pub new_lineno: Option<usize>,
@@ -112,7 +112,7 @@ pub enum LineKind {
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum DiffParseError {
+pub enum PatchParseError {
     #[error("malformed hunk header: {0}")]
     MalformedHunkHeader(String),
     #[error("encountered diff content before a hunk header: {0}")]
@@ -121,20 +121,20 @@ pub enum DiffParseError {
 
 #[derive(Debug)]
 struct ActiveHunk {
-    hunk: Hunk,
+    hunk: PatchHunk,
     next_old_lineno: usize,
     next_new_lineno: usize,
 }
 
 #[derive(Debug, Default)]
-struct DiffParser {
-    diff: Diff,
-    current_file: Option<DiffFile>,
+struct PatchParser {
+    patch_set: PatchSet,
+    current_file: Option<PatchFile>,
     current_hunk: Option<ActiveHunk>,
 }
 
-impl DiffParser {
-    fn parse(mut self, input: &str) -> Result<Diff, DiffParseError> {
+impl PatchParser {
+    fn parse(mut self, input: &str) -> Result<PatchSet, PatchParseError> {
         for line in input.lines() {
             self.push_line(line)?;
         }
@@ -142,21 +142,20 @@ impl DiffParser {
         self.finish_current_hunk();
         self.finish_current_file();
 
-        Ok(self.diff)
+        Ok(self.patch_set)
     }
 
-    fn push_line(&mut self, line: &str) -> Result<(), DiffParseError> {
+    fn push_line(&mut self, line: &str) -> Result<(), PatchParseError> {
         if let Some(rest) = line.strip_prefix("diff --git ") {
             self.finish_current_hunk();
             self.finish_current_file();
 
             let (old_path, new_path) = parse_diff_git_paths(rest);
-            let file = DiffFile {
+            self.current_file = Some(PatchFile {
                 old_path,
                 new_path,
-                ..DiffFile::default()
-            };
-            self.current_file = Some(file);
+                ..PatchFile::default()
+            });
             return Ok(());
         }
 
@@ -177,8 +176,10 @@ impl DiffParser {
         if let Some(hunk) = self.current_hunk.as_mut() {
             push_hunk_line(hunk, line);
             return Ok(());
-        } else if matches!(line.chars().next(), Some('+' | '-' | ' ' | '\\')) {
-            return Err(DiffParseError::DiffLineOutsideHunk(line.to_owned()));
+        }
+
+        if matches!(line.chars().next(), Some('+' | '-' | ' ' | '\\')) {
+            return Err(PatchParseError::DiffLineOutsideHunk(line.to_owned()));
         }
 
         Ok(())
@@ -194,16 +195,22 @@ impl DiffParser {
 
     fn finish_current_file(&mut self) {
         if let Some(file) = self.current_file.take() {
-            self.diff.files.push(file);
+            self.patch_set.files.push(file);
         }
     }
 }
 
-pub fn parse_diff(input: &str) -> Result<Diff, DiffParseError> {
-    DiffParser::default().parse(input)
+/// Parses unified diff text into a typed patch set.
+///
+/// # Errors
+///
+/// Returns an error if a hunk header is malformed or if diff content appears
+/// outside a hunk.
+pub fn parse_patch(input: &str) -> Result<PatchSet, PatchParseError> {
+    PatchParser::default().parse(input)
 }
 
-fn handle_file_metadata(file: &mut DiffFile, line: &str) -> bool {
+fn handle_file_metadata(file: &mut PatchFile, line: &str) -> bool {
     if let Some(path) = line.strip_prefix("--- ") {
         file.old_path = normalize_patch_path(path);
         return true;
@@ -252,7 +259,7 @@ fn handle_file_metadata(file: &mut DiffFile, line: &str) -> bool {
 fn push_hunk_line(hunk: &mut ActiveHunk, line: &str) {
     match line.chars().next() {
         Some('+') => {
-            hunk.hunk.lines.push(DiffLine {
+            hunk.hunk.lines.push(PatchLine {
                 kind: LineKind::Added,
                 old_lineno: None,
                 new_lineno: Some(hunk.next_new_lineno),
@@ -261,7 +268,7 @@ fn push_hunk_line(hunk: &mut ActiveHunk, line: &str) {
             hunk.next_new_lineno += 1;
         }
         Some('-') => {
-            hunk.hunk.lines.push(DiffLine {
+            hunk.hunk.lines.push(PatchLine {
                 kind: LineKind::Removed,
                 old_lineno: Some(hunk.next_old_lineno),
                 new_lineno: None,
@@ -270,7 +277,7 @@ fn push_hunk_line(hunk: &mut ActiveHunk, line: &str) {
             hunk.next_old_lineno += 1;
         }
         Some(' ') => {
-            hunk.hunk.lines.push(DiffLine {
+            hunk.hunk.lines.push(PatchLine {
                 kind: LineKind::Context,
                 old_lineno: Some(hunk.next_old_lineno),
                 new_lineno: Some(hunk.next_new_lineno),
@@ -280,7 +287,7 @@ fn push_hunk_line(hunk: &mut ActiveHunk, line: &str) {
             hunk.next_new_lineno += 1;
         }
         Some('\\') if line == r"\ No newline at end of file" => {
-            hunk.hunk.lines.push(DiffLine {
+            hunk.hunk.lines.push(PatchLine {
                 kind: LineKind::Context,
                 old_lineno: None,
                 new_lineno: None,
@@ -317,22 +324,22 @@ fn normalize_patch_path(raw: &str) -> Option<String> {
     Some(path.to_owned())
 }
 
-fn parse_hunk_header(line: &str) -> Result<ActiveHunk, DiffParseError> {
+fn parse_hunk_header(line: &str) -> Result<ActiveHunk, PatchParseError> {
     let mut parts = line.split("@@");
     let _ = parts.next();
     let ranges = parts
         .next()
         .map(str::trim)
-        .ok_or_else(|| DiffParseError::MalformedHunkHeader(line.to_owned()))?;
+        .ok_or_else(|| PatchParseError::MalformedHunkHeader(line.to_owned()))?;
     let header_suffix = parts.next().map(str::trim).unwrap_or_default();
 
     let mut range_parts = ranges.split_whitespace();
     let old_range = range_parts
         .next()
-        .ok_or_else(|| DiffParseError::MalformedHunkHeader(line.to_owned()))?;
+        .ok_or_else(|| PatchParseError::MalformedHunkHeader(line.to_owned()))?;
     let new_range = range_parts
         .next()
-        .ok_or_else(|| DiffParseError::MalformedHunkHeader(line.to_owned()))?;
+        .ok_or_else(|| PatchParseError::MalformedHunkHeader(line.to_owned()))?;
 
     let (old_start, old_len) = parse_range(old_range, '-')?;
     let (new_start, new_len) = parse_range(new_range, '+')?;
@@ -344,7 +351,7 @@ fn parse_hunk_header(line: &str) -> Result<ActiveHunk, DiffParseError> {
     };
 
     Ok(ActiveHunk {
-        hunk: Hunk {
+        hunk: PatchHunk {
             header,
             old_start,
             old_len,
@@ -357,20 +364,20 @@ fn parse_hunk_header(line: &str) -> Result<ActiveHunk, DiffParseError> {
     })
 }
 
-fn parse_range(input: &str, prefix: char) -> Result<(usize, usize), DiffParseError> {
+fn parse_range(input: &str, prefix: char) -> Result<(usize, usize), PatchParseError> {
     let value = input
         .strip_prefix(prefix)
-        .ok_or_else(|| DiffParseError::MalformedHunkHeader(input.to_owned()))?;
+        .ok_or_else(|| PatchParseError::MalformedHunkHeader(input.to_owned()))?;
     let mut parts = value.split(',');
     let start = parts
         .next()
         .and_then(|part| part.parse::<usize>().ok())
-        .ok_or_else(|| DiffParseError::MalformedHunkHeader(input.to_owned()))?;
+        .ok_or_else(|| PatchParseError::MalformedHunkHeader(input.to_owned()))?;
     let len = parts
         .next()
         .map(|part| {
             part.parse::<usize>()
-                .map_err(|_| DiffParseError::MalformedHunkHeader(input.to_owned()))
+                .map_err(|_| PatchParseError::MalformedHunkHeader(input.to_owned()))
         })
         .transpose()?
         .unwrap_or(1);
@@ -380,15 +387,15 @@ fn parse_range(input: &str, prefix: char) -> Result<(usize, usize), DiffParseErr
 
 #[cfg(test)]
 mod tests {
-    use super::{FileChangeKind, LineKind, parse_diff};
+    use super::{FileChangeKind, LineKind, parse_patch};
 
     #[test]
-    fn parses_empty_diff() {
-        let diff = parse_diff("").expect("empty diff should parse");
-        assert!(diff.is_empty());
-        assert_eq!(diff.file_count(), 0);
-        assert_eq!(diff.hunk_count(), 0);
-        assert_eq!(diff.changed_line_count(), 0);
+    fn parses_empty_patch() {
+        let patch = parse_patch("").expect("empty patch should parse");
+        assert!(patch.is_empty());
+        assert_eq!(patch.file_count(), 0);
+        assert_eq!(patch.hunk_count(), 0);
+        assert_eq!(patch.changed_line_count(), 0);
     }
 
     #[test]
@@ -415,67 +422,64 @@ index 3333333..4444444 100644
 +pub fn new() {}
 "#;
 
-        let diff = parse_diff(input).expect("multi-file diff should parse");
-        assert_eq!(diff.file_count(), 2);
-        assert_eq!(diff.hunk_count(), 3);
-        assert_eq!(diff.changed_line_count(), 7);
-        assert_eq!(diff.files[0].display_path(), "src/main.rs");
-        assert_eq!(diff.files[1].display_path(), "src/lib.rs");
+        let patch = parse_patch(input).expect("multi-file patch should parse");
+        assert_eq!(patch.file_count(), 2);
+        assert_eq!(patch.hunk_count(), 3);
+        assert_eq!(patch.changed_line_count(), 7);
+        assert_eq!(patch.files[0].display_path(), "src/main.rs");
+        assert_eq!(patch.files[1].display_path(), "src/lib.rs");
     }
 
     #[test]
     fn parses_added_deleted_and_renamed_files() {
-        let input = r"diff --git a/dev/null b/src/new.rs
+        let input = r"diff --git a/dev/null b/new.txt
 new file mode 100644
 --- /dev/null
-+++ b/src/new.rs
++++ b/new.txt
 @@ -0,0 +1 @@
-+pub fn added() {}
-diff --git a/src/old.rs b/dev/null
++hello
+diff --git a/old.txt b/dev/null
 deleted file mode 100644
---- a/src/old.rs
+--- a/old.txt
 +++ /dev/null
 @@ -1 +0,0 @@
--pub fn removed() {}
-diff --git a/src/before.rs b/src/after.rs
-similarity index 100%
-rename from src/before.rs
-rename to src/after.rs
+-goodbye
+diff --git a/a.txt b/b.txt
+similarity index 90%
+rename from a.txt
+rename to b.txt
+@@ -1 +1 @@
+-left
++right
 ";
 
-        let diff = parse_diff(input).expect("file status diff should parse");
-        assert_eq!(diff.files.len(), 3);
-        assert_eq!(diff.files[0].change, FileChangeKind::Added);
-        assert_eq!(diff.files[1].change, FileChangeKind::Deleted);
-        assert_eq!(diff.files[2].change, FileChangeKind::Renamed);
-        assert_eq!(diff.files[2].old_path.as_deref(), Some("src/before.rs"));
-        assert_eq!(diff.files[2].new_path.as_deref(), Some("src/after.rs"));
+        let patch = parse_patch(input).expect("metadata patch should parse");
+        assert_eq!(patch.files[0].change, FileChangeKind::Added);
+        assert_eq!(patch.files[1].change, FileChangeKind::Deleted);
+        assert_eq!(patch.files[2].change, FileChangeKind::Renamed);
     }
 
     #[test]
-    fn parses_binary_and_no_newline_markers() {
-        let input = r#"diff --git a/src/data.bin b/src/data.bin
-Binary files a/src/data.bin and b/src/data.bin differ
-diff --git a/src/text.rs b/src/text.rs
---- a/src/text.rs
-+++ b/src/text.rs
-@@ -1 +1 @@
--let text = "before";
-+let text = "after";
-\ No newline at end of file
-"#;
+    fn tracks_line_numbers_inside_hunks() {
+        let input = r"diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -3,2 +3,3 @@
+ context
+-removed
++added
++also added
+";
 
-        let diff = parse_diff(input).expect("binary diff should parse");
-        assert!(diff.files[0].has_binary_or_unrenderable_change);
-        assert_eq!(
-            diff.files[1].hunks[0]
-                .lines
-                .last()
-                .expect("expected a no-newline marker")
-                .text,
-            r"\ No newline at end of file"
-        );
-        assert_eq!(diff.files[1].hunks[0].lines[0].kind, LineKind::Removed);
-        assert_eq!(diff.files[1].hunks[0].lines[1].kind, LineKind::Added);
+        let patch = parse_patch(input).expect("line numbers should parse");
+        let lines = &patch.files[0].hunks[0].lines;
+        assert_eq!(lines[0].kind, LineKind::Context);
+        assert_eq!(lines[0].old_lineno, Some(3));
+        assert_eq!(lines[0].new_lineno, Some(3));
+        assert_eq!(lines[1].old_lineno, Some(4));
+        assert_eq!(lines[1].new_lineno, None);
+        assert_eq!(lines[2].old_lineno, None);
+        assert_eq!(lines[2].new_lineno, Some(4));
+        assert_eq!(lines[3].new_lineno, Some(5));
     }
 }

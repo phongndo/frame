@@ -368,15 +368,30 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 name = "frame"
 version = "0.1.0"
 dependencies = [
+ "frame-git",
  "frame-view",
- "libframe",
+]
+
+[[package]]
+name = "frame-core"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "frame-git"
+version = "0.1.0"
+dependencies = [
+ "frame-core",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "frame-view"
 version = "0.1.0"
 dependencies = [
- "libframe",
+ "frame-core",
  "ratatui",
  "thiserror 2.0.18",
 ]
@@ -553,13 +568,6 @@ name = "libc"
 version = "0.2.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
-
-[[package]]
-name = "libframe"
-version = "0.1.0"
-dependencies = [
- "thiserror 2.0.18",
-]
 
 [[package]]
 name = "line-clipping"

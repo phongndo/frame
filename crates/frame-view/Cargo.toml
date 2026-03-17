@@ -9,7 +9,7 @@ publish = false
 description = "Read-only TUI viewer for Frame diffs."
 
 [dependencies]
-libframe = { version = "0.1.0", path = "../libframe" }
+frame-core = { version = "0.1.0", path = "../frame-core" }
 ratatui.workspace = true
 thiserror.workspace = true
 
