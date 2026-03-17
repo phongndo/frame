@@ -678,12 +678,24 @@ impl App {
         }
 
         for _ in 0..count {
-            let Some(next_chunk) = self
-                .code_cursor_chunk
-                .and_then(|index| index.checked_sub(1))
-            else {
+            let Some((next_line, next_chunk)) = self.active_file().and_then(|file| {
+                if let Some(current) = self.code_cursor_chunk {
+                    if let Some(previous) = current.checked_sub(1) {
+                        return Some((self.code_cursor_line, previous));
+                    }
+                } else if let Some(last) = file.chunks.last_chunk_index(self.code_cursor_line) {
+                    return Some((self.code_cursor_line, last));
+                }
+
+                (0..self.code_cursor_line).rev().find_map(|line| {
+                    file.chunks
+                        .last_chunk_index(line)
+                        .map(|chunk| (line, chunk))
+                })
+            }) else {
                 break;
             };
+            self.code_cursor_line = next_line;
             self.code_cursor_chunk = Some(next_chunk);
         }
         self.refresh_preferred_display_col();
@@ -695,15 +707,25 @@ impl App {
         }
 
         for _ in 0..count {
-            let Some(next_chunk) = self.active_file().and_then(|file| {
-                let current = self
-                    .code_cursor_chunk
-                    .or_else(|| file.chunks.first_chunk_index(self.code_cursor_line))?;
-                let last = file.chunks.last_chunk_index(self.code_cursor_line)?;
-                (current < last).then_some(current + 1)
+            let Some((next_line, next_chunk)) = self.active_file().and_then(|file| {
+                if let Some(current) = self.code_cursor_chunk {
+                    let last = file.chunks.last_chunk_index(self.code_cursor_line)?;
+                    if current < last {
+                        return Some((self.code_cursor_line, current + 1));
+                    }
+                } else if let Some(first) = file.chunks.first_chunk_index(self.code_cursor_line) {
+                    return Some((self.code_cursor_line, first));
+                }
+
+                ((self.code_cursor_line + 1)..file.buffer.line_count()).find_map(|line| {
+                    file.chunks
+                        .first_chunk_index(line)
+                        .map(|chunk| (line, chunk))
+                })
             }) else {
                 break;
             };
+            self.code_cursor_line = next_line;
             self.code_cursor_chunk = Some(next_chunk);
         }
         self.refresh_preferred_display_col();
@@ -2372,6 +2394,45 @@ mod tests {
     }
 
     #[test]
+    fn l_wraps_to_next_line_when_reaching_end_of_line() {
+        let mut app = App::new(sample_snapshot());
+
+        app.code_cursor_line = 0;
+        app.set_code_cursor_to_last_chunk(0);
+
+        assert!(!app.handle_key(key(KeyCode::Char('l'))));
+        assert_eq!(app.code_cursor_line, 1);
+        assert_eq!(app.code_cursor_chunk, Some(0));
+    }
+
+    #[test]
+    fn h_wraps_to_previous_line_when_reaching_start_of_line() {
+        let mut app = App::new(sample_snapshot());
+
+        assert_eq!(app.code_cursor_line, 1);
+        assert_eq!(app.code_cursor_chunk, Some(0));
+
+        assert!(!app.handle_key(key(KeyCode::Char('h'))));
+        assert_eq!(app.code_cursor_line, 0);
+        assert_eq!(
+            app.code_cursor_chunk,
+            app.snapshot.files[0].chunks.last_chunk_index(0)
+        );
+    }
+
+    #[test]
+    fn l_skips_lines_without_chunks_when_wrapping() {
+        let mut app = App::new(sample_snapshot());
+
+        app.code_cursor_line = 2;
+        app.set_code_cursor_to_last_chunk(2);
+
+        assert!(!app.handle_key(key(KeyCode::Char('l'))));
+        assert_eq!(app.code_cursor_line, 6);
+        assert_eq!(app.code_cursor_chunk, Some(0));
+    }
+
+    #[test]
     fn count_prefix_moves_multiple_chunks() {
         let mut app = App::new(sample_snapshot());
 
@@ -2388,18 +2449,30 @@ mod tests {
     }
 
     #[test]
-    fn l_is_noop_on_single_chunk_line() {
+    fn l_is_noop_when_no_next_chunk_exists() {
         let mut app = App::new(sample_snapshot());
 
-        assert_eq!(app.code_cursor_line, 1);
-        assert!(
-            app.snapshot.files[0]
-                .chunks
-                .line(1)
-                .is_some_and(|line| line.chunks.len() == 1)
-        );
+        app.code_cursor_line = 7;
+        app.set_code_cursor_to_last_chunk(7);
+
+        assert_eq!(app.code_cursor_line, 7);
         assert_eq!(app.code_cursor_chunk, Some(0));
         assert!(!app.handle_key(key(KeyCode::Char('l'))));
+        assert_eq!(app.code_cursor_line, 7);
+        assert_eq!(app.code_cursor_chunk, Some(0));
+    }
+
+    #[test]
+    fn h_is_noop_when_no_previous_chunk_exists() {
+        let mut app = App::new(sample_snapshot());
+
+        app.code_cursor_line = 0;
+        app.set_code_cursor_to_first_chunk(0);
+
+        assert_eq!(app.code_cursor_line, 0);
+        assert_eq!(app.code_cursor_chunk, Some(0));
+        assert!(!app.handle_key(key(KeyCode::Char('h'))));
+        assert_eq!(app.code_cursor_line, 0);
         assert_eq!(app.code_cursor_chunk, Some(0));
     }
 

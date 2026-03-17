@@ -50,7 +50,7 @@ Examples:
 semantic rather than character-column-based, which fits a read-only review IDE
 better and creates a cleaner path for future LSP operations.
 
-- [x] `h` / `l`: move left and right across semantic chunks within a line
+- [x] `h` / `l`: move left and right across semantic chunks, wrapping to the previous or next line when needed
 - [x] `0`: jump to the first chunk on the line
 - [x] `^`: jump to the first non-blank chunk on the line
 - [x] `$`: jump to the last chunk on the line
