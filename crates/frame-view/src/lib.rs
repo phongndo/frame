@@ -1682,6 +1682,11 @@ fn raw_row_for_buffer_line(file: &ReviewFile, buffer_line: usize) -> usize {
                 relevant_raw_lineno(file, row).is_some_and(|lineno| lineno > target_lineno)
             })
         })
+        .or_else(|| {
+            rows.iter().rposition(|row| {
+                relevant_raw_lineno(file, row).is_some_and(|lineno| lineno < target_lineno)
+            })
+        })
         .unwrap_or(0)
 }
 
@@ -2185,7 +2190,8 @@ mod tests {
 
     use super::{
         App, CodeRowKind, CommentTarget, InputMode, MotionMode, RawRowKind, ViewMode, code_rows,
-        comment_box_lines, raw_row_to_text, raw_rows, rendered_code_view,
+        comment_box_lines, raw_row_for_buffer_line, raw_row_to_text, raw_rows, relevant_raw_lineno,
+        rendered_code_view,
     };
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -2441,6 +2447,23 @@ mod tests {
             Some(CommentTarget::ChunkSpan(span))
                 if span.start == cursor_chunk.start && span.end == anchor_chunk.end
         ));
+    }
+
+    #[test]
+    fn raw_diff_cursor_stays_near_trailing_unchanged_lines() {
+        let sample = sample_main_file();
+        let file = ReviewFile::new(ReviewFileInput {
+            patch: sample.patch,
+            buffer: frame_core::CodeBuffer::from_text(
+                "fn main() {\n    new();\n    extra();\n}\n\n\nfn later() {\n    other();\n}\nfn tail() {}\n",
+            ),
+            source: BufferSource::PostImage,
+        });
+
+        let row_index = raw_row_for_buffer_line(&file, 9);
+        let rows = raw_rows(&file);
+
+        assert_eq!(relevant_raw_lineno(&file, &rows[row_index]), Some(9));
     }
 
     #[test]
