@@ -36,4 +36,9 @@ impl CodeBuffer {
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }
+
+    #[must_use]
+    pub fn to_source(&self) -> String {
+        self.lines.join("\n")
+    }
 }

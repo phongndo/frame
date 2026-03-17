@@ -1,6 +1,8 @@
 use std::{collections::BTreeMap, fmt::Write as _, io, time::Duration};
 
-use frame_core::{BufferSource, ChangeKind, ReviewFile, ReviewSnapshot};
+use frame_core::{
+    BufferSource, ChangeKind, HighlightStyleKey, HighlightedLine, ReviewFile, ReviewSnapshot,
+};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -11,7 +13,7 @@ use ratatui::{
     },
     layout::{Constraint, Layout},
     style::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{List, ListItem, ListState, Paragraph},
 };
 use thiserror::Error;
@@ -1082,10 +1084,12 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
             cursor_visual_row = lines.len();
         }
         let row_buffer_line = row.buffer_line;
+        let highlighted_line = row_buffer_line.and_then(|line| file.highlighted_line(line));
         lines.push(code_row_to_text(
             is_selected,
             in_selection,
             has_comment,
+            highlighted_line,
             &row,
         ));
 
@@ -1355,41 +1359,9 @@ fn code_row_to_text(
     is_selected: bool,
     in_selection: bool,
     has_comment: bool,
+    highlighted_line: Option<&HighlightedLine>,
     row: &CodeRenderRow,
 ) -> Line<'static> {
-    let base_style = match row.kind {
-        CodeRowKind::Buffer => match row.change {
-            Some(ChangeKind::Added) => Style::default().fg(Color::Green),
-            Some(ChangeKind::Modified) => Style::default().fg(Color::Yellow),
-            Some(ChangeKind::Deleted) => Style::default().fg(Color::Red),
-            None => Style::default().fg(Color::Gray),
-        },
-        CodeRowKind::VirtualDeleted => Style::default()
-            .fg(Color::Red)
-            .add_modifier(Modifier::ITALIC),
-        CodeRowKind::Banner => Style::default()
-            .fg(Color::Magenta)
-            .add_modifier(Modifier::ITALIC),
-    };
-
-    let style = {
-        let style = if in_selection {
-            base_style.bg(Color::DarkGray)
-        } else {
-            base_style
-        };
-        let style = if has_comment {
-            style.add_modifier(Modifier::BOLD)
-        } else {
-            style
-        };
-        if is_selected {
-            style.add_modifier(Modifier::REVERSED)
-        } else {
-            style
-        }
-    };
-
     let change_marker = match row.kind {
         CodeRowKind::VirtualDeleted => '-',
         CodeRowKind::Banner => '!',
@@ -1401,15 +1373,197 @@ fn code_row_to_text(
         },
     };
     let comment_marker = if has_comment { '!' } else { ' ' };
-    let text = format!(
-        "{:>4} {}{} {}",
+    let prefix = format!(
+        "{:>4} {}{} ",
         format_lineno(row.lineno),
         change_marker,
         comment_marker,
-        row.text
     );
+    let prefix_style = prefix_style(row, in_selection, has_comment, is_selected);
+    let text_style = text_style(row, in_selection, has_comment, is_selected);
 
-    Line::styled(text, style)
+    let mut spans = vec![Span::styled(prefix, prefix_style)];
+    match row.kind {
+        CodeRowKind::Buffer => spans.extend(highlighted_text_spans(
+            &row.text,
+            highlighted_line,
+            text_style,
+        )),
+        CodeRowKind::VirtualDeleted | CodeRowKind::Banner => {
+            spans.push(Span::styled(row.text.clone(), text_style));
+        }
+    }
+
+    Line::from(spans)
+}
+
+fn prefix_style(
+    row: &CodeRenderRow,
+    in_selection: bool,
+    has_comment: bool,
+    is_selected: bool,
+) -> Style {
+    let accent = match row.kind {
+        CodeRowKind::Buffer => match row.change {
+            Some(ChangeKind::Added) => Color::Green,
+            Some(ChangeKind::Modified) => Color::Yellow,
+            Some(ChangeKind::Deleted) => Color::Red,
+            None => Color::DarkGray,
+        },
+        CodeRowKind::VirtualDeleted => Color::Red,
+        CodeRowKind::Banner => Color::Magenta,
+    };
+
+    apply_row_emphasis(
+        Style::default().fg(accent),
+        row.change,
+        in_selection,
+        has_comment,
+        is_selected,
+    )
+}
+
+fn text_style(
+    row: &CodeRenderRow,
+    in_selection: bool,
+    has_comment: bool,
+    is_selected: bool,
+) -> Style {
+    let base = match row.kind {
+        CodeRowKind::Buffer => Style::default().fg(Color::Gray),
+        CodeRowKind::VirtualDeleted => Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::ITALIC),
+        CodeRowKind::Banner => Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::ITALIC),
+    };
+
+    apply_row_emphasis(base, row.change, in_selection, has_comment, is_selected)
+}
+
+fn apply_row_emphasis(
+    mut style: Style,
+    change: Option<ChangeKind>,
+    in_selection: bool,
+    has_comment: bool,
+    is_selected: bool,
+) -> Style {
+    if let Some(color) = overlay_background(change) {
+        style = style.bg(color);
+    }
+
+    if in_selection {
+        style = style.bg(Color::DarkGray);
+    }
+
+    if has_comment {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+
+    if is_selected {
+        style = style.add_modifier(Modifier::REVERSED);
+    }
+
+    style
+}
+
+fn overlay_background(change: Option<ChangeKind>) -> Option<Color> {
+    match change {
+        Some(ChangeKind::Added) => Some(Color::Rgb(12, 32, 20)),
+        Some(ChangeKind::Modified) => Some(Color::Rgb(38, 34, 12)),
+        Some(ChangeKind::Deleted) => Some(Color::Rgb(42, 18, 18)),
+        None => None,
+    }
+}
+
+fn highlighted_text_spans(
+    text: &str,
+    highlighted_line: Option<&HighlightedLine>,
+    base_style: Style,
+) -> Vec<Span<'static>> {
+    let Some(highlighted_line) = highlighted_line else {
+        return vec![Span::styled(text.to_owned(), base_style)];
+    };
+
+    let mut spans = Vec::new();
+    let mut cursor = 0usize;
+
+    for span in &highlighted_line.spans {
+        let start = span.start_byte.min(text.len());
+        let end = span.end_byte.min(text.len());
+
+        if start > cursor {
+            spans.push(Span::styled(text[cursor..start].to_owned(), base_style));
+        }
+
+        if start < end {
+            spans.push(Span::styled(
+                text[start..end].to_owned(),
+                base_style.patch(syntax_style(span.style)),
+            ));
+            cursor = end;
+        }
+    }
+
+    if cursor < text.len() {
+        spans.push(Span::styled(text[cursor..].to_owned(), base_style));
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::styled(String::new(), base_style));
+    }
+
+    spans
+}
+
+fn syntax_style(style: HighlightStyleKey) -> Style {
+    match style {
+        HighlightStyleKey::Attribute
+        | HighlightStyleKey::PunctuationSpecial
+        | HighlightStyleKey::Type
+        | HighlightStyleKey::TypeBuiltin => Style::default().fg(Color::LightCyan),
+        HighlightStyleKey::Comment => Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+        HighlightStyleKey::Constant | HighlightStyleKey::ConstantBuiltin => {
+            Style::default().fg(Color::LightRed)
+        }
+        HighlightStyleKey::Constructor => Style::default().fg(Color::LightYellow),
+        HighlightStyleKey::Embedded | HighlightStyleKey::Keyword => {
+            Style::default().fg(Color::LightMagenta)
+        }
+        HighlightStyleKey::Function
+        | HighlightStyleKey::FunctionBuiltin
+        | HighlightStyleKey::Tag
+        | HighlightStyleKey::TextReference
+        | HighlightStyleKey::TextUri => Style::default().fg(Color::LightBlue),
+        HighlightStyleKey::Module => Style::default().fg(Color::Cyan),
+        HighlightStyleKey::Number => Style::default().fg(Color::LightRed),
+        HighlightStyleKey::Operator
+        | HighlightStyleKey::Variable
+        | HighlightStyleKey::VariableBuiltin
+        | HighlightStyleKey::VariableParameter => Style::default().fg(Color::White),
+        HighlightStyleKey::Property | HighlightStyleKey::PropertyBuiltin => {
+            Style::default().fg(Color::Cyan)
+        }
+        HighlightStyleKey::Punctuation
+        | HighlightStyleKey::PunctuationBracket
+        | HighlightStyleKey::PunctuationDelimiter => Style::default().fg(Color::Gray),
+        HighlightStyleKey::String
+        | HighlightStyleKey::StringEscape
+        | HighlightStyleKey::StringSpecial
+        | HighlightStyleKey::TextLiteral => Style::default().fg(Color::LightGreen),
+        HighlightStyleKey::TextEmphasis => Style::default()
+            .fg(Color::LightYellow)
+            .add_modifier(Modifier::ITALIC),
+        HighlightStyleKey::TextStrong => Style::default()
+            .fg(Color::LightYellow)
+            .add_modifier(Modifier::BOLD),
+        HighlightStyleKey::TextTitle => Style::default()
+            .fg(Color::LightMagenta)
+            .add_modifier(Modifier::BOLD),
+    }
 }
 
 fn raw_row_to_text(is_selected: bool, row: &RawRenderRow) -> Line<'static> {
@@ -1723,5 +1877,24 @@ mod tests {
 
         assert!(lines.iter().any(|line| line.starts_with('┌')));
         assert!(lines.iter().any(|line| line.contains("Keep this visible")));
+    }
+
+    #[test]
+    fn rendered_code_view_keeps_code_prefix_and_syntax_spans_separate() {
+        let app = App::new(sample_snapshot());
+        let rendered = rendered_code_view(&app, &app.snapshot.files[0], 80);
+        let first_line = rendered.lines.first().expect("first line exists");
+
+        assert!(first_line.spans.len() > 1);
+        assert_eq!(first_line.spans[0].content.as_ref(), "   1    ");
+        assert_eq!(
+            first_line
+                .spans
+                .iter()
+                .skip(1)
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "fn main() {"
+        );
     }
 }

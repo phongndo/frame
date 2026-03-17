@@ -10,6 +10,11 @@ description = "Core patch parsing and review-domain types for Frame."
 
 [dependencies]
 thiserror.workspace = true
+tree-sitter.workspace = true
+tree-sitter-highlight.workspace = true
+tree-sitter-md.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-toml-ng.workspace = true
 
 [lints]
 workspace = true

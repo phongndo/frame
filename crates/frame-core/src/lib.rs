@@ -8,6 +8,7 @@ derives editor-like buffers and change overlays for the TUI to render.
 
 pub mod patch;
 pub mod review;
+pub mod syntax;
 
 pub use patch::{
     FileChangeKind, LineKind, PatchFile, PatchHunk, PatchLine, PatchParseError, PatchSet,
@@ -17,3 +18,4 @@ pub use review::{
     BufferSource, ChangeAnchor, ChangeKind, CodeBuffer, DeletedLine, OverlaySpan, ReviewFile,
     ReviewFileInput, ReviewSnapshot,
 };
+pub use syntax::{HighlightSpan, HighlightStyleKey, HighlightedFile, HighlightedLine, LanguageId};

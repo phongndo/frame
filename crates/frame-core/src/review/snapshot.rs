@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 
-use crate::{PatchFile, review::overlay::derive_review_data};
+use crate::{
+    PatchFile,
+    review::overlay::derive_review_data,
+    syntax::{HighlightedFile, LanguageId, highlight_buffer},
+};
 
 use super::{ChangeAnchor, CodeBuffer, DeletedLine, OverlaySpan};
 
@@ -36,6 +40,8 @@ pub struct ReviewFile {
     pub patch: PatchFile,
     pub buffer: CodeBuffer,
     pub source: BufferSource,
+    pub language: Option<LanguageId>,
+    pub highlights: Option<HighlightedFile>,
     pub overlays: Vec<OverlaySpan>,
     pub deleted_lines: Vec<DeletedLine>,
     pub anchors: Vec<ChangeAnchor>,
@@ -45,11 +51,17 @@ impl ReviewFile {
     #[must_use]
     pub fn new(input: ReviewFileInput) -> Self {
         let derived = derive_review_data(&input.patch, &input.buffer, input.source);
+        let language = (!matches!(input.source, BufferSource::Placeholder))
+            .then(|| LanguageId::detect(input.patch.display_path()))
+            .flatten();
+        let highlights = language.and_then(|language| highlight_buffer(language, &input.buffer));
 
         Self {
             patch: input.patch,
             buffer: input.buffer,
             source: input.source,
+            language,
+            highlights,
             overlays: derived.overlays,
             deleted_lines: derived.deleted_lines,
             anchors: derived.anchors,
@@ -67,6 +79,11 @@ impl ReviewFile {
             .iter()
             .find(|overlay| overlay.start_line <= line_index && line_index <= overlay.end_line)
             .map(|overlay| overlay.kind)
+    }
+
+    #[must_use]
+    pub fn highlighted_line(&self, line_index: usize) -> Option<&crate::HighlightedLine> {
+        self.highlights.as_ref()?.line(line_index)
     }
 }
 
@@ -127,6 +144,8 @@ mod tests {
         assert_eq!(file.overlays[0].kind, ChangeKind::Modified);
         assert_eq!(file.overlays[0].start_line, 1);
         assert_eq!(file.overlays[0].end_line, 1);
+        assert_eq!(file.language, Some(crate::LanguageId::Rust));
+        assert!(file.highlights.is_some());
         assert_eq!(file.deleted_lines.len(), 1);
         assert_eq!(file.deleted_lines[0].anchor_line, 1);
         assert_eq!(file.anchors[0].buffer_line, 1);
@@ -168,6 +187,7 @@ mod tests {
 
         assert_eq!(file.overlays.len(), 1);
         assert_eq!(file.overlays[0].kind, ChangeKind::Deleted);
+        assert_eq!(file.language, None);
         assert!(file.deleted_lines.is_empty());
         assert_eq!(file.anchors[0].buffer_line, 0);
     }
