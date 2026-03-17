@@ -5,7 +5,7 @@ use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
     crossterm::{
-        event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+        event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
         execute,
         terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
     },
@@ -58,6 +58,7 @@ struct App {
     hunk_targets: Vec<usize>,
     cursor_line: usize,
     viewport_top: usize,
+    viewport_height: usize,
     pending_sequence: PendingSequence,
 }
 
@@ -109,6 +110,7 @@ impl App {
             hunk_targets,
             cursor_line: 0,
             viewport_top: 0,
+            viewport_height: 1,
             pending_sequence: PendingSequence::None,
         }
     }
@@ -116,6 +118,18 @@ impl App {
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         let should_process = matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat);
         if !should_process {
+            return false;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.pending_sequence = PendingSequence::None;
+
+            match key.code {
+                KeyCode::Char('d') => self.move_half_page_down(),
+                KeyCode::Char('u') => self.move_half_page_up(),
+                _ => {}
+            }
+
             return false;
         }
 
@@ -188,6 +202,24 @@ impl App {
         self.cursor_line = self.rendered_lines.len().saturating_sub(1);
     }
 
+    fn move_half_page_down(&mut self) {
+        let step = self.half_page_step();
+        let max_index = self.rendered_lines.len().saturating_sub(1);
+        let max_top = self
+            .rendered_lines
+            .len()
+            .saturating_sub(self.viewport_height.max(1));
+
+        self.cursor_line = (self.cursor_line + step).min(max_index);
+        self.viewport_top = (self.viewport_top + step).min(max_top);
+    }
+
+    fn move_half_page_up(&mut self) {
+        let step = self.half_page_step();
+        self.cursor_line = self.cursor_line.saturating_sub(step);
+        self.viewport_top = self.viewport_top.saturating_sub(step);
+    }
+
     fn jump_next_hunk(&mut self) {
         if let Some(target) = next_target(&self.hunk_targets, self.cursor_line) {
             self.jump_to(target);
@@ -217,7 +249,13 @@ impl App {
         self.viewport_top = target;
     }
 
+    fn half_page_step(&self) -> usize {
+        (self.viewport_height.max(1) / 2).max(1)
+    }
+
     fn sync_viewport(&mut self, height: usize) {
+        self.viewport_height = height.max(1);
+
         if self.cursor_line < self.viewport_top {
             self.viewport_top = self.cursor_line;
             return;
@@ -551,6 +589,24 @@ mod tests {
         app.jump_next_file();
         assert_eq!(app.cursor_line, 7);
         assert_eq!(app.viewport_top, 7);
+    }
+
+    #[test]
+    fn half_page_navigation_moves_cursor_and_viewport() {
+        let mut app = App::new(sample_diff());
+        app.viewport_height = 4;
+
+        app.move_half_page_down();
+        assert_eq!(app.cursor_line, 2);
+        assert_eq!(app.viewport_top, 2);
+
+        app.move_half_page_down();
+        assert_eq!(app.cursor_line, 4);
+        assert_eq!(app.viewport_top, 4);
+
+        app.move_half_page_up();
+        assert_eq!(app.cursor_line, 2);
+        assert_eq!(app.viewport_top, 2);
     }
 
     #[test]

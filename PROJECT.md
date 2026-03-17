@@ -90,6 +90,8 @@ Because context is continuous:
 ### Reorientation Movements
 
 ```id="nav_reorient"
+ctrl-d / ctrl-u
+             half-page down/up
 ]c / [c      next/prev change
 ]f / [f      next/prev changed file
 gg / G       start/end
@@ -203,6 +205,8 @@ Navigation:
 
 ```id="nav_basic"
 j / k        move
+ctrl-d / ctrl-u
+             half-page down/up
 ]c / [c      next/prev change
 ]f / [f      next/prev file
 gg / G       top/bottom
@@ -323,6 +327,8 @@ C → commit
 
 ```id="keymap"
 j / k        move
+ctrl-d / ctrl-u
+             half-page down/up
 ]c / [c      next/prev change
 ]f / [f      next/prev file
 
