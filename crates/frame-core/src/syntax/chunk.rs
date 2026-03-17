@@ -180,6 +180,11 @@ fn parser_chunks(language: LanguageId, buffer: &CodeBuffer) -> Option<ChunkedFil
     parser.set_language(&language_for(language)).ok()?;
     let tree = parser.parse(source.as_str(), None)?;
     let mut chunked = ChunkedFile::empty(buffer.line_count());
+    let display_col_lookups = buffer
+        .lines()
+        .iter()
+        .map(|line| display_col_lookup(line, DEFAULT_TAB_SIZE))
+        .collect::<Vec<_>>();
     let mut leaves = Vec::new();
 
     collect_leaf_nodes(tree.root_node(), &mut leaves);
@@ -198,6 +203,7 @@ fn parser_chunks(language: LanguageId, buffer: &CodeBuffer) -> Option<ChunkedFil
         push_node_segments(
             &mut chunked,
             buffer,
+            &display_col_lookups,
             NodeSegmentSpec {
                 start_line: range.start_point.row,
                 end_line: range.end_point.row,
@@ -229,9 +235,20 @@ fn collect_leaf_nodes<'tree>(node: Node<'tree>, leaves: &mut Vec<Node<'tree>>) {
     }
 }
 
-fn push_node_segments(chunked: &mut ChunkedFile, buffer: &CodeBuffer, spec: NodeSegmentSpec) {
+fn push_node_segments(
+    chunked: &mut ChunkedFile,
+    buffer: &CodeBuffer,
+    display_col_lookups: &[Vec<usize>],
+    spec: NodeSegmentSpec,
+) {
     if spec.start_line == spec.end_line {
-        if let Some(span) = line_span(buffer, spec.start_line, spec.start_col, spec.end_col) {
+        if let Some(span) = line_span(
+            buffer,
+            display_col_lookups,
+            spec.start_line,
+            spec.start_col,
+            spec.end_col,
+        ) {
             push_chunk(chunked, spec.kind, spec.role, span);
         }
         return;
@@ -252,7 +269,7 @@ fn push_node_segments(chunked: &mut ChunkedFile, buffer: &CodeBuffer, spec: Node
             line_text.len()
         };
 
-        if let Some(span) = line_span(buffer, line, line_start, line_end) {
+        if let Some(span) = line_span(buffer, display_col_lookups, line, line_start, line_end) {
             push_chunk(chunked, spec.kind, spec.role, span);
         }
     }
@@ -260,11 +277,13 @@ fn push_node_segments(chunked: &mut ChunkedFile, buffer: &CodeBuffer, spec: Node
 
 fn line_span(
     buffer: &CodeBuffer,
+    display_col_lookups: &[Vec<usize>],
     line: usize,
     start_byte: usize,
     end_byte: usize,
 ) -> Option<BufferSpan> {
     let line_text = buffer.line(line)?;
+    let display_col_lookup = display_col_lookups.get(line)?;
     let start_byte = start_byte.min(line_text.len());
     let end_byte = end_byte.min(line_text.len());
     if start_byte >= end_byte
@@ -278,12 +297,12 @@ fn line_span(
         start: BufferPoint {
             line,
             byte_col: start_byte,
-            display_col: display_col(line_text, start_byte),
+            display_col: display_col_from_lookup(display_col_lookup, start_byte),
         },
         end: BufferPoint {
             line,
             byte_col: end_byte,
-            display_col: display_col(line_text, end_byte),
+            display_col: display_col_from_lookup(display_col_lookup, end_byte),
         },
     })
 }
@@ -313,6 +332,7 @@ fn lexical_chunks(buffer: &CodeBuffer) -> ChunkedFile {
     let mut chunked = ChunkedFile::empty(buffer.line_count());
 
     for (line_index, line_text) in buffer.lines().iter().enumerate() {
+        let display_col_lookup = display_col_lookup(line_text, DEFAULT_TAB_SIZE);
         let mut byte = 0usize;
         while byte < line_text.len() {
             let ch = line_text[byte..]
@@ -352,12 +372,12 @@ fn lexical_chunks(buffer: &CodeBuffer) -> ChunkedFile {
                     start: BufferPoint {
                         line: line_index,
                         byte_col: byte,
-                        display_col: display_col(line_text, byte),
+                        display_col: display_col_from_lookup(&display_col_lookup, byte),
                     },
                     end: BufferPoint {
                         line: line_index,
                         byte_col: end,
-                        display_col: display_col(line_text, end),
+                        display_col: display_col_from_lookup(&display_col_lookup, end),
                     },
                 },
             );
@@ -584,29 +604,39 @@ fn is_operator_char(ch: char) -> bool {
 
 const DEFAULT_TAB_SIZE: usize = 4;
 
+#[cfg(test)]
 fn display_col(line: &str, byte_col: usize) -> usize {
     display_col_with_tab_size(line, byte_col, DEFAULT_TAB_SIZE)
 }
 
-fn display_col_with_tab_size(line: &str, byte_col: usize, tab_size: usize) -> usize {
-    let clamped = byte_col.min(line.len());
+fn display_col_lookup(line: &str, tab_size: usize) -> Vec<usize> {
+    let mut lookup = vec![0; line.len() + 1];
     let tab_size = tab_size.max(1);
     let mut width = 0;
 
     for (offset, ch) in line.char_indices() {
-        if offset >= clamped {
-            break;
-        }
+        lookup[offset] = width;
 
         if ch == '\t' {
             width += tab_size - (width % tab_size);
-            continue;
+        } else {
+            width += ch.width().unwrap_or(0);
         }
 
-        width += ch.width().unwrap_or(0);
+        lookup[offset + ch.len_utf8()] = width;
     }
 
-    width
+    lookup
+}
+
+fn display_col_from_lookup(lookup: &[usize], byte_col: usize) -> usize {
+    lookup[byte_col.min(lookup.len().saturating_sub(1))]
+}
+
+#[cfg(test)]
+fn display_col_with_tab_size(line: &str, byte_col: usize, tab_size: usize) -> usize {
+    let clamped = byte_col.min(line.len());
+    display_col_from_lookup(&display_col_lookup(line, tab_size), clamped)
 }
 
 fn language_for(language: LanguageId) -> tree_sitter::Language {
@@ -621,7 +651,7 @@ fn language_for(language: LanguageId) -> tree_sitter::Language {
 mod tests {
     use super::{
         BufferSpan, ChunkKind, ChunkRole, chunk_buffer, classify_lexical_chunk, display_col,
-        display_col_with_tab_size, is_literal_node, lexical_chunks,
+        display_col_lookup, display_col_with_tab_size, is_literal_node, lexical_chunks,
     };
     use crate::{CodeBuffer, LanguageId};
 
@@ -714,5 +744,18 @@ mod tests {
         let z_byte = line.rfind('z').expect("z present");
 
         assert_eq!(display_col(line, z_byte), 3);
+    }
+
+    #[test]
+    fn display_col_lookup_matches_point_queries() {
+        let line = "\ta界z";
+        let lookup = display_col_lookup(line, 4);
+        let z_byte = line.rfind('z').expect("z present");
+
+        assert_eq!(lookup[z_byte], display_col_with_tab_size(line, z_byte, 4));
+        assert_eq!(
+            lookup[line.len()],
+            display_col_with_tab_size(line, line.len(), 4)
+        );
     }
 }
