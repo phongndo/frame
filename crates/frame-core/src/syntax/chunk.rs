@@ -484,6 +484,12 @@ fn is_type_node(kind: &str) -> bool {
     matches!(kind, "primitive_type" | "type_identifier") || kind.contains("type")
 }
 
+fn is_numeric_literal_text(text: &str) -> bool {
+    let mut chars = text.chars();
+    matches!(chars.next(), Some(first) if first.is_ascii_digit())
+        && chars.all(|ch| ch.is_ascii_digit() || ch == '_')
+}
+
 fn is_literal_node(kind: &str, text: &str) -> bool {
     kind.contains("literal")
         || kind.contains("string")
@@ -493,7 +499,7 @@ fn is_literal_node(kind: &str, text: &str) -> bool {
         || kind.contains("float")
         || text.starts_with('"')
         || text.starts_with('\'')
-        || text.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+        || is_numeric_literal_text(text)
 }
 
 fn should_skip_token(text: &str) -> bool {
@@ -519,10 +525,7 @@ fn is_identifier_text(text: &str) -> bool {
 }
 
 fn classify_lexical_chunk(text: &str) -> (ChunkKind, ChunkRole) {
-    if text.starts_with('"')
-        || text.starts_with('\'')
-        || text.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
-    {
+    if text.starts_with('"') || text.starts_with('\'') || is_numeric_literal_text(text) {
         return (ChunkKind::Literal, ChunkRole::Literal);
     }
 
@@ -618,7 +621,7 @@ fn language_for(language: LanguageId) -> tree_sitter::Language {
 mod tests {
     use super::{
         BufferSpan, ChunkKind, ChunkRole, chunk_buffer, classify_lexical_chunk, display_col,
-        display_col_with_tab_size, lexical_chunks,
+        display_col_with_tab_size, is_literal_node, lexical_chunks,
     };
     use crate::{CodeBuffer, LanguageId};
 
@@ -686,6 +689,15 @@ mod tests {
             classify_lexical_chunk("=="),
             (ChunkKind::Operator, ChunkRole::Operator)
         );
+    }
+
+    #[test]
+    fn underscore_only_tokens_are_not_literals() {
+        assert_eq!(
+            classify_lexical_chunk("_"),
+            (ChunkKind::Identifier, ChunkRole::Symbol)
+        );
+        assert!(!is_literal_node("identifier", "_"));
     }
 
     #[test]
