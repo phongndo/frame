@@ -9,6 +9,7 @@ publish = false
 description = "Placeholder CLI crate for the Frame application."
 
 [dependencies]
+frame-view = { version = "0.1.0", path = "../frame-view" }
 libframe = { version = "0.1.0", path = "../libframe" }
 
 [lints]
