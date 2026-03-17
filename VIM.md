@@ -65,7 +65,7 @@ better and creates a cleaner path for future LSP operations.
 - [ ] `*` / `#`: search for word under cursor forward and backward
 - [ ] `%`: jump between matching delimiters
 - [ ] `gd`: go to definition
-  Current conflict: `gd` is used today for raw diff toggle and should be freed if LSP-style navigation is added.
+  Reserved for future symbol navigation. `gd` still exists today as a compatibility alias for raw diff toggle, but `Tab` is the canonical binding.
 
 ## Jump List, Marks, and Reorientation
 
@@ -108,6 +108,7 @@ tracked alongside Vim behavior because they define the review experience.
 - [x] `]f` / `[f`: next and previous changed file
 - [x] `]h` / `[h`: next and previous raw diff hunk in raw diff mode
 - [x] `Tab`: toggle code view and raw diff view
+  Canonical binding. `gd` is a temporary compatibility alias until `go to definition` exists.
 - [ ] `A`: send queued comments to AI and reload the review loop
 
 ## Command and Review Affordances
