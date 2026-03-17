@@ -190,26 +190,31 @@ impl App {
 
     fn jump_next_hunk(&mut self) {
         if let Some(target) = next_target(&self.hunk_targets, self.cursor_line) {
-            self.cursor_line = target;
+            self.jump_to(target);
         }
     }
 
     fn jump_previous_hunk(&mut self) {
         if let Some(target) = previous_target(&self.hunk_targets, self.cursor_line) {
-            self.cursor_line = target;
+            self.jump_to(target);
         }
     }
 
     fn jump_next_file(&mut self) {
         if let Some(target) = next_target(&self.file_targets, self.cursor_line) {
-            self.cursor_line = target;
+            self.jump_to(target);
         }
     }
 
     fn jump_previous_file(&mut self) {
         if let Some(target) = previous_target(&self.file_targets, self.cursor_line) {
-            self.cursor_line = target;
+            self.jump_to(target);
         }
+    }
+
+    fn jump_to(&mut self, target: usize) {
+        self.cursor_line = target;
+        self.viewport_top = target;
     }
 
     fn sync_viewport(&mut self, height: usize) {
@@ -532,6 +537,20 @@ mod tests {
         assert_eq!(app.cursor_line, 7);
         app.jump_previous_file();
         assert_eq!(app.cursor_line, 0);
+    }
+
+    #[test]
+    fn jumps_anchor_the_target_at_the_top_of_the_viewport() {
+        let mut app = App::new(sample_diff());
+        app.viewport_top = 3;
+
+        app.jump_next_hunk();
+        assert_eq!(app.cursor_line, 1);
+        assert_eq!(app.viewport_top, 1);
+
+        app.jump_next_file();
+        assert_eq!(app.cursor_line, 7);
+        assert_eq!(app.viewport_top, 7);
     }
 
     #[test]
