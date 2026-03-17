@@ -108,7 +108,11 @@ fn load_buffer(
 }
 
 fn collect_patch_text(cwd: &Path) -> Result<String, GitError> {
-    let mut patch_text = tracked_patch_text(cwd)?;
+    let mut patch_text = if head_exists(cwd)? {
+        tracked_patch_text(cwd)?
+    } else {
+        String::new()
+    };
 
     for path in untracked_files(cwd)? {
         if !patch_text.is_empty() && !patch_text.ends_with('\n') {
@@ -119,6 +123,11 @@ fn collect_patch_text(cwd: &Path) -> Result<String, GitError> {
     }
 
     Ok(patch_text)
+}
+
+fn head_exists(cwd: &Path) -> Result<bool, GitError> {
+    let output = run_git_allowing_status(cwd, ["rev-parse", "--verify", "HEAD"], &[0, 128])?;
+    Ok(output.status.success())
 }
 
 fn tracked_patch_text(cwd: &Path) -> Result<String, GitError> {
@@ -263,6 +272,17 @@ mod tests {
         temp
     }
 
+    fn init_unborn_repo() -> TempGitDir {
+        let temp = TempGitDir::new("unborn");
+        git(temp.path(), &["init", "--quiet"]);
+        git(
+            temp.path(),
+            &["config", "user.email", "frame-tests@example.com"],
+        );
+        git(temp.path(), &["config", "user.name", "Frame Tests"]);
+        temp
+    }
+
     #[test]
     fn returns_empty_snapshot_for_clean_repo() {
         let repo = init_repo();
@@ -323,5 +343,18 @@ mod tests {
         assert_eq!(file.patch.change, FileChangeKind::Deleted);
         assert_eq!(file.source, BufferSource::PreImage);
         assert_eq!(file.buffer.line(0), Some("line one"));
+    }
+
+    #[test]
+    fn loads_untracked_files_from_unborn_repo() {
+        let repo = init_unborn_repo();
+        write(&repo.path().join("new.rs"), "pub fn preview() {}\n");
+
+        let snapshot = load_review_snapshot_from_dir(repo.path()).expect("unborn repo should load");
+        let file = &snapshot.files[0];
+        assert_eq!(file.patch.change, FileChangeKind::Added);
+        assert_eq!(file.source, BufferSource::PostImage);
+        assert_eq!(file.patch.new_path.as_deref(), Some("new.rs"));
+        assert_eq!(file.buffer.line(0), Some("pub fn preview() {}"));
     }
 }
