@@ -8,6 +8,7 @@ use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
     crossterm::{
+        cursor::Show,
         event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
         execute,
         terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -135,6 +136,32 @@ struct ReviewComment {
     file_path: String,
     target: CommentTarget,
     text: String,
+}
+
+#[derive(Debug)]
+struct TerminalCleanupGuard {
+    active: bool,
+}
+
+impl TerminalCleanupGuard {
+    fn new() -> Self {
+        Self { active: true }
+    }
+
+    fn disarm(&mut self) {
+        self.active = false;
+    }
+}
+
+impl Drop for TerminalCleanupGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
+    }
 }
 
 #[derive(Debug)]
@@ -1148,6 +1175,7 @@ impl App {
 /// mode, if terminal drawing fails, or if event polling/reading fails.
 pub fn run(snapshot: ReviewSnapshot) -> Result<(), ViewError> {
     let mut stdout = io::stdout();
+    let mut cleanup_guard = TerminalCleanupGuard::new();
     enable_raw_mode()?;
     execute!(stdout, EnterAlternateScreen)?;
 
@@ -1155,6 +1183,10 @@ pub fn run(snapshot: ReviewSnapshot) -> Result<(), ViewError> {
     let mut terminal = Terminal::new(backend)?;
     let loop_result = run_loop(&mut terminal, App::new(snapshot));
     let restore_result = restore_terminal(&mut terminal);
+
+    if loop_result.is_ok() && restore_result.is_ok() {
+        cleanup_guard.disarm();
+    }
 
     loop_result.and(restore_result)
 }
@@ -1181,9 +1213,13 @@ fn run_loop(
 fn restore_terminal(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> Result<(), ViewError> {
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    let raw_mode_result = disable_raw_mode();
+    let alternate_screen_result = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let show_cursor_result = terminal.show_cursor();
+
+    raw_mode_result?;
+    alternate_screen_result?;
+    show_cursor_result?;
     Ok(())
 }
 
