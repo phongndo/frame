@@ -50,7 +50,7 @@ pub fn load_review_snapshot_from_current_dir() -> Result<ReviewSnapshot, GitErro
 /// loaded.
 pub fn load_review_snapshot_from_dir(cwd: &Path) -> Result<ReviewSnapshot, GitError> {
     let repo_root = repo_root(cwd)?;
-    let patch_text = collect_patch_text(cwd)?;
+    let patch_text = collect_patch_text(&repo_root)?;
     let patch_set = parse_patch(&patch_text)?;
     let files = load_review_files(&repo_root, patch_set)?;
 
@@ -293,6 +293,22 @@ mod tests {
         let file = &snapshot.files[0];
         assert_eq!(file.patch.change, FileChangeKind::Added);
         assert_eq!(file.source, BufferSource::PostImage);
+        assert_eq!(file.buffer.line(0), Some("pub fn preview() {}"));
+    }
+
+    #[test]
+    fn loads_untracked_files_from_nested_cwd() {
+        let repo = init_repo();
+        let nested = repo.path().join("subdir");
+        fs::create_dir_all(&nested).expect("nested directory should be created");
+        write(&nested.join("new.rs"), "pub fn preview() {}\n");
+
+        let snapshot =
+            load_review_snapshot_from_dir(&nested).expect("nested untracked file should load");
+        let file = &snapshot.files[0];
+        assert_eq!(file.patch.change, FileChangeKind::Added);
+        assert_eq!(file.source, BufferSource::PostImage);
+        assert_eq!(file.patch.new_path.as_deref(), Some("subdir/new.rs"));
         assert_eq!(file.buffer.line(0), Some("pub fn preview() {}"));
     }
 
