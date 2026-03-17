@@ -374,6 +374,6 @@ frame is usable when:
 
 ---
 
-## One Sentence Summary
+## One-Sentence Summary
 
 frame = **a terminal-first AI review IDE**
