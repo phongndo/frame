@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/frame", "crates/libframe"]
-default-members = ["crates/frame", "crates/libframe"]
+members = ["crates/frame", "crates/frame-view", "crates/libframe"]
+default-members = ["crates/frame", "crates/frame-view", "crates/libframe"]
 resolver = "2"
 
 [workspace.package]
@@ -9,6 +9,10 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/phongndo/frame"
 homepage = "https://github.com/phongndo/frame"
+
+[workspace.dependencies]
+ratatui = "0.30.0"
+thiserror = "2.0"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

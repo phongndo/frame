@@ -2,7 +2,7 @@
 
 ## Product Intent
 
-Frame is a keyboard-first code review tool for AI-scale diffs. This repository is the initial scaffold for the project and does not include the review UI, diff engine, or language tooling yet.
+Frame is a keyboard-first code review tool for AI-scale diffs. This repository now contains the first real implementation slice: Git diff ingestion, a core diff model, and a read-only terminal viewer.
 
 ## Planning
 
@@ -10,14 +10,14 @@ The current product scope lives in [PROJECT.md](PROJECT.md). This first commit i
 
 ## Current Status
 
-Frame is pre-alpha and intentionally infrastructure-only in this first PR. TUI bootstrapping, syntax highlighting, LSP integration, git diff ingestion, and GitHub review flows are deferred to follow-up work.
+Frame is pre-alpha. The repository now includes Git diff ingestion, a typed core diff model, and a read-only TUI viewer with file/hunk navigation. Comments, AI send flows, config loading, and syntax highlighting are still deferred.
 
 ## Local Setup
 
 1. Install stable Rust with `clippy` and `rustfmt`.
-2. Run `cargo run -p frame`.
+2. Run `cargo run -p frame` inside a Git repository.
 
-The placeholder binary should print a scaffold status line from `libframe` and exit successfully.
+The application should open a read-only diff viewer. In a clean repo it opens an empty-state view. Outside a Git repo it exits with an error.
 
 ## Verification Commands
 
@@ -36,6 +36,7 @@ actionlint
 
 ## Initial Workspace Layout
 
-- `crates/frame`: placeholder CLI crate for the future application entrypoint
-- `crates/libframe`: placeholder library crate for future reusable diff and review primitives
+- `crates/frame`: thin terminal application entrypoint
+- `crates/frame-view`: read-only TUI rendering and navigation
+- `crates/libframe`: Git integration and diff domain model
 - `.github/workflows/ci.yml`: Linux pull-request and push checks

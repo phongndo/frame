@@ -1,25 +1,14 @@
 #![doc = r"
-`libframe` will eventually host reusable diff and review primitives.
+`libframe` hosts the core Git and diff logic for Frame.
 
-The first scaffold commit keeps the public API intentionally small: one shared
-status string used by the CLI to prove the crate boundary and workspace wiring.
+The library is intentionally UI-agnostic: it knows how to obtain diffs from Git
+and normalize them into typed review data structures, but it does not render
+anything itself.
 "]
 
-/// Shared placeholder status line for the scaffold binary.
-pub const SCAFFOLD_STATUS_LINE: &str = "frame scaffold: review UI not implemented yet";
+mod diff;
+mod git;
 
-/// Returns the current scaffold status line for the CLI.
-#[must_use]
-pub const fn scaffold_status_line() -> &'static str {
-    SCAFFOLD_STATUS_LINE
-}
-
-#[cfg(test)]
-mod tests {
-    use super::scaffold_status_line;
-
-    #[test]
-    fn scaffold_status_mentions_review_ui() {
-        assert!(scaffold_status_line().contains("review UI"));
-    }
-}
+pub(crate) use diff::parse_diff;
+pub use diff::{Diff, DiffFile, DiffLine, DiffParseError, FileChangeKind, Hunk, LineKind};
+pub use git::{GitError, RepoDiff, load_diff_from_current_dir, load_diff_from_dir};

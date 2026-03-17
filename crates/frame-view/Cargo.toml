@@ -1,14 +1,16 @@
 [package]
-name = "libframe"
+name = "frame-view"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 publish = false
-description = "Placeholder library crate for future reusable diff and review primitives."
+description = "Read-only TUI viewer for Frame diffs."
 
 [dependencies]
+libframe = { version = "0.1.0", path = "../libframe" }
+ratatui.workspace = true
 thiserror.workspace = true
 
 [lints]
