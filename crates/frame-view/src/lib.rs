@@ -219,9 +219,11 @@ impl App {
 
         match (anchor_target, cursor_target) {
             (Some(CommentTarget::ChunkSpan(left)), Some(CommentTarget::ChunkSpan(right))) => {
+                let left = left.normalized();
+                let right = right.normalized();
                 Some(CommentTarget::ChunkSpan(BufferSpan {
-                    start: left.start,
-                    end: right.end,
+                    start: left.start.min(right.start),
+                    end: left.end.max(right.end),
                 }))
             }
             _ => Some(CommentTarget::LineRange {
@@ -2372,6 +2374,37 @@ mod tests {
             CommentTarget::ChunkSpan(span) if span.start.line == 1 && span.end.line == 2
         ));
         assert_eq!(app.motion_mode, MotionMode::Normal);
+    }
+
+    #[test]
+    fn visual_selection_unions_reversed_chunk_spans() {
+        let mut app = App::new(sample_snapshot());
+
+        app.code_cursor_line = 0;
+        app.set_code_cursor_to_first_chunk(0);
+        app.move_right_chunk(1);
+        let anchor_chunk = {
+            let file = &app.snapshot.files[0];
+            file.chunk(0, app.code_cursor_chunk.expect("anchor chunk"))
+                .expect("anchor chunk exists")
+                .span
+        };
+
+        assert!(!app.handle_key(key(KeyCode::Char('v'))));
+        app.move_left_chunk(1);
+
+        let cursor_chunk = {
+            let file = &app.snapshot.files[0];
+            file.chunk(0, app.code_cursor_chunk.expect("cursor chunk"))
+                .expect("cursor chunk exists")
+                .span
+        };
+
+        assert!(matches!(
+            app.selection_target(&app.snapshot.files[0]),
+            Some(CommentTarget::ChunkSpan(span))
+                if span.start == cursor_chunk.start && span.end == anchor_chunk.end
+        ));
     }
 
     #[test]
