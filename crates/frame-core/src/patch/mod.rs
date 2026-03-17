@@ -238,13 +238,13 @@ fn handle_file_metadata(file: &mut PatchFile, line: &str) -> bool {
 
     if let Some(path) = line.strip_prefix("rename from ") {
         file.change = FileChangeKind::Renamed;
-        file.old_path = Some(path.to_owned());
+        file.old_path = normalize_patch_path(path);
         return true;
     }
 
     if let Some(path) = line.strip_prefix("rename to ") {
         file.change = FileChangeKind::Renamed;
-        file.new_path = Some(path.to_owned());
+        file.new_path = normalize_patch_path(path);
         return true;
     }
 
@@ -299,10 +299,43 @@ fn push_hunk_line(hunk: &mut ActiveHunk, line: &str) {
 }
 
 fn parse_diff_git_paths(rest: &str) -> (Option<String>, Option<String>) {
-    let mut parts = rest.split_whitespace();
-    let old = parts.next().and_then(normalize_patch_path);
-    let new = parts.next().and_then(normalize_patch_path);
+    let Some((old_raw, rest)) = split_patch_path_token(rest) else {
+        return (None, None);
+    };
+    let old = normalize_patch_path(old_raw);
+    let new = split_patch_path_token(rest).and_then(|(new_raw, _)| normalize_patch_path(new_raw));
     (old, new)
+}
+
+fn split_patch_path_token(input: &str) -> Option<(&str, &str)> {
+    let input = input.trim_start();
+    if input.is_empty() {
+        return None;
+    }
+
+    if !input.starts_with('"') {
+        let end = input.find(char::is_whitespace).unwrap_or(input.len());
+        return Some((&input[..end], &input[end..]));
+    }
+
+    let mut escaped = false;
+    for (offset, ch) in input[1..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '"' => {
+                let end = 1 + offset + ch.len_utf8();
+                return Some((&input[..end], &input[end..]));
+            }
+            _ => {}
+        }
+    }
+
+    Some((input, ""))
 }
 
 fn normalize_patch_path(raw: &str) -> Option<String> {
@@ -315,13 +348,55 @@ fn normalize_patch_path(raw: &str) -> Option<String> {
     let unquoted = raw
         .strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(raw);
+        .map_or_else(|| raw.to_owned(), unescape_quoted_patch_path);
     let path = unquoted
         .strip_prefix("a/")
         .or_else(|| unquoted.strip_prefix("b/"))
-        .unwrap_or(unquoted);
+        .unwrap_or(unquoted.as_str());
 
     Some(path.to_owned())
+}
+
+fn unescape_quoted_patch_path(raw: &str) -> String {
+    let mut path = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            path.push(ch);
+            continue;
+        }
+
+        let Some(next) = chars.next() else {
+            path.push('\\');
+            break;
+        };
+
+        match next {
+            '\\' => path.push('\\'),
+            '"' => path.push('"'),
+            't' => path.push('\t'),
+            'n' => path.push('\n'),
+            'r' => path.push('\r'),
+            '0'..='7' => {
+                let mut octal = String::from(next);
+                while octal.len() < 3 && chars.peek().is_some_and(|peek| matches!(peek, '0'..='7'))
+                {
+                    octal.push(chars.next().expect("peeked value exists"));
+                }
+
+                if let Ok(value) = u8::from_str_radix(&octal, 8) {
+                    path.push(char::from(value));
+                } else {
+                    path.push('\\');
+                    path.push_str(&octal);
+                }
+            }
+            other => path.push(other),
+        }
+    }
+
+    path
 }
 
 fn parse_hunk_header(line: &str) -> Result<ActiveHunk, PatchParseError> {
@@ -457,6 +532,41 @@ rename to b.txt
         assert_eq!(patch.files[0].change, FileChangeKind::Added);
         assert_eq!(patch.files[1].change, FileChangeKind::Deleted);
         assert_eq!(patch.files[2].change, FileChangeKind::Renamed);
+    }
+
+    #[test]
+    fn normalizes_quoted_rename_paths_with_spaces_and_quotes() {
+        let input = "diff --git \"a/old \\\"quoted\\\" name.txt\" \"b/new \\\"quoted\\\" name.txt\"\n\
+similarity index 100%\n\
+rename from \"old \\\"quoted\\\" name.txt\"\n\
+rename to \"new \\\"quoted\\\" name.txt\"\n\
+--- \"a/old \\\"quoted\\\" name.txt\"\n\
++++ \"b/new \\\"quoted\\\" name.txt\"\n\
+@@ -1 +1 @@\n\
+-left\n\
++right\n";
+
+        let patch = parse_patch(input).expect("quoted rename patch should parse");
+        let file = &patch.files[0];
+
+        assert_eq!(file.change, FileChangeKind::Renamed);
+        assert_eq!(file.old_path.as_deref(), Some("old \"quoted\" name.txt"));
+        assert_eq!(file.new_path.as_deref(), Some("new \"quoted\" name.txt"));
+        assert_eq!(file.display_path(), "new \"quoted\" name.txt");
+    }
+
+    #[test]
+    fn parses_quoted_diff_git_paths_with_spaces() {
+        let input = "diff --git \"a/quoted path.txt\" \"b/quoted path.txt\"\n\
+Binary files \"a/quoted path.txt\" and \"b/quoted path.txt\" differ\n";
+
+        let patch = parse_patch(input).expect("quoted diff header should parse");
+        let file = &patch.files[0];
+
+        assert_eq!(file.old_path.as_deref(), Some("quoted path.txt"));
+        assert_eq!(file.new_path.as_deref(), Some("quoted path.txt"));
+        assert_eq!(file.display_path(), "quoted path.txt");
+        assert!(file.has_binary_or_unrenderable_change);
     }
 
     #[test]
