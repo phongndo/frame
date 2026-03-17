@@ -1047,10 +1047,25 @@ fn code_rows(file: &ReviewFile) -> Vec<CodeRenderRow> {
 
 fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCodeView {
     let rows = code_rows(file);
-    let comment_box = app
+    let mut persisted_comment_boxes = BTreeMap::<usize, Vec<Vec<Line<'static>>>>::new();
+    for comment in app
+        .comments
+        .iter()
+        .filter(|comment| comment.file_path == file.display_path())
+    {
+        persisted_comment_boxes
+            .entry(
+                comment
+                    .end_line
+                    .min(file.buffer.line_count().saturating_sub(1)),
+            )
+            .or_default()
+            .push(comment_box_lines(&comment.text, width, false));
+    }
+    let draft_comment_box = app
         .comment_draft()
         .zip(app.comment_box_anchor_line(file))
-        .map(|(draft, anchor_line)| (comment_box_lines(draft, width), anchor_line));
+        .map(|(draft, anchor_line)| (comment_box_lines(draft, width, true), anchor_line));
 
     let mut lines = Vec::new();
     let mut cursor_visual_row = code_cursor_visual_row(&rows, app.code_cursor_line);
@@ -1074,10 +1089,18 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
             &row,
         ));
 
-        if let Some((comment_box_lines, anchor_line)) = &comment_box
-            && row_buffer_line == Some(*anchor_line)
-        {
-            lines.extend(comment_box_lines.iter().cloned());
+        if let Some(anchor_line) = row_buffer_line {
+            if let Some(comment_boxes) = persisted_comment_boxes.remove(&anchor_line) {
+                for comment_box in comment_boxes {
+                    lines.extend(comment_box);
+                }
+            }
+
+            if let Some((comment_box_lines, draft_anchor_line)) = &draft_comment_box
+                && anchor_line == *draft_anchor_line
+            {
+                lines.extend(comment_box_lines.iter().cloned());
+            }
         }
     }
 
@@ -1087,11 +1110,15 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
     }
 }
 
-fn comment_box_lines(draft: &str, width: usize) -> Vec<Line<'static>> {
-    let text_indent = 8usize.min(width.saturating_sub(6));
+fn comment_box_lines(text: &str, width: usize, is_draft: bool) -> Vec<Line<'static>> {
+    let text_indent = 0usize;
     let inner_width = width.saturating_sub(text_indent + 2).max(12);
     let horizontal = "─".repeat(inner_width);
-    let title = " AI comment ";
+    let title = if is_draft {
+        " AI comment "
+    } else {
+        " Queued comment "
+    };
     let top = if inner_width > title.len() {
         let remaining = inner_width - title.len();
         let left = remaining / 2;
@@ -1108,19 +1135,21 @@ fn comment_box_lines(draft: &str, width: usize) -> Vec<Line<'static>> {
     };
 
     let wrapped = wrap_comment_text(
-        if draft.is_empty() {
+        if is_draft && text.is_empty() {
             "Type feedback for AI..."
         } else {
-            draft
+            text
         },
         inner_width,
     );
-    let body_style = if draft.is_empty() {
+    let body_style = if is_draft && text.is_empty() {
         Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::ITALIC)
-    } else {
+    } else if is_draft {
         Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::Yellow)
     };
 
     let mut lines = Vec::with_capacity(wrapped.len() + 2);
@@ -1434,7 +1463,10 @@ mod tests {
     };
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{App, CodeRowKind, InputMode, MotionMode, ViewMode, code_rows, comment_box_lines};
+    use super::{
+        App, CodeRowKind, InputMode, MotionMode, ViewMode, code_rows, comment_box_lines,
+        rendered_code_view,
+    };
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -1657,10 +1689,11 @@ mod tests {
         let lines = comment_box_lines(
             "This is a long AI comment that should wrap inside the inline box.",
             30,
+            true,
         );
 
         assert!(lines.len() > 3);
-        assert!(lines[0].to_string().contains('┌'));
+        assert!(lines[0].to_string().starts_with('┌'));
         assert!(lines[1].to_string().contains('│'));
         assert!(
             lines
@@ -1669,5 +1702,26 @@ mod tests {
                 .to_string()
                 .contains('└')
         );
+    }
+
+    #[test]
+    fn rendered_code_view_keeps_saved_comments_expanded() {
+        let mut app = App::new(sample_snapshot());
+        app.comments.push(super::ReviewComment {
+            file_path: "src/main.rs".to_owned(),
+            start_line: 1,
+            end_line: 1,
+            text: "Keep this visible".to_owned(),
+        });
+
+        let rendered = rendered_code_view(&app, &app.snapshot.files[0], 36);
+        let lines = rendered
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(lines.iter().any(|line| line.starts_with('┌')));
+        assert!(lines.iter().any(|line| line.contains("Keep this visible")));
     }
 }
