@@ -9,7 +9,8 @@ publish = false
 description = "Placeholder CLI crate for the Frame application."
 
 [dependencies]
-libframe = { version = "0.1.0", path = "../libframe" }
+frame-git = { version = "0.1.0", path = "../frame-git" }
+frame-view = { version = "0.1.0", path = "../frame-view" }
 
 [lints]
 workspace = true

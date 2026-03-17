@@ -2,22 +2,39 @@
 
 ## Product Intent
 
-Frame is a keyboard-first code review tool for AI-scale diffs. This repository is the initial scaffold for the project and does not include the review UI, diff engine, or language tooling yet.
+Frame is a keyboard-first code review tool for AI-scale diffs. The current implementation is a code-first terminal review IDE: it loads changed files, overlays Git changes on full-file buffers, and keeps raw diff as a secondary inspection mode.
 
 ## Planning
 
-The current product scope lives in [PROJECT.md](PROJECT.md). This first commit is intentionally limited to repository scaffolding: Rust workspace setup, CI, dependency policy, and placeholder crates.
+The current product scope lives in [PROJECT.md](PROJECT.md).
 
 ## Current Status
 
-Frame is pre-alpha and intentionally infrastructure-only in this first PR. TUI bootstrapping, syntax highlighting, LSP integration, git diff ingestion, and GitHub review flows are deferred to follow-up work.
+Frame is pre-alpha. The repository now includes:
+
+- Git-backed review snapshot loading for changed files
+- a typed patch and review domain model
+- a code-first TUI with change overlays
+- a secondary raw diff mode
+- review-only input affordances: `:` commands and `i` to queue comments for AI
+
+Comments are staged locally in the TUI today; AI send flows and config loading are still deferred. Syntax highlighting is supported for built-in languages through Tree-sitter-derived highlights in the review snapshot.
 
 ## Local Setup
 
 1. Install stable Rust with `clippy` and `rustfmt`.
-2. Run `cargo run -p frame`.
+2. Run `cargo run -p frame` inside a Git repository.
 
-The placeholder binary should print a scaffold status line from `libframe` and exit successfully.
+The application should open a read-only review IDE. In a clean repo it opens an empty-state view. Outside a Git repo it exits with an error.
+
+Primary keys:
+
+- `j` / `k`, `Ctrl-d` / `Ctrl-u`, `gg` / `G`
+- `]c` / `[c` for change jumps
+- `]f` / `[f` for changed-file jumps
+- `gd` or `Tab` to toggle raw diff
+- `:` for review commands
+- `i` to queue a comment for AI on the current line
 
 ## Verification Commands
 
@@ -34,8 +51,10 @@ cargo deny check bans licenses advisories
 actionlint
 ```
 
-## Initial Workspace Layout
+## Workspace Layout
 
-- `crates/frame`: placeholder CLI crate for the future application entrypoint
-- `crates/libframe`: placeholder library crate for future reusable diff and review primitives
+- `crates/frame`: thin terminal application entrypoint
+- `crates/frame-core`: patch parsing and review-domain types
+- `crates/frame-git`: Git-backed snapshot loading
+- `crates/frame-view`: read-only TUI rendering, navigation, and review input
 - `.github/workflows/ci.yml`: Linux pull-request and push checks

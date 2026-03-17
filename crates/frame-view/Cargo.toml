@@ -1,0 +1,18 @@
+[package]
+name = "frame-view"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "Read-only TUI viewer for Frame diffs."
+
+[dependencies]
+frame-core = { version = "0.1.0", path = "../frame-core" }
+ratatui.workspace = true
+thiserror.workspace = true
+unicode-width.workspace = true
+
+[lints]
+workspace = true
