@@ -18,7 +18,7 @@ Frame is pre-alpha. The repository now includes:
 - a secondary raw diff mode
 - review-only input affordances: `:` commands and `i` to queue comments for AI
 
-Comments are staged locally in the TUI today; AI send flows, config loading, and syntax highlighting are still deferred.
+Comments are staged locally in the TUI today; AI send flows and config loading are still deferred. Syntax highlighting is supported for built-in languages through Tree-sitter-derived highlights in the review snapshot.
 
 ## Local Setup
 
