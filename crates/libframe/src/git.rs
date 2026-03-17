@@ -1,6 +1,6 @@
 use std::{
     env,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -52,20 +52,64 @@ pub fn load_diff_from_current_dir() -> Result<RepoDiff, GitError> {
 /// output cannot be parsed.
 pub fn load_diff_from_dir(cwd: &Path) -> Result<RepoDiff, GitError> {
     let repo_root = repo_root(cwd)?;
+    let diff_text = collect_diff_text(cwd)?;
+    let diff = parse_diff(&diff_text)?;
+
+    Ok(RepoDiff { repo_root, diff })
+}
+
+fn collect_diff_text(cwd: &Path) -> Result<String, GitError> {
+    let mut diff_text = tracked_diff_text(cwd)?;
+
+    for path in untracked_files(cwd)? {
+        if !diff_text.is_empty() && !diff_text.ends_with('\n') {
+            diff_text.push('\n');
+        }
+
+        diff_text.push_str(&untracked_file_diff_text(cwd, &path)?);
+    }
+
+    Ok(diff_text)
+}
+
+fn tracked_diff_text(cwd: &Path) -> Result<String, GitError> {
     let output = run_git(
         cwd,
         [
             "diff",
+            "HEAD",
             "--no-ext-diff",
             "--find-renames",
             "--no-color",
             "--unified=3",
         ],
     )?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let diff = parse_diff(&stdout)?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
 
-    Ok(RepoDiff { repo_root, diff })
+fn untracked_files(cwd: &Path) -> Result<Vec<PathBuf>, GitError> {
+    let output = run_git(cwd, ["ls-files", "--others", "--exclude-standard", "-z"])?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    Ok(stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .collect())
+}
+
+fn untracked_file_diff_text(cwd: &Path, path: &Path) -> Result<String, GitError> {
+    let args = vec![
+        OsString::from("diff"),
+        OsString::from("--no-index"),
+        OsString::from("--no-color"),
+        OsString::from("--unified=3"),
+        OsString::from("--"),
+        OsString::from("/dev/null"),
+        path.as_os_str().to_owned(),
+    ];
+    let output = run_git_allowing_status(cwd, args, &[0, 1])?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn repo_root(cwd: &Path) -> Result<PathBuf, GitError> {
@@ -75,6 +119,18 @@ fn repo_root(cwd: &Path) -> Result<PathBuf, GitError> {
 }
 
 fn run_git<I, S>(cwd: &Path, args: I) -> Result<Output, GitError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    run_git_allowing_status(cwd, args, &[0])
+}
+
+fn run_git_allowing_status<I, S>(
+    cwd: &Path,
+    args: I,
+    allowed_statuses: &[i32],
+) -> Result<Output, GitError>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -89,7 +145,11 @@ where
         Err(error) => return Err(GitError::Io(error)),
     };
 
-    if output.status.success() {
+    if output
+        .status
+        .code()
+        .is_some_and(|code| allowed_statuses.contains(&code))
+    {
         return Ok(output);
     }
 
@@ -104,6 +164,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::load_diff_from_dir;
+    use crate::FileChangeKind;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -202,5 +263,30 @@ mod tests {
         assert_eq!(repo_diff.diff.hunk_count(), 1);
         assert_eq!(repo_diff.diff.changed_line_count(), 1);
         assert_eq!(repo_diff.diff.files[0].display_path(), "tracked.txt");
+    }
+
+    #[test]
+    fn loads_diff_for_staged_changes() {
+        let repo = init_repo();
+        write(&repo.path().join("tracked.txt"), "line one\nline two\n");
+        git(repo.path(), &["add", "tracked.txt"]);
+
+        let repo_diff = load_diff_from_dir(repo.path()).expect("staged repo should load");
+        assert_eq!(repo_diff.diff.file_count(), 1);
+        assert_eq!(repo_diff.diff.hunk_count(), 1);
+        assert_eq!(repo_diff.diff.changed_line_count(), 1);
+        assert_eq!(repo_diff.diff.files[0].display_path(), "tracked.txt");
+    }
+
+    #[test]
+    fn loads_diff_for_untracked_files() {
+        let repo = init_repo();
+        write(&repo.path().join("untracked.rs"), "pub fn preview() {}\n");
+
+        let repo_diff = load_diff_from_dir(repo.path()).expect("untracked file should load");
+        assert_eq!(repo_diff.diff.file_count(), 1);
+        assert_eq!(repo_diff.diff.changed_line_count(), 1);
+        assert_eq!(repo_diff.diff.files[0].change, FileChangeKind::Added);
+        assert_eq!(repo_diff.diff.files[0].display_path(), "untracked.rs");
     }
 }
