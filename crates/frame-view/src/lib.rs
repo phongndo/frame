@@ -1121,6 +1121,7 @@ fn comment_box_lines(text: &str, width: usize, is_draft: bool) -> Vec<Line<'stat
     let text_indent = 0usize;
     let inner_width = width.saturating_sub(text_indent + 2).max(12);
     let horizontal = "─".repeat(inner_width);
+    let border_style = Style::default().fg(Color::DarkGray);
     let title = if is_draft {
         " AI comment "
     } else {
@@ -1160,20 +1161,20 @@ fn comment_box_lines(text: &str, width: usize, is_draft: bool) -> Vec<Line<'stat
     };
 
     let mut lines = Vec::with_capacity(wrapped.len() + 2);
-    lines.push(Line::styled(top, Style::default().fg(Color::DarkGray)));
+    lines.push(Line::styled(top, border_style));
     lines.extend(wrapped.into_iter().map(|segment| {
-        Line::styled(
-            format!(
-                "{}│{segment:<inner_width$}│",
-                " ".repeat(text_indent),
-                inner_width = inner_width
+        Line::from(vec![
+            Span::styled(format!("{}│", " ".repeat(text_indent)), border_style),
+            Span::styled(
+                format!("{segment:<inner_width$}"),
+                body_style,
             ),
-            body_style,
-        )
+            Span::styled("│", border_style),
+        ])
     }));
     lines.push(Line::styled(
         format!("{}└{}┘", " ".repeat(text_indent), horizontal),
-        Style::default().fg(Color::DarkGray),
+        border_style,
     ));
     lines
 }
@@ -1654,6 +1655,7 @@ mod tests {
         ReviewFileInput, ReviewSnapshot,
     };
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::style::Color;
 
     use super::{
         App, CodeRowKind, InputMode, MotionMode, RawRowKind, ViewMode, code_rows,
@@ -1894,6 +1896,18 @@ mod tests {
                 .to_string()
                 .contains('└')
         );
+    }
+
+    #[test]
+    fn comment_box_keeps_borders_neutral() {
+        let lines = comment_box_lines("hello", 24, true);
+        let body = lines.get(1).expect("box has a body line");
+
+        assert_eq!(body.spans.len(), 3);
+        assert_eq!(body.spans[0].style.fg, Some(Color::DarkGray));
+        assert_eq!(body.spans[1].style.fg, Some(Color::Cyan));
+        assert_eq!(body.spans[2].style.fg, Some(Color::DarkGray));
+        assert_eq!(body.to_string(), "│hello                 │");
     }
 
     #[test]
