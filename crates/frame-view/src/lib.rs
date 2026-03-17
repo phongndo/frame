@@ -1,7 +1,8 @@
 use std::{collections::BTreeMap, fmt::Write as _, io, time::Duration};
 
 use frame_core::{
-    BufferSource, ChangeKind, HighlightStyleKey, HighlightedLine, ReviewFile, ReviewSnapshot,
+    BufferSource, BufferSpan, ChangeKind, HighlightStyleKey, HighlightedLine, NavigableChunk,
+    ReviewFile, ReviewSnapshot,
 };
 use ratatui::{
     Frame, Terminal,
@@ -85,10 +86,54 @@ struct RawRenderRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum CommentTarget {
+    ChunkSpan(BufferSpan),
+    LineRange { start_line: usize, end_line: usize },
+}
+
+impl CommentTarget {
+    fn normalized(&self) -> Self {
+        match self {
+            Self::ChunkSpan(span) => Self::ChunkSpan(span.normalized()),
+            Self::LineRange {
+                start_line,
+                end_line,
+            } => Self::LineRange {
+                start_line: (*start_line).min(*end_line),
+                end_line: (*start_line).max(*end_line),
+            },
+        }
+    }
+
+    fn intersects_line(&self, line_index: usize) -> bool {
+        match self.normalized() {
+            Self::ChunkSpan(span) => span.intersects_line(line_index),
+            Self::LineRange {
+                start_line,
+                end_line,
+            } => start_line <= line_index && line_index <= end_line,
+        }
+    }
+
+    fn end_line(&self) -> usize {
+        match self.normalized() {
+            Self::ChunkSpan(span) => span.end.line,
+            Self::LineRange { end_line, .. } => end_line,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CursorAnchor {
+    line: usize,
+    chunk_index: Option<usize>,
+    preferred_display_col: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ReviewComment {
     file_path: String,
-    start_line: usize,
-    end_line: usize,
+    target: CommentTarget,
     text: String,
 }
 
@@ -98,15 +143,18 @@ struct App {
     active_file_index: usize,
     file_explorer_open: bool,
     code_cursor_line: usize,
+    code_cursor_chunk: Option<usize>,
+    code_preferred_display_col: usize,
     code_viewport_top: usize,
     raw_cursor_line: usize,
     raw_viewport_top: usize,
     viewport_height: usize,
     viewport_width: usize,
     pending_sequence: PendingSequence,
+    pending_count: Option<usize>,
     view_mode: ViewMode,
     motion_mode: MotionMode,
-    visual_anchor_line: Option<usize>,
+    visual_anchor: Option<CursorAnchor>,
     input_mode: InputMode,
     comments: Vec<ReviewComment>,
     status_message: String,
@@ -119,15 +167,18 @@ impl App {
             active_file_index: 0,
             file_explorer_open: true,
             code_cursor_line: 0,
+            code_cursor_chunk: None,
+            code_preferred_display_col: 0,
             code_viewport_top: 0,
             raw_cursor_line: 0,
             raw_viewport_top: 0,
             viewport_height: 1,
             viewport_width: 1,
             pending_sequence: PendingSequence::None,
+            pending_count: None,
             view_mode: ViewMode::Code,
             motion_mode: MotionMode::Normal,
-            visual_anchor_line: None,
+            visual_anchor: None,
             input_mode: InputMode::Normal,
             comments: Vec::new(),
             status_message: "Press : for commands, i to queue a comment for AI.".to_owned(),
@@ -146,26 +197,43 @@ impl App {
 
     fn clear_visual_mode(&mut self) {
         self.motion_mode = MotionMode::Normal;
-        self.visual_anchor_line = None;
+        self.visual_anchor = None;
     }
 
-    fn selection_range(&self) -> Option<(usize, usize)> {
+    fn cursor_anchor(&self) -> CursorAnchor {
+        CursorAnchor {
+            line: self.code_cursor_line,
+            chunk_index: self.code_cursor_chunk,
+            preferred_display_col: self.code_preferred_display_col,
+        }
+    }
+
+    fn selection_target(&self, file: &ReviewFile) -> Option<CommentTarget> {
         if self.view_mode != ViewMode::Code || self.motion_mode != MotionMode::Visual {
             return None;
         }
 
-        self.visual_anchor_line.map(|anchor| {
-            if anchor <= self.code_cursor_line {
-                (anchor, self.code_cursor_line)
-            } else {
-                (self.code_cursor_line, anchor)
+        let anchor = self.visual_anchor?;
+        let cursor_target = self.current_comment_target(file);
+        let anchor_target = Self::comment_target_for_anchor(file, anchor);
+
+        match (anchor_target, cursor_target) {
+            (Some(CommentTarget::ChunkSpan(left)), Some(CommentTarget::ChunkSpan(right))) => {
+                Some(CommentTarget::ChunkSpan(BufferSpan {
+                    start: left.start,
+                    end: right.end,
+                }))
             }
-        })
+            _ => Some(CommentTarget::LineRange {
+                start_line: anchor.line.min(self.code_cursor_line),
+                end_line: anchor.line.max(self.code_cursor_line),
+            }),
+        }
     }
 
-    fn line_in_selection(&self, line_index: usize) -> bool {
-        self.selection_range()
-            .is_some_and(|(start, end)| start <= line_index && line_index <= end)
+    fn line_in_selection(&self, file: &ReviewFile, line_index: usize) -> bool {
+        self.selection_target(file)
+            .is_some_and(|target| target.intersects_line(line_index))
     }
 
     fn comment_draft(&self) -> Option<&str> {
@@ -177,20 +245,45 @@ impl App {
 
     fn comment_box_anchor_line(&self, file: &ReviewFile) -> Option<usize> {
         self.comment_draft().map(|_| {
-            self.selection_range()
-                .map_or(self.code_cursor_line, |(_, end)| end)
+            self.selection_target(file)
+                .unwrap_or_else(|| {
+                    self.current_comment_target(file)
+                        .unwrap_or(CommentTarget::LineRange {
+                            start_line: self.code_cursor_line,
+                            end_line: self.code_cursor_line,
+                        })
+                })
+                .end_line()
                 .min(file.buffer.line_count().saturating_sub(1))
         })
     }
 
     fn mode_label(&self) -> String {
-        match self.selection_range() {
-            Some((start, end)) => format!("VISUAL {}-{}", start + 1, end + 1),
-            None => match self.motion_mode {
-                MotionMode::Normal => "NORMAL".to_owned(),
-                MotionMode::Visual => "VISUAL".to_owned(),
-            },
+        match self.motion_mode {
+            MotionMode::Normal => "NORMAL".to_owned(),
+            MotionMode::Visual => "VISUAL".to_owned(),
         }
+    }
+
+    fn push_count_digit(&mut self, digit: char) {
+        let value = digit
+            .to_digit(10)
+            .expect("only decimal digits should be passed");
+        let next = self
+            .pending_count
+            .unwrap_or(0)
+            .saturating_mul(10)
+            .saturating_add(value as usize);
+        self.pending_count = Some(next);
+    }
+
+    fn take_count(&mut self) -> usize {
+        self.pending_count.take().unwrap_or(1)
+    }
+
+    fn clear_prefixes(&mut self) {
+        self.pending_sequence = PendingSequence::None;
+        self.pending_count = None;
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
@@ -208,11 +301,12 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) {
+            let count = self.take_count();
             self.pending_sequence = PendingSequence::None;
 
             match key.code {
-                KeyCode::Char('d') => self.move_half_page_down(),
-                KeyCode::Char('u') => self.move_half_page_up(),
+                KeyCode::Char('d') => self.move_half_page_down(count),
+                KeyCode::Char('u') => self.move_half_page_up(count),
                 _ => {}
             }
 
@@ -225,19 +319,27 @@ impl App {
     fn handle_normal_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Char('q') => return true,
+            KeyCode::Char(ch) if ch.is_ascii_digit() => {
+                if ch == '0' && self.pending_count.is_none() {
+                    self.pending_sequence = PendingSequence::None;
+                    self.move_to_line_start();
+                } else {
+                    self.push_count_digit(ch);
+                }
+            }
             KeyCode::Char(':') => {
-                self.pending_sequence = PendingSequence::None;
+                self.clear_prefixes();
                 self.input_mode = InputMode::Command(String::new());
             }
             KeyCode::Esc => {
-                self.pending_sequence = PendingSequence::None;
+                self.clear_prefixes();
                 if self.motion_mode == MotionMode::Visual {
                     self.clear_visual_mode();
                     self.set_status("Visual mode canceled.");
                 }
             }
             KeyCode::Char('i') => {
-                self.pending_sequence = PendingSequence::None;
+                self.clear_prefixes();
                 if self.active_file().is_some() {
                     if self.view_mode == ViewMode::RawDiff {
                         self.view_mode = ViewMode::Code;
@@ -251,24 +353,32 @@ impl App {
                 self.toggle_visual_mode();
             }
             KeyCode::Char('e') => {
-                self.pending_sequence = PendingSequence::None;
+                self.clear_prefixes();
                 self.toggle_file_explorer();
             }
             KeyCode::Tab => {
-                self.pending_sequence = PendingSequence::None;
+                self.clear_prefixes();
                 self.toggle_mode();
             }
             KeyCode::Char('j') => {
+                let count = self.take_count();
                 self.pending_sequence = PendingSequence::None;
-                self.move_down();
+                self.move_down(count);
             }
             KeyCode::Char('k') => {
+                let count = self.take_count();
                 self.pending_sequence = PendingSequence::None;
-                self.move_up();
+                self.move_up(count);
+            }
+            KeyCode::Char('l') => {
+                let count = self.take_count();
+                self.pending_sequence = PendingSequence::None;
+                self.move_right_chunk(count);
             }
             KeyCode::Char('G') => {
+                let count = self.pending_count.take();
                 self.pending_sequence = PendingSequence::None;
-                self.move_to_end();
+                self.move_to_end(count);
             }
             KeyCode::Char('g') => {
                 self.handle_g_sequence();
@@ -278,9 +388,25 @@ impl App {
             KeyCode::Char('[') => self.pending_sequence = PendingSequence::OpenBracket,
             KeyCode::Char('c') => self.handle_change_sequence(),
             KeyCode::Char('f') => self.handle_file_sequence(),
+            KeyCode::Char('^') => {
+                let count = self.take_count();
+                self.pending_sequence = PendingSequence::None;
+                if count > 1 {
+                    self.move_to_line_start();
+                }
+                self.move_to_first_non_blank_chunk();
+            }
+            KeyCode::Char('$') => {
+                let count = self.take_count();
+                self.pending_sequence = PendingSequence::None;
+                if count > 1 {
+                    self.move_down(count - 1);
+                }
+                self.move_to_line_end();
+            }
             KeyCode::Char('h') => self.handle_hunk_sequence(),
             _ => {
-                self.pending_sequence = PendingSequence::None;
+                self.clear_prefixes();
             }
         }
 
@@ -289,7 +415,8 @@ impl App {
 
     fn handle_g_sequence(&mut self) {
         if self.pending_sequence == PendingSequence::G {
-            self.move_to_start();
+            let count = self.pending_count.take();
+            self.move_to_start(count);
             self.pending_sequence = PendingSequence::None;
         } else {
             self.pending_sequence = PendingSequence::G;
@@ -304,28 +431,33 @@ impl App {
     }
 
     fn handle_change_sequence(&mut self) {
+        let count = self.take_count();
         if self.pending_sequence == PendingSequence::CloseBracket {
-            self.jump_next_change();
+            self.jump_next_change(count);
         } else if self.pending_sequence == PendingSequence::OpenBracket {
-            self.jump_previous_change();
+            self.jump_previous_change(count);
         }
         self.pending_sequence = PendingSequence::None;
     }
 
     fn handle_file_sequence(&mut self) {
+        let count = self.take_count();
         if self.pending_sequence == PendingSequence::CloseBracket {
-            self.jump_next_file();
+            self.jump_next_file(count);
         } else if self.pending_sequence == PendingSequence::OpenBracket {
-            self.jump_previous_file();
+            self.jump_previous_file(count);
         }
         self.pending_sequence = PendingSequence::None;
     }
 
     fn handle_hunk_sequence(&mut self) {
+        let count = self.take_count();
         if self.pending_sequence == PendingSequence::CloseBracket {
-            self.jump_next_hunk();
+            self.jump_next_hunk(count);
         } else if self.pending_sequence == PendingSequence::OpenBracket {
-            self.jump_previous_hunk();
+            self.jump_previous_hunk(count);
+        } else if self.view_mode == ViewMode::Code {
+            self.move_left_chunk(count);
         }
         self.pending_sequence = PendingSequence::None;
     }
@@ -425,28 +557,22 @@ impl App {
             return;
         }
 
-        let Some((file_path, line_count)) = self
-            .active_file()
-            .map(|file| (file.display_path().to_owned(), file.buffer.line_count()))
-        else {
+        let Some((file_path, target)) = self.active_file().and_then(|file| {
+            Some((
+                file.display_path().to_owned(),
+                self.selection_target(file)
+                    .or_else(|| self.current_comment_target(file))?,
+            ))
+        }) else {
             self.set_status("No active file for comment.");
             return;
         };
 
-        let (start_line, end_line) = self.selection_range().unwrap_or_else(|| {
-            let line = self.code_cursor_line.min(line_count.saturating_sub(1));
-            (line, line)
-        });
-        let display_target = if start_line == end_line {
-            format!("{file_path}:{}", start_line + 1)
-        } else {
-            format!("{file_path}:{}-{}", start_line + 1, end_line + 1)
-        };
+        let display_target = format_comment_target(&file_path, &target);
 
         self.comments.push(ReviewComment {
             file_path: file_path.clone(),
-            start_line,
-            end_line,
+            target,
             text: comment,
         });
         self.clear_visual_mode();
@@ -454,73 +580,239 @@ impl App {
             format!("Queued AI comment on {display_target}. Use :comments to review.");
     }
 
-    fn move_up(&mut self) {
+    fn current_chunk<'a>(&self, file: &'a ReviewFile) -> Option<&'a NavigableChunk> {
+        self.code_cursor_chunk
+            .and_then(|index| file.chunk(self.code_cursor_line, index))
+    }
+
+    fn comment_target_for_anchor(file: &ReviewFile, anchor: CursorAnchor) -> Option<CommentTarget> {
+        anchor
+            .chunk_index
+            .and_then(|index| file.chunk(anchor.line, index))
+            .map(|chunk| CommentTarget::ChunkSpan(chunk.span))
+            .or(Some(CommentTarget::LineRange {
+                start_line: anchor.line,
+                end_line: anchor.line,
+            }))
+    }
+
+    fn current_comment_target(&self, file: &ReviewFile) -> Option<CommentTarget> {
+        self.current_chunk(file)
+            .map(|chunk| CommentTarget::ChunkSpan(chunk.span))
+            .or(Some(CommentTarget::LineRange {
+                start_line: self
+                    .code_cursor_line
+                    .min(file.buffer.line_count().saturating_sub(1)),
+                end_line: self
+                    .code_cursor_line
+                    .min(file.buffer.line_count().saturating_sub(1)),
+            }))
+    }
+
+    fn set_code_cursor_line_with_preference(&mut self, line: usize) {
+        let Some((next_line, next_chunk)) = self.active_file().map(|file| {
+            let next_line = line.min(file.buffer.line_count().saturating_sub(1));
+            let next_chunk = file
+                .chunks
+                .nearest_chunk_index(next_line, self.code_preferred_display_col);
+            (next_line, next_chunk)
+        }) else {
+            self.code_cursor_line = 0;
+            self.code_cursor_chunk = None;
+            self.code_preferred_display_col = 0;
+            return;
+        };
+
+        self.code_cursor_line = next_line;
+        self.code_cursor_chunk = next_chunk;
+        self.refresh_preferred_display_col();
+    }
+
+    fn set_code_cursor_to_first_chunk(&mut self, line: usize) {
+        let Some((next_line, next_chunk)) = self.active_file().map(|file| {
+            let next_line = line.min(file.buffer.line_count().saturating_sub(1));
+            let next_chunk = file.chunks.first_chunk_index(next_line);
+            (next_line, next_chunk)
+        }) else {
+            self.code_cursor_line = 0;
+            self.code_cursor_chunk = None;
+            self.code_preferred_display_col = 0;
+            return;
+        };
+
+        self.code_cursor_line = next_line;
+        self.code_cursor_chunk = next_chunk;
+        self.refresh_preferred_display_col();
+    }
+
+    fn set_code_cursor_to_last_chunk(&mut self, line: usize) {
+        let Some((next_line, next_chunk)) = self.active_file().map(|file| {
+            let next_line = line.min(file.buffer.line_count().saturating_sub(1));
+            let next_chunk = file.chunks.last_chunk_index(next_line);
+            (next_line, next_chunk)
+        }) else {
+            self.code_cursor_line = 0;
+            self.code_cursor_chunk = None;
+            self.code_preferred_display_col = 0;
+            return;
+        };
+
+        self.code_cursor_line = next_line;
+        self.code_cursor_chunk = next_chunk;
+        self.refresh_preferred_display_col();
+    }
+
+    fn refresh_preferred_display_col(&mut self) {
+        if let Some(display_col) = self
+            .active_file()
+            .and_then(|file| self.current_chunk(file))
+            .map(|chunk| chunk.span.start.display_col)
+        {
+            self.code_preferred_display_col = display_col;
+        }
+    }
+
+    fn move_left_chunk(&mut self, count: usize) {
+        if self.view_mode != ViewMode::Code {
+            return;
+        }
+
+        for _ in 0..count {
+            let Some(next_chunk) = self
+                .code_cursor_chunk
+                .and_then(|index| index.checked_sub(1))
+            else {
+                break;
+            };
+            self.code_cursor_chunk = Some(next_chunk);
+        }
+        self.refresh_preferred_display_col();
+    }
+
+    fn move_right_chunk(&mut self, count: usize) {
+        if self.view_mode != ViewMode::Code {
+            return;
+        }
+
+        for _ in 0..count {
+            let Some(next_chunk) = self.active_file().and_then(|file| {
+                let current = self
+                    .code_cursor_chunk
+                    .or_else(|| file.chunks.first_chunk_index(self.code_cursor_line))?;
+                let last = file.chunks.last_chunk_index(self.code_cursor_line)?;
+                (current < last).then_some(current + 1)
+            }) else {
+                break;
+            };
+            self.code_cursor_chunk = Some(next_chunk);
+        }
+        self.refresh_preferred_display_col();
+    }
+
+    fn move_up(&mut self, count: usize) {
         match self.view_mode {
             ViewMode::Code => {
-                self.code_cursor_line = self.code_cursor_line.saturating_sub(1);
+                self.set_code_cursor_line_with_preference(
+                    self.code_cursor_line.saturating_sub(count),
+                );
             }
             ViewMode::RawDiff => {
-                self.raw_cursor_line = self.raw_cursor_line.saturating_sub(1);
+                self.raw_cursor_line = self.raw_cursor_line.saturating_sub(count);
                 self.sync_code_cursor_from_raw();
             }
         }
     }
 
-    fn move_down(&mut self) {
+    fn move_down(&mut self, count: usize) {
         match self.view_mode {
             ViewMode::Code => {
                 let max_index = self
                     .active_file()
                     .map_or(0, |file| file.buffer.line_count().saturating_sub(1));
-                self.code_cursor_line = (self.code_cursor_line + 1).min(max_index);
+                self.set_code_cursor_line_with_preference(
+                    self.code_cursor_line.saturating_add(count).min(max_index),
+                );
             }
             ViewMode::RawDiff => {
                 let max_index = self
                     .active_file()
                     .map_or(0, |file| raw_rows(file).len().saturating_sub(1));
-                self.raw_cursor_line = (self.raw_cursor_line + 1).min(max_index);
+                self.raw_cursor_line = self.raw_cursor_line.saturating_add(count).min(max_index);
                 self.sync_code_cursor_from_raw();
             }
         }
     }
 
-    fn move_to_start(&mut self) {
+    fn move_to_line_start(&mut self) {
+        if self.view_mode != ViewMode::Code {
+            return;
+        }
+
+        self.set_code_cursor_to_first_chunk(self.code_cursor_line);
+    }
+
+    fn move_to_first_non_blank_chunk(&mut self) {
+        if self.view_mode != ViewMode::Code {
+            return;
+        }
+
+        self.set_code_cursor_to_first_chunk(self.code_cursor_line);
+    }
+
+    fn move_to_line_end(&mut self) {
+        if self.view_mode != ViewMode::Code {
+            return;
+        }
+
+        self.set_code_cursor_to_last_chunk(self.code_cursor_line);
+    }
+
+    fn move_to_start(&mut self, count: Option<usize>) {
         match self.view_mode {
             ViewMode::Code => {
-                self.code_cursor_line = 0;
+                let target = count.unwrap_or(1).saturating_sub(1);
+                self.set_code_cursor_to_first_chunk(target);
             }
             ViewMode::RawDiff => {
-                self.raw_cursor_line = 0;
+                self.raw_cursor_line = count.unwrap_or(1).saturating_sub(1);
                 self.sync_code_cursor_from_raw();
             }
         }
     }
 
-    fn move_to_end(&mut self) {
+    fn move_to_end(&mut self, count: Option<usize>) {
         match self.view_mode {
             ViewMode::Code => {
-                self.code_cursor_line = self
-                    .active_file()
-                    .map_or(0, |file| file.buffer.line_count().saturating_sub(1));
+                let target = count.unwrap_or_else(|| {
+                    self.active_file()
+                        .map_or(1, |file| file.buffer.line_count())
+                });
+                self.set_code_cursor_to_last_chunk(target.saturating_sub(1));
             }
             ViewMode::RawDiff => {
-                self.raw_cursor_line = self
-                    .active_file()
-                    .map_or(0, |file| raw_rows(file).len().saturating_sub(1));
+                self.raw_cursor_line = count.map_or_else(
+                    || {
+                        self.active_file()
+                            .map_or(0, |file| raw_rows(file).len().saturating_sub(1))
+                    },
+                    |value| value.saturating_sub(1),
+                );
                 self.sync_code_cursor_from_raw();
             }
         }
     }
 
-    fn move_half_page_down(&mut self) {
-        let step = self.half_page_step();
+    fn move_half_page_down(&mut self, count: usize) {
+        let step = self.half_page_step().saturating_mul(count.max(1));
 
         match self.view_mode {
             ViewMode::Code => {
                 let max_index = self
                     .active_file()
                     .map_or(0, |file| file.buffer.line_count().saturating_sub(1));
-                self.code_cursor_line = (self.code_cursor_line + step).min(max_index);
+                self.set_code_cursor_line_with_preference(
+                    self.code_cursor_line.saturating_add(step).min(max_index),
+                );
             }
             ViewMode::RawDiff => {
                 let max_index = self
@@ -532,12 +824,14 @@ impl App {
         }
     }
 
-    fn move_half_page_up(&mut self) {
-        let step = self.half_page_step();
+    fn move_half_page_up(&mut self, count: usize) {
+        let step = self.half_page_step().saturating_mul(count.max(1));
 
         match self.view_mode {
             ViewMode::Code => {
-                self.code_cursor_line = self.code_cursor_line.saturating_sub(step);
+                self.set_code_cursor_line_with_preference(
+                    self.code_cursor_line.saturating_sub(step),
+                );
             }
             ViewMode::RawDiff => {
                 self.raw_cursor_line = self.raw_cursor_line.saturating_sub(step);
@@ -546,7 +840,7 @@ impl App {
         }
     }
 
-    fn jump_next_change(&mut self) {
+    fn jump_next_change(&mut self, count: usize) {
         match self.view_mode {
             ViewMode::Code => {
                 let Some(file) = self.active_file() else {
@@ -557,8 +851,8 @@ impl App {
                     .iter()
                     .map(|anchor| anchor.buffer_line)
                     .collect::<Vec<_>>();
-                if let Some(target) = next_target(&targets, self.code_cursor_line) {
-                    self.code_cursor_line = target;
+                if let Some(target) = nth_next_target(&targets, self.code_cursor_line, count) {
+                    self.set_code_cursor_to_first_chunk(target);
                 }
             }
             ViewMode::RawDiff => {
@@ -570,7 +864,7 @@ impl App {
                     .iter()
                     .map(|anchor| raw_row_for_buffer_line(file, anchor.buffer_line))
                     .collect::<Vec<_>>();
-                if let Some(target) = next_target(&targets, self.raw_cursor_line) {
+                if let Some(target) = nth_next_target(&targets, self.raw_cursor_line, count) {
                     self.raw_cursor_line = target;
                     self.sync_code_cursor_from_raw();
                 }
@@ -578,7 +872,7 @@ impl App {
         }
     }
 
-    fn jump_previous_change(&mut self) {
+    fn jump_previous_change(&mut self, count: usize) {
         match self.view_mode {
             ViewMode::Code => {
                 let Some(file) = self.active_file() else {
@@ -589,8 +883,8 @@ impl App {
                     .iter()
                     .map(|anchor| anchor.buffer_line)
                     .collect::<Vec<_>>();
-                if let Some(target) = previous_target(&targets, self.code_cursor_line) {
-                    self.code_cursor_line = target;
+                if let Some(target) = nth_previous_target(&targets, self.code_cursor_line, count) {
+                    self.set_code_cursor_to_first_chunk(target);
                 }
             }
             ViewMode::RawDiff => {
@@ -602,7 +896,7 @@ impl App {
                     .iter()
                     .map(|anchor| raw_row_for_buffer_line(file, anchor.buffer_line))
                     .collect::<Vec<_>>();
-                if let Some(target) = previous_target(&targets, self.raw_cursor_line) {
+                if let Some(target) = nth_previous_target(&targets, self.raw_cursor_line, count) {
                     self.raw_cursor_line = target;
                     self.sync_code_cursor_from_raw();
                 }
@@ -610,29 +904,29 @@ impl App {
         }
     }
 
-    fn jump_next_file(&mut self) {
+    fn jump_next_file(&mut self, count: usize) {
         if self.snapshot.files.is_empty() {
             return;
         }
 
         let targets = (0..self.snapshot.files.len()).collect::<Vec<_>>();
-        if let Some(target) = next_target(&targets, self.active_file_index) {
+        if let Some(target) = nth_next_target(&targets, self.active_file_index, count) {
             self.set_active_file(target);
         }
     }
 
-    fn jump_previous_file(&mut self) {
+    fn jump_previous_file(&mut self, count: usize) {
         if self.snapshot.files.is_empty() {
             return;
         }
 
         let targets = (0..self.snapshot.files.len()).collect::<Vec<_>>();
-        if let Some(target) = previous_target(&targets, self.active_file_index) {
+        if let Some(target) = nth_previous_target(&targets, self.active_file_index, count) {
             self.set_active_file(target);
         }
     }
 
-    fn jump_next_hunk(&mut self) {
+    fn jump_next_hunk(&mut self, count: usize) {
         if self.view_mode != ViewMode::RawDiff {
             return;
         }
@@ -641,13 +935,13 @@ impl App {
             return;
         };
         let targets = raw_hunk_targets(file);
-        if let Some(target) = next_target(&targets, self.raw_cursor_line) {
+        if let Some(target) = nth_next_target(&targets, self.raw_cursor_line, count) {
             self.raw_cursor_line = target;
             self.sync_code_cursor_from_raw();
         }
     }
 
-    fn jump_previous_hunk(&mut self) {
+    fn jump_previous_hunk(&mut self, count: usize) {
         if self.view_mode != ViewMode::RawDiff {
             return;
         }
@@ -656,7 +950,7 @@ impl App {
             return;
         };
         let targets = raw_hunk_targets(file);
-        if let Some(target) = previous_target(&targets, self.raw_cursor_line) {
+        if let Some(target) = nth_previous_target(&targets, self.raw_cursor_line, count) {
             self.raw_cursor_line = target;
             self.sync_code_cursor_from_raw();
         }
@@ -688,7 +982,7 @@ impl App {
         match self.motion_mode {
             MotionMode::Normal => {
                 self.motion_mode = MotionMode::Visual;
-                self.visual_anchor_line = Some(self.code_cursor_line);
+                self.visual_anchor = Some(self.cursor_anchor());
                 self.set_status("Visual mode.");
             }
             MotionMode::Visual => {
@@ -718,15 +1012,22 @@ impl App {
     }
 
     fn reset_active_file_positions(&mut self) {
-        let (code_cursor, raw_cursor) = if let Some(file) = self.active_file() {
+        let (code_cursor, code_chunk, code_col, raw_cursor) = if let Some(file) = self.active_file()
+        {
             let code_cursor = first_anchor_line(file);
+            let code_chunk = file.chunks.first_chunk_index(code_cursor);
+            let code_col = code_chunk
+                .and_then(|index| file.chunk(code_cursor, index))
+                .map_or(0, |chunk| chunk.span.start.display_col);
             let raw_cursor = raw_row_for_buffer_line(file, code_cursor);
-            (code_cursor, raw_cursor)
+            (code_cursor, code_chunk, code_col, raw_cursor)
         } else {
-            (0, 0)
+            (0, None, 0, 0)
         };
 
         self.code_cursor_line = code_cursor;
+        self.code_cursor_chunk = code_chunk;
+        self.code_preferred_display_col = code_col;
         self.code_viewport_top = 0;
         self.raw_cursor_line = raw_cursor;
         self.raw_viewport_top = 0;
@@ -737,7 +1038,7 @@ impl App {
             .active_file()
             .and_then(|file| buffer_line_for_raw_row(file, self.raw_cursor_line))
             .unwrap_or(self.code_cursor_line);
-        self.code_cursor_line = new_cursor;
+        self.set_code_cursor_line_with_preference(new_cursor);
     }
 
     fn sync_viewport(&mut self, height: usize) {
@@ -792,16 +1093,19 @@ impl App {
 
     fn line_has_comment(&self, file_path: &str, line_index: usize) -> bool {
         self.comments.iter().any(|comment| {
-            comment.file_path == file_path
-                && comment.start_line <= line_index
-                && line_index <= comment.end_line
+            comment.file_path == file_path && comment.target.intersects_line(line_index)
         })
     }
 
     fn footer_text(&self) -> String {
+        let count_prefix = self
+            .pending_count
+            .map_or(String::new(), |count| format!("{count} "));
+
         match &self.input_mode {
             InputMode::Normal => format!(
-                "{} | {} | {} queued | v visual | e explorer | : commands | i comment | gd/tab toggle | [c/]c change | [f/]f file",
+                "{}{} | {} | {} queued | h/l chunks | v visual | e explorer | : commands | i comment | gd/tab toggle | [c/]c change | [f/]f file",
+                count_prefix,
                 self.mode_label(),
                 self.status_message,
                 self.comments.len()
@@ -996,6 +1300,13 @@ struct RenderedCodeView {
     cursor_visual_row: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TextOverlay {
+    start_byte: usize,
+    end_byte: usize,
+    style: Style,
+}
+
 fn code_rows(file: &ReviewFile) -> Vec<CodeRenderRow> {
     if matches!(file.source, BufferSource::Placeholder) {
         return vec![CodeRenderRow {
@@ -1060,7 +1371,8 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
         persisted_comment_boxes
             .entry(
                 comment
-                    .end_line
+                    .target
+                    .end_line()
                     .min(file.buffer.line_count().saturating_sub(1)),
             )
             .or_default()
@@ -1078,7 +1390,7 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
         let is_selected = row.buffer_line == Some(app.code_cursor_line);
         let in_selection = row
             .buffer_line
-            .is_some_and(|line| app.line_in_selection(line));
+            .is_some_and(|line| app.line_in_selection(file, line));
         let has_comment = row
             .buffer_line
             .is_some_and(|line| app.line_has_comment(file.display_path(), line));
@@ -1087,11 +1399,14 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
         }
         let row_buffer_line = row.buffer_line;
         let highlighted_line = row_buffer_line.and_then(|line| file.highlighted_line(line));
+        let text_overlays =
+            row_buffer_line.map_or_else(Vec::new, |line| code_text_overlays(app, file, line));
         lines.push(code_row_to_text(
             is_selected,
             in_selection,
             has_comment,
             highlighted_line,
+            &text_overlays,
             &row,
             width,
         ));
@@ -1165,10 +1480,7 @@ fn comment_box_lines(text: &str, width: usize, is_draft: bool) -> Vec<Line<'stat
     lines.extend(wrapped.into_iter().map(|segment| {
         Line::from(vec![
             Span::styled(format!("{}│", " ".repeat(text_indent)), border_style),
-            Span::styled(
-                format!("{segment:<inner_width$}"),
-                body_style,
-            ),
+            Span::styled(format!("{segment:<inner_width$}"), body_style),
             Span::styled("│", border_style),
         ])
     }));
@@ -1342,21 +1654,160 @@ fn relevant_raw_lineno(file: &ReviewFile, row: &RawRenderRow) -> Option<usize> {
     }
 }
 
-fn next_target(targets: &[usize], current: usize) -> Option<usize> {
-    targets
-        .iter()
-        .copied()
-        .find(|target| *target > current)
-        .or_else(|| targets.last().copied())
+fn nth_next_target(targets: &[usize], current: usize, count: usize) -> Option<usize> {
+    let mut current = current;
+    let mut next = None;
+
+    for _ in 0..count.max(1) {
+        next = targets
+            .iter()
+            .copied()
+            .find(|target| *target > current)
+            .or_else(|| targets.last().copied());
+        current = next?;
+    }
+
+    next
 }
 
-fn previous_target(targets: &[usize], current: usize) -> Option<usize> {
-    targets
+fn nth_previous_target(targets: &[usize], current: usize, count: usize) -> Option<usize> {
+    let mut current = current;
+    let mut next = None;
+
+    for _ in 0..count.max(1) {
+        next = targets
+            .iter()
+            .copied()
+            .take_while(|target| *target < current)
+            .last()
+            .or_else(|| targets.first().copied());
+        current = next?;
+    }
+
+    next
+}
+
+fn code_text_overlays(app: &App, file: &ReviewFile, line_index: usize) -> Vec<TextOverlay> {
+    let mut overlays = Vec::new();
+    let line_text = file.buffer.line(line_index).unwrap_or_default();
+
+    if let Some(target) = app.selection_target(file)
+        && let Some((start_byte, end_byte)) =
+            target_segment_for_line(&target, line_index, line_text)
+    {
+        overlays.push(TextOverlay {
+            start_byte,
+            end_byte,
+            style: selection_chunk_style(),
+        });
+    }
+
+    for comment in app
+        .comments
         .iter()
-        .copied()
-        .take_while(|target| *target < current)
-        .last()
-        .or_else(|| targets.first().copied())
+        .filter(|comment| comment.file_path == file.display_path())
+    {
+        if let Some((start_byte, end_byte)) =
+            target_segment_for_line(&comment.target, line_index, line_text)
+        {
+            overlays.push(TextOverlay {
+                start_byte,
+                end_byte,
+                style: comment_chunk_style(),
+            });
+        }
+    }
+
+    if let Some(chunk) = app.current_chunk(file)
+        && chunk.span.start.line == line_index
+    {
+        overlays.push(TextOverlay {
+            start_byte: chunk.span.start.byte_col.min(line_text.len()),
+            end_byte: chunk.span.end.byte_col.min(line_text.len()),
+            style: active_chunk_style(),
+        });
+    }
+
+    overlays
+}
+
+fn target_segment_for_line(
+    target: &CommentTarget,
+    line_index: usize,
+    line_text: &str,
+) -> Option<(usize, usize)> {
+    match target.normalized() {
+        CommentTarget::ChunkSpan(span) => {
+            if !span.intersects_line(line_index) {
+                return None;
+            }
+
+            let start_byte = if line_index == span.start.line {
+                span.start.byte_col.min(line_text.len())
+            } else {
+                0
+            };
+            let end_byte = if line_index == span.end.line {
+                span.end.byte_col.min(line_text.len())
+            } else {
+                line_text.len()
+            };
+
+            (start_byte < end_byte).then_some((start_byte, end_byte))
+        }
+        CommentTarget::LineRange {
+            start_line,
+            end_line,
+        } => (start_line <= line_index && line_index <= end_line && !line_text.is_empty())
+            .then_some((0, line_text.len())),
+    }
+}
+
+fn active_chunk_style() -> Style {
+    Style::default()
+        .bg(Color::Rgb(64, 64, 90))
+        .add_modifier(Modifier::UNDERLINED | Modifier::BOLD)
+}
+
+fn selection_chunk_style() -> Style {
+    Style::default().bg(Color::Rgb(52, 52, 72))
+}
+
+fn comment_chunk_style() -> Style {
+    Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+}
+
+fn format_comment_target(file_path: &str, target: &CommentTarget) -> String {
+    match target.normalized() {
+        CommentTarget::ChunkSpan(span) => {
+            if span.start.line == span.end.line {
+                format!(
+                    "{file_path}:{}:{}-{}",
+                    span.start.line + 1,
+                    span.start.display_col + 1,
+                    span.end.display_col + 1
+                )
+            } else {
+                format!(
+                    "{file_path}:{}:{}-{}:{}",
+                    span.start.line + 1,
+                    span.start.display_col + 1,
+                    span.end.line + 1,
+                    span.end.display_col + 1
+                )
+            }
+        }
+        CommentTarget::LineRange {
+            start_line,
+            end_line,
+        } => {
+            if start_line == end_line {
+                format!("{file_path}:{}", start_line + 1)
+            } else {
+                format!("{file_path}:{}-{}", start_line + 1, end_line + 1)
+            }
+        }
+    }
 }
 
 fn code_row_to_text(
@@ -1364,6 +1815,7 @@ fn code_row_to_text(
     in_selection: bool,
     has_comment: bool,
     highlighted_line: Option<&HighlightedLine>,
+    text_overlays: &[TextOverlay],
     row: &CodeRenderRow,
     width: usize,
 ) -> Line<'static> {
@@ -1393,6 +1845,7 @@ fn code_row_to_text(
             &row.text,
             highlighted_line,
             text_style,
+            text_overlays,
         )),
         CodeRowKind::VirtualDeleted | CodeRowKind::Banner => {
             spans.push(Span::styled(row.text.clone(), text_style));
@@ -1505,37 +1958,50 @@ fn highlighted_text_spans(
     text: &str,
     highlighted_line: Option<&HighlightedLine>,
     base_style: Style,
+    text_overlays: &[TextOverlay],
 ) -> Vec<Span<'static>> {
-    let Some(highlighted_line) = highlighted_line else {
-        return vec![Span::styled(text.to_owned(), base_style)];
-    };
-
-    let mut spans = Vec::new();
-    let mut cursor = 0usize;
-
-    for span in &highlighted_line.spans {
-        let start = span.start_byte.min(text.len());
-        let end = span.end_byte.min(text.len());
-
-        if start > cursor {
-            spans.push(Span::styled(text[cursor..start].to_owned(), base_style));
-        }
-
-        if start < end {
-            spans.push(Span::styled(
-                text[start..end].to_owned(),
-                base_style.patch(syntax_style(span.style)),
-            ));
-            cursor = end;
+    let mut boundaries = vec![0, text.len()];
+    if let Some(highlighted_line) = highlighted_line {
+        for span in &highlighted_line.spans {
+            boundaries.push(span.start_byte.min(text.len()));
+            boundaries.push(span.end_byte.min(text.len()));
         }
     }
+    for overlay in text_overlays {
+        boundaries.push(overlay.start_byte.min(text.len()));
+        boundaries.push(overlay.end_byte.min(text.len()));
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
 
-    if cursor < text.len() {
-        spans.push(Span::styled(text[cursor..].to_owned(), base_style));
+    let mut spans = Vec::new();
+    for window in boundaries.windows(2) {
+        let start = window[0];
+        let end = window[1];
+        if start >= end || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            continue;
+        }
+
+        let mut style = base_style;
+        if let Some(style_key) = highlighted_line.and_then(|line| {
+            line.spans
+                .iter()
+                .find(|span| span.start_byte <= start && end <= span.end_byte)
+                .map(|span| span.style)
+        }) {
+            style = style.patch(syntax_style(style_key));
+        }
+        for overlay in text_overlays {
+            if overlay.start_byte <= start && end <= overlay.end_byte {
+                style = style.patch(overlay.style);
+            }
+        }
+
+        spans.push(Span::styled(text[start..end].to_owned(), style));
     }
 
     if spans.is_empty() {
-        spans.push(Span::styled(String::new(), base_style));
+        spans.push(Span::styled(text.to_owned(), base_style));
     }
 
     spans
@@ -1658,7 +2124,7 @@ mod tests {
     use ratatui::style::Color;
 
     use super::{
-        App, CodeRowKind, InputMode, MotionMode, RawRowKind, ViewMode, code_rows,
+        App, CodeRowKind, CommentTarget, InputMode, MotionMode, RawRowKind, ViewMode, code_rows,
         comment_box_lines, raw_row_to_text, raw_rows, rendered_code_view,
     };
 
@@ -1804,9 +2270,9 @@ mod tests {
         let mut app = App::new(sample_snapshot());
 
         assert_eq!(app.code_cursor_line, 1);
-        app.jump_next_change();
+        app.jump_next_change(1);
         assert_eq!(app.code_cursor_line, 7);
-        app.jump_next_file();
+        app.jump_next_file(1);
         assert_eq!(app.active_file_index, 1);
         assert_eq!(app.code_cursor_line, 0);
     }
@@ -1851,12 +2317,18 @@ mod tests {
         assert_eq!(app.motion_mode, MotionMode::Normal);
         assert!(!app.handle_key(key(KeyCode::Char('v'))));
         assert_eq!(app.motion_mode, MotionMode::Visual);
-        assert_eq!(app.selection_range(), Some((1, 1)));
+        assert!(matches!(
+            app.selection_target(&app.snapshot.files[0]),
+            Some(CommentTarget::ChunkSpan(span)) if span.start.line == 1 && span.end.line == 1
+        ));
         assert!(!app.handle_key(key(KeyCode::Char('j'))));
-        assert_eq!(app.selection_range(), Some((1, 2)));
+        assert!(matches!(
+            app.selection_target(&app.snapshot.files[0]),
+            Some(CommentTarget::ChunkSpan(span)) if span.start.line == 1 && span.end.line == 2
+        ));
         assert!(!app.handle_key(key(KeyCode::Esc)));
         assert_eq!(app.motion_mode, MotionMode::Normal);
-        assert_eq!(app.selection_range(), None);
+        assert_eq!(app.selection_target(&app.snapshot.files[0]), None);
     }
 
     #[test]
@@ -1873,9 +2345,62 @@ mod tests {
         assert!(!app.handle_key(key(KeyCode::Char('e'))));
         assert!(!app.handle_key(key(KeyCode::Enter)));
         assert_eq!(app.comments.len(), 1);
-        assert_eq!(app.comments[0].start_line, 1);
-        assert_eq!(app.comments[0].end_line, 2);
+        assert!(matches!(
+            app.comments[0].target,
+            CommentTarget::ChunkSpan(span) if span.start.line == 1 && span.end.line == 2
+        ));
         assert_eq!(app.motion_mode, MotionMode::Normal);
+    }
+
+    #[test]
+    fn h_and_l_move_between_chunks() {
+        let mut app = App::new(sample_snapshot());
+
+        app.code_cursor_line = 0;
+        app.set_code_cursor_to_first_chunk(0);
+        let initial_chunk = app.code_cursor_chunk.expect("cursor starts on a chunk");
+        assert!(
+            app.snapshot.files[0]
+                .chunks
+                .line(0)
+                .is_some_and(|line| line.chunks.len() >= 2)
+        );
+        assert!(!app.handle_key(key(KeyCode::Char('l'))));
+        assert_eq!(app.code_cursor_chunk, Some(initial_chunk + 1));
+        assert!(!app.handle_key(key(KeyCode::Char('h'))));
+        assert_eq!(app.code_cursor_chunk, Some(initial_chunk));
+    }
+
+    #[test]
+    fn count_prefix_moves_multiple_chunks() {
+        let mut app = App::new(sample_snapshot());
+
+        app.set_active_file(1);
+        assert!(
+            app.snapshot.files[1]
+                .chunks
+                .line(0)
+                .is_some_and(|line| line.chunks.len() >= 3)
+        );
+        assert!(!app.handle_key(key(KeyCode::Char('2'))));
+        assert!(!app.handle_key(key(KeyCode::Char('l'))));
+        assert_eq!(app.code_cursor_chunk, Some(2));
+    }
+
+    #[test]
+    fn l_is_noop_on_single_chunk_line() {
+        let mut app = App::new(sample_snapshot());
+
+        assert_eq!(app.code_cursor_line, 1);
+        assert!(
+            app.snapshot.files[0]
+                .chunks
+                .line(1)
+                .is_some_and(|line| line.chunks.len() == 1)
+        );
+        assert_eq!(app.code_cursor_chunk, Some(0));
+        assert!(!app.handle_key(key(KeyCode::Char('l'))));
+        assert_eq!(app.code_cursor_chunk, Some(0));
     }
 
     #[test]
@@ -1915,8 +2440,10 @@ mod tests {
         let mut app = App::new(sample_snapshot());
         app.comments.push(super::ReviewComment {
             file_path: "src/main.rs".to_owned(),
-            start_line: 1,
-            end_line: 1,
+            target: CommentTarget::LineRange {
+                start_line: 1,
+                end_line: 1,
+            },
             text: "Keep this visible".to_owned(),
         });
 
