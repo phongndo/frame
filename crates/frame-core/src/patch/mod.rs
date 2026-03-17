@@ -68,6 +68,7 @@ impl PatchFile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileChangeKind {
     Added,
+    Copied,
     Deleted,
     Modified,
     Renamed,
@@ -77,6 +78,7 @@ impl fmt::Display for FileChangeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let label = match self {
             Self::Added => "A",
+            Self::Copied => "C",
             Self::Deleted => "D",
             Self::Modified => "M",
             Self::Renamed => "R",
@@ -248,12 +250,22 @@ fn handle_file_metadata(file: &mut PatchFile, line: &str) -> bool {
         return true;
     }
 
+    if let Some(path) = line.strip_prefix("copy from ") {
+        file.change = FileChangeKind::Copied;
+        file.old_path = normalize_patch_path(path);
+        return true;
+    }
+
+    if let Some(path) = line.strip_prefix("copy to ") {
+        file.change = FileChangeKind::Copied;
+        file.new_path = normalize_patch_path(path);
+        return true;
+    }
+
     line.starts_with("similarity index ")
         || line.starts_with("index ")
         || line.starts_with("old mode ")
         || line.starts_with("new mode ")
-        || line.starts_with("copy from ")
-        || line.starts_with("copy to ")
 }
 
 fn push_hunk_line(hunk: &mut ActiveHunk, line: &str) {
@@ -506,7 +518,7 @@ index 3333333..4444444 100644
     }
 
     #[test]
-    fn parses_added_deleted_and_renamed_files() {
+    fn parses_added_deleted_renamed_and_copied_files() {
         let input = r"diff --git a/dev/null b/new.txt
 new file mode 100644
 --- /dev/null
@@ -526,12 +538,22 @@ rename to b.txt
 @@ -1 +1 @@
 -left
 +right
+diff --git a/source.txt b/copy.txt
+similarity index 100%
+copy from source.txt
+copy to copy.txt
+@@ -1 +1 @@
+-left
++left
 ";
 
         let patch = parse_patch(input).expect("metadata patch should parse");
         assert_eq!(patch.files[0].change, FileChangeKind::Added);
         assert_eq!(patch.files[1].change, FileChangeKind::Deleted);
         assert_eq!(patch.files[2].change, FileChangeKind::Renamed);
+        assert_eq!(patch.files[3].change, FileChangeKind::Copied);
+        assert_eq!(patch.files[3].old_path.as_deref(), Some("source.txt"));
+        assert_eq!(patch.files[3].new_path.as_deref(), Some("copy.txt"));
     }
 
     #[test]

@@ -284,6 +284,8 @@ fn change_kind_for_file(change: FileChangeKind) -> ChangeKind {
     match change {
         FileChangeKind::Added => ChangeKind::Added,
         FileChangeKind::Deleted => ChangeKind::Deleted,
-        FileChangeKind::Modified | FileChangeKind::Renamed => ChangeKind::Modified,
+        FileChangeKind::Copied | FileChangeKind::Modified | FileChangeKind::Renamed => {
+            ChangeKind::Modified
+        }
     }
 }

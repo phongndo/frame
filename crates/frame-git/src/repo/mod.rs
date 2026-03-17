@@ -95,7 +95,10 @@ fn load_buffer(
             let contents = read_deleted_file(repo_root, old_path)?;
             Ok((CodeBuffer::from_text(&contents), BufferSource::PreImage))
         }
-        FileChangeKind::Added | FileChangeKind::Modified | FileChangeKind::Renamed => {
+        FileChangeKind::Added
+        | FileChangeKind::Copied
+        | FileChangeKind::Modified
+        | FileChangeKind::Renamed => {
             let file_path = patch
                 .new_path
                 .as_deref()
