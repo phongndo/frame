@@ -36,6 +36,12 @@ enum InputMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MotionMode {
+    Normal,
+    Visual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingSequence {
     None,
     G,
@@ -79,7 +85,8 @@ struct RawRenderRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReviewComment {
     file_path: String,
-    buffer_line: usize,
+    start_line: usize,
+    end_line: usize,
     text: String,
 }
 
@@ -93,8 +100,11 @@ struct App {
     raw_cursor_line: usize,
     raw_viewport_top: usize,
     viewport_height: usize,
+    viewport_width: usize,
     pending_sequence: PendingSequence,
     view_mode: ViewMode,
+    motion_mode: MotionMode,
+    visual_anchor_line: Option<usize>,
     input_mode: InputMode,
     comments: Vec<ReviewComment>,
     status_message: String,
@@ -111,8 +121,11 @@ impl App {
             raw_cursor_line: 0,
             raw_viewport_top: 0,
             viewport_height: 1,
+            viewport_width: 1,
             pending_sequence: PendingSequence::None,
             view_mode: ViewMode::Code,
+            motion_mode: MotionMode::Normal,
+            visual_anchor_line: None,
             input_mode: InputMode::Normal,
             comments: Vec::new(),
             status_message: "Press : for commands, i to queue a comment for AI.".to_owned(),
@@ -127,6 +140,55 @@ impl App {
 
     fn set_status(&mut self, message: &str) {
         message.clone_into(&mut self.status_message);
+    }
+
+    fn clear_visual_mode(&mut self) {
+        self.motion_mode = MotionMode::Normal;
+        self.visual_anchor_line = None;
+    }
+
+    fn selection_range(&self) -> Option<(usize, usize)> {
+        if self.view_mode != ViewMode::Code || self.motion_mode != MotionMode::Visual {
+            return None;
+        }
+
+        self.visual_anchor_line.map(|anchor| {
+            if anchor <= self.code_cursor_line {
+                (anchor, self.code_cursor_line)
+            } else {
+                (self.code_cursor_line, anchor)
+            }
+        })
+    }
+
+    fn line_in_selection(&self, line_index: usize) -> bool {
+        self.selection_range()
+            .is_some_and(|(start, end)| start <= line_index && line_index <= end)
+    }
+
+    fn comment_draft(&self) -> Option<&str> {
+        match &self.input_mode {
+            InputMode::Comment(buffer) => Some(buffer.as_str()),
+            InputMode::Normal | InputMode::Command(_) => None,
+        }
+    }
+
+    fn comment_box_anchor_line(&self, file: &ReviewFile) -> Option<usize> {
+        self.comment_draft().map(|_| {
+            self.selection_range()
+                .map_or(self.code_cursor_line, |(_, end)| end)
+                .min(file.buffer.line_count().saturating_sub(1))
+        })
+    }
+
+    fn mode_label(&self) -> String {
+        match self.selection_range() {
+            Some((start, end)) => format!("VISUAL {}-{}", start + 1, end + 1),
+            None => match self.motion_mode {
+                MotionMode::Normal => "NORMAL".to_owned(),
+                MotionMode::Visual => "VISUAL".to_owned(),
+            },
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
@@ -155,17 +217,36 @@ impl App {
             return false;
         }
 
+        self.handle_normal_key(key)
+    }
+
+    fn handle_normal_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Char('q') => return true,
             KeyCode::Char(':') => {
                 self.pending_sequence = PendingSequence::None;
                 self.input_mode = InputMode::Command(String::new());
             }
+            KeyCode::Esc => {
+                self.pending_sequence = PendingSequence::None;
+                if self.motion_mode == MotionMode::Visual {
+                    self.clear_visual_mode();
+                    self.set_status("Visual mode canceled.");
+                }
+            }
             KeyCode::Char('i') => {
                 self.pending_sequence = PendingSequence::None;
                 if self.active_file().is_some() {
+                    if self.view_mode == ViewMode::RawDiff {
+                        self.view_mode = ViewMode::Code;
+                        self.set_status("Switched to code view for commenting.");
+                    }
                     self.input_mode = InputMode::Comment(String::new());
                 }
+            }
+            KeyCode::Char('v') => {
+                self.pending_sequence = PendingSequence::None;
+                self.toggle_visual_mode();
             }
             KeyCode::Char('e') => {
                 self.pending_sequence = PendingSequence::None;
@@ -188,55 +269,63 @@ impl App {
                 self.move_to_end();
             }
             KeyCode::Char('g') => {
-                if self.pending_sequence == PendingSequence::G {
-                    self.move_to_start();
-                    self.pending_sequence = PendingSequence::None;
-                } else {
-                    self.pending_sequence = PendingSequence::G;
-                }
+                self.handle_g_sequence();
             }
-            KeyCode::Char('d') => {
-                if self.pending_sequence == PendingSequence::G {
-                    self.toggle_mode();
-                }
-                self.pending_sequence = PendingSequence::None;
-            }
-            KeyCode::Char(']') => {
-                self.pending_sequence = PendingSequence::CloseBracket;
-            }
-            KeyCode::Char('[') => {
-                self.pending_sequence = PendingSequence::OpenBracket;
-            }
-            KeyCode::Char('c') => {
-                if self.pending_sequence == PendingSequence::CloseBracket {
-                    self.jump_next_change();
-                } else if self.pending_sequence == PendingSequence::OpenBracket {
-                    self.jump_previous_change();
-                }
-                self.pending_sequence = PendingSequence::None;
-            }
-            KeyCode::Char('f') => {
-                if self.pending_sequence == PendingSequence::CloseBracket {
-                    self.jump_next_file();
-                } else if self.pending_sequence == PendingSequence::OpenBracket {
-                    self.jump_previous_file();
-                }
-                self.pending_sequence = PendingSequence::None;
-            }
-            KeyCode::Char('h') => {
-                if self.pending_sequence == PendingSequence::CloseBracket {
-                    self.jump_next_hunk();
-                } else if self.pending_sequence == PendingSequence::OpenBracket {
-                    self.jump_previous_hunk();
-                }
-                self.pending_sequence = PendingSequence::None;
-            }
+            KeyCode::Char('d') => self.handle_d_sequence(),
+            KeyCode::Char(']') => self.pending_sequence = PendingSequence::CloseBracket,
+            KeyCode::Char('[') => self.pending_sequence = PendingSequence::OpenBracket,
+            KeyCode::Char('c') => self.handle_change_sequence(),
+            KeyCode::Char('f') => self.handle_file_sequence(),
+            KeyCode::Char('h') => self.handle_hunk_sequence(),
             _ => {
                 self.pending_sequence = PendingSequence::None;
             }
         }
 
         false
+    }
+
+    fn handle_g_sequence(&mut self) {
+        if self.pending_sequence == PendingSequence::G {
+            self.move_to_start();
+            self.pending_sequence = PendingSequence::None;
+        } else {
+            self.pending_sequence = PendingSequence::G;
+        }
+    }
+
+    fn handle_d_sequence(&mut self) {
+        if self.pending_sequence == PendingSequence::G {
+            self.toggle_mode();
+        }
+        self.pending_sequence = PendingSequence::None;
+    }
+
+    fn handle_change_sequence(&mut self) {
+        if self.pending_sequence == PendingSequence::CloseBracket {
+            self.jump_next_change();
+        } else if self.pending_sequence == PendingSequence::OpenBracket {
+            self.jump_previous_change();
+        }
+        self.pending_sequence = PendingSequence::None;
+    }
+
+    fn handle_file_sequence(&mut self) {
+        if self.pending_sequence == PendingSequence::CloseBracket {
+            self.jump_next_file();
+        } else if self.pending_sequence == PendingSequence::OpenBracket {
+            self.jump_previous_file();
+        }
+        self.pending_sequence = PendingSequence::None;
+    }
+
+    fn handle_hunk_sequence(&mut self) {
+        if self.pending_sequence == PendingSequence::CloseBracket {
+            self.jump_next_hunk();
+        } else if self.pending_sequence == PendingSequence::OpenBracket {
+            self.jump_previous_hunk();
+        }
+        self.pending_sequence = PendingSequence::None;
     }
 
     fn handle_input_key(&mut self, key: KeyEvent) -> bool {
@@ -334,24 +423,33 @@ impl App {
             return;
         }
 
-        let Some(file) = self.active_file() else {
+        let Some((file_path, line_count)) = self
+            .active_file()
+            .map(|file| (file.display_path().to_owned(), file.buffer.line_count()))
+        else {
             self.set_status("No active file for comment.");
             return;
         };
 
-        let line = self
-            .code_cursor_line
-            .min(file.buffer.line_count().saturating_sub(1));
-        let file_path = file.display_path().to_owned();
-        let display_line = line + 1;
+        let (start_line, end_line) = self.selection_range().unwrap_or_else(|| {
+            let line = self.code_cursor_line.min(line_count.saturating_sub(1));
+            (line, line)
+        });
+        let display_target = if start_line == end_line {
+            format!("{file_path}:{}", start_line + 1)
+        } else {
+            format!("{file_path}:{}-{}", start_line + 1, end_line + 1)
+        };
 
         self.comments.push(ReviewComment {
             file_path: file_path.clone(),
-            buffer_line: line,
+            start_line,
+            end_line,
             text: comment,
         });
+        self.clear_visual_mode();
         self.status_message =
-            format!("Queued AI comment on {file_path}:{display_line}. Use :comments to review.");
+            format!("Queued AI comment on {display_target}. Use :comments to review.");
     }
 
     fn move_up(&mut self) {
@@ -568,12 +666,32 @@ impl App {
                 if let Some(file) = self.active_file() {
                     self.raw_cursor_line = raw_row_for_buffer_line(file, self.code_cursor_line);
                 }
+                self.clear_visual_mode();
                 self.view_mode = ViewMode::RawDiff;
                 self.set_status("Switched to raw diff view.");
             }
             ViewMode::RawDiff => {
                 self.view_mode = ViewMode::Code;
                 self.set_status("Switched to code view.");
+            }
+        }
+    }
+
+    fn toggle_visual_mode(&mut self) {
+        if self.view_mode != ViewMode::Code {
+            self.set_status("Visual mode is only available in code view.");
+            return;
+        }
+
+        match self.motion_mode {
+            MotionMode::Normal => {
+                self.motion_mode = MotionMode::Visual;
+                self.visual_anchor_line = Some(self.code_cursor_line);
+                self.set_status("Visual mode.");
+            }
+            MotionMode::Visual => {
+                self.clear_visual_mode();
+                self.set_status("Visual mode canceled.");
             }
         }
     }
@@ -593,6 +711,7 @@ impl App {
 
     fn set_active_file(&mut self, file_index: usize) {
         self.active_file_index = file_index.min(self.snapshot.files.len().saturating_sub(1));
+        self.clear_visual_mode();
         self.reset_active_file_positions();
     }
 
@@ -621,6 +740,7 @@ impl App {
 
     fn sync_viewport(&mut self, height: usize) {
         self.viewport_height = height.max(1);
+        self.viewport_width = self.viewport_width.max(1);
 
         match self.view_mode {
             ViewMode::Code => self.sync_code_viewport(),
@@ -628,17 +748,21 @@ impl App {
         }
     }
 
+    fn set_viewport_size(&mut self, height: usize, width: usize) {
+        self.viewport_height = height.max(1);
+        self.viewport_width = width.max(1);
+    }
+
     fn sync_code_viewport(&mut self) {
         let Some(file) = self.active_file() else {
             self.code_viewport_top = 0;
             return;
         };
-        let rows = code_rows(file);
-        let cursor_row = code_cursor_visual_row(&rows, self.code_cursor_line);
+        let rendered = rendered_code_view(self, file, self.viewport_width);
         self.code_viewport_top = sync_viewport_top(
             self.code_viewport_top,
-            cursor_row,
-            rows.len(),
+            rendered.cursor_visual_row,
+            rendered.lines.len(),
             self.viewport_height,
         );
     }
@@ -665,20 +789,23 @@ impl App {
     }
 
     fn line_has_comment(&self, file_path: &str, line_index: usize) -> bool {
-        self.comments
-            .iter()
-            .any(|comment| comment.file_path == file_path && comment.buffer_line == line_index)
+        self.comments.iter().any(|comment| {
+            comment.file_path == file_path
+                && comment.start_line <= line_index
+                && line_index <= comment.end_line
+        })
     }
 
     fn footer_text(&self) -> String {
         match &self.input_mode {
             InputMode::Normal => format!(
-                "{} | {} queued | e explorer | : commands | i comment | gd/tab toggle | [c/]c change | [f/]f file",
+                "{} | {} | {} queued | v visual | e explorer | : commands | i comment | gd/tab toggle | [c/]c change | [f/]f file",
+                self.mode_label(),
                 self.status_message,
                 self.comments.len()
             ),
             InputMode::Command(buffer) => format!(":{buffer}"),
-            InputMode::Comment(buffer) => format!("comment> {buffer}"),
+            InputMode::Comment(_) => "AI comment | Enter submit | Esc cancel".to_owned(),
         }
     }
 }
@@ -780,22 +907,20 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
     };
 
     let content_height = content_area.height as usize;
+    let content_width = content_area.width as usize;
+    app.set_viewport_size(content_height.max(1), content_width.max(1));
     app.sync_viewport(content_height.max(1));
 
     let content = match app.active_file() {
         Some(file) => match app.view_mode {
             ViewMode::Code => {
-                let rows = code_rows(file);
-                rows.iter()
+                let rendered = rendered_code_view(app, file, content_width.max(1));
+                rendered
+                    .lines
+                    .iter()
                     .skip(app.code_viewport_top)
                     .take(content_height.max(1))
-                    .map(|row| {
-                        let is_selected = row.buffer_line == Some(app.code_cursor_line);
-                        let has_comment = row
-                            .buffer_line
-                            .is_some_and(|line| app.line_has_comment(file.display_path(), line));
-                        code_row_to_text(is_selected, has_comment, row)
-                    })
+                    .cloned()
                     .collect::<Vec<_>>()
             }
             ViewMode::RawDiff => {
@@ -861,6 +986,12 @@ fn code_cursor_visual_row(rows: &[CodeRenderRow], cursor_line: usize) -> usize {
         .unwrap_or(0)
 }
 
+#[derive(Debug, Clone)]
+struct RenderedCodeView {
+    lines: Vec<Line<'static>>,
+    cursor_visual_row: usize,
+}
+
 fn code_rows(file: &ReviewFile) -> Vec<CodeRenderRow> {
     if matches!(file.source, BufferSource::Placeholder) {
         return vec![CodeRenderRow {
@@ -912,6 +1043,170 @@ fn code_rows(file: &ReviewFile) -> Vec<CodeRenderRow> {
     }
 
     rows
+}
+
+fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCodeView {
+    let rows = code_rows(file);
+    let comment_box = app
+        .comment_draft()
+        .zip(app.comment_box_anchor_line(file))
+        .map(|(draft, anchor_line)| (comment_box_lines(draft, width), anchor_line));
+
+    let mut lines = Vec::new();
+    let mut cursor_visual_row = code_cursor_visual_row(&rows, app.code_cursor_line);
+
+    for row in rows {
+        let is_selected = row.buffer_line == Some(app.code_cursor_line);
+        let in_selection = row
+            .buffer_line
+            .is_some_and(|line| app.line_in_selection(line));
+        let has_comment = row
+            .buffer_line
+            .is_some_and(|line| app.line_has_comment(file.display_path(), line));
+        if is_selected {
+            cursor_visual_row = lines.len();
+        }
+        let row_buffer_line = row.buffer_line;
+        lines.push(code_row_to_text(
+            is_selected,
+            in_selection,
+            has_comment,
+            &row,
+        ));
+
+        if let Some((comment_box_lines, anchor_line)) = &comment_box
+            && row_buffer_line == Some(*anchor_line)
+        {
+            lines.extend(comment_box_lines.iter().cloned());
+        }
+    }
+
+    RenderedCodeView {
+        lines,
+        cursor_visual_row,
+    }
+}
+
+fn comment_box_lines(draft: &str, width: usize) -> Vec<Line<'static>> {
+    let text_indent = 8usize.min(width.saturating_sub(6));
+    let inner_width = width.saturating_sub(text_indent + 2).max(12);
+    let horizontal = "─".repeat(inner_width);
+    let title = " AI comment ";
+    let top = if inner_width > title.len() {
+        let remaining = inner_width - title.len();
+        let left = remaining / 2;
+        let right = remaining - left;
+        format!(
+            "{}┌{}{}{}┐",
+            " ".repeat(text_indent),
+            "─".repeat(left),
+            title,
+            "─".repeat(right)
+        )
+    } else {
+        format!("{}┌{}┐", " ".repeat(text_indent), horizontal)
+    };
+
+    let wrapped = wrap_comment_text(
+        if draft.is_empty() {
+            "Type feedback for AI..."
+        } else {
+            draft
+        },
+        inner_width,
+    );
+    let body_style = if draft.is_empty() {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC)
+    } else {
+        Style::default().fg(Color::Cyan)
+    };
+
+    let mut lines = Vec::with_capacity(wrapped.len() + 2);
+    lines.push(Line::styled(top, Style::default().fg(Color::DarkGray)));
+    lines.extend(wrapped.into_iter().map(|segment| {
+        Line::styled(
+            format!(
+                "{}│{segment:<inner_width$}│",
+                " ".repeat(text_indent),
+                inner_width = inner_width
+            ),
+            body_style,
+        )
+    }));
+    lines.push(Line::styled(
+        format!("{}└{}┘", " ".repeat(text_indent), horizontal),
+        Style::default().fg(Color::DarkGray),
+    ));
+    lines
+}
+
+fn wrap_comment_text(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut wrapped = Vec::new();
+
+    for paragraph in text.split('\n') {
+        if paragraph.is_empty() {
+            wrapped.push(String::new());
+            continue;
+        }
+
+        let mut current = String::new();
+        for word in paragraph.split_whitespace() {
+            if current.is_empty() {
+                push_wrapped_word(&mut wrapped, &mut current, word, width);
+                continue;
+            }
+
+            if current.len() + 1 + word.len() <= width {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                wrapped.push(std::mem::take(&mut current));
+                push_wrapped_word(&mut wrapped, &mut current, word, width);
+            }
+        }
+
+        if !current.is_empty() {
+            wrapped.push(current);
+        }
+    }
+
+    if wrapped.is_empty() {
+        wrapped.push(String::new());
+    }
+
+    wrapped
+}
+
+fn push_wrapped_word(wrapped: &mut Vec<String>, current: &mut String, word: &str, width: usize) {
+    if word.len() <= width {
+        current.push_str(word);
+        return;
+    }
+
+    let mut start = 0;
+    let chars = word.chars().collect::<Vec<_>>();
+    while start < chars.len() {
+        let end = (start + width).min(chars.len());
+        let chunk = chars[start..end].iter().collect::<String>();
+        if current.is_empty() {
+            if end < chars.len() {
+                wrapped.push(chunk);
+            } else {
+                current.push_str(&chunk);
+            }
+        } else {
+            wrapped.push(std::mem::take(current));
+            if end < chars.len() {
+                wrapped.push(chunk);
+            } else {
+                current.push_str(&chunk);
+            }
+        }
+        start = end;
+    }
 }
 
 fn raw_rows(file: &ReviewFile) -> Vec<RawRenderRow> {
@@ -1027,7 +1322,12 @@ fn previous_target(targets: &[usize], current: usize) -> Option<usize> {
         .or_else(|| targets.first().copied())
 }
 
-fn code_row_to_text(is_selected: bool, has_comment: bool, row: &CodeRenderRow) -> Line<'static> {
+fn code_row_to_text(
+    is_selected: bool,
+    in_selection: bool,
+    has_comment: bool,
+    row: &CodeRenderRow,
+) -> Line<'static> {
     let base_style = match row.kind {
         CodeRowKind::Buffer => match row.change {
             Some(ChangeKind::Added) => Style::default().fg(Color::Green),
@@ -1043,13 +1343,22 @@ fn code_row_to_text(is_selected: bool, has_comment: bool, row: &CodeRenderRow) -
             .add_modifier(Modifier::ITALIC),
     };
 
-    let style = match (is_selected, has_comment) {
-        (true, true) => base_style
-            .add_modifier(Modifier::REVERSED)
-            .add_modifier(Modifier::BOLD),
-        (true, false) => base_style.add_modifier(Modifier::REVERSED),
-        (false, true) => base_style.add_modifier(Modifier::BOLD),
-        (false, false) => base_style,
+    let style = {
+        let style = if in_selection {
+            base_style.bg(Color::DarkGray)
+        } else {
+            base_style
+        };
+        let style = if has_comment {
+            style.add_modifier(Modifier::BOLD)
+        } else {
+            style
+        };
+        if is_selected {
+            style.add_modifier(Modifier::REVERSED)
+        } else {
+            style
+        }
     };
 
     let change_marker = match row.kind {
@@ -1125,7 +1434,7 @@ mod tests {
     };
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{App, CodeRowKind, InputMode, ViewMode, code_rows};
+    use super::{App, CodeRowKind, InputMode, MotionMode, ViewMode, code_rows, comment_box_lines};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -1307,5 +1616,58 @@ mod tests {
         assert!(!app.file_explorer_open);
         assert!(!app.handle_key(key(KeyCode::Char('e'))));
         assert!(app.file_explorer_open);
+    }
+
+    #[test]
+    fn app_toggles_visual_mode_with_v() {
+        let mut app = App::new(sample_snapshot());
+
+        assert_eq!(app.motion_mode, MotionMode::Normal);
+        assert!(!app.handle_key(key(KeyCode::Char('v'))));
+        assert_eq!(app.motion_mode, MotionMode::Visual);
+        assert_eq!(app.selection_range(), Some((1, 1)));
+        assert!(!app.handle_key(key(KeyCode::Char('j'))));
+        assert_eq!(app.selection_range(), Some((1, 2)));
+        assert!(!app.handle_key(key(KeyCode::Esc)));
+        assert_eq!(app.motion_mode, MotionMode::Normal);
+        assert_eq!(app.selection_range(), None);
+    }
+
+    #[test]
+    fn visual_mode_comment_captures_selected_range() {
+        let mut app = App::new(sample_snapshot());
+
+        assert!(!app.handle_key(key(KeyCode::Char('v'))));
+        assert!(!app.handle_key(key(KeyCode::Char('j'))));
+        assert!(!app.handle_key(key(KeyCode::Char('i'))));
+        assert!(matches!(app.input_mode, InputMode::Comment(_)));
+        assert!(!app.handle_key(key(KeyCode::Char('n'))));
+        assert!(!app.handle_key(key(KeyCode::Char('o'))));
+        assert!(!app.handle_key(key(KeyCode::Char('t'))));
+        assert!(!app.handle_key(key(KeyCode::Char('e'))));
+        assert!(!app.handle_key(key(KeyCode::Enter)));
+        assert_eq!(app.comments.len(), 1);
+        assert_eq!(app.comments[0].start_line, 1);
+        assert_eq!(app.comments[0].end_line, 2);
+        assert_eq!(app.motion_mode, MotionMode::Normal);
+    }
+
+    #[test]
+    fn comment_box_wraps_long_ai_feedback() {
+        let lines = comment_box_lines(
+            "This is a long AI comment that should wrap inside the inline box.",
+            30,
+        );
+
+        assert!(lines.len() > 3);
+        assert!(lines[0].to_string().contains('┌'));
+        assert!(lines[1].to_string().contains('│'));
+        assert!(
+            lines
+                .last()
+                .expect("box has a bottom")
+                .to_string()
+                .contains('└')
+        );
     }
 }
