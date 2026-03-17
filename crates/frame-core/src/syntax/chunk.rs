@@ -1,4 +1,5 @@
 use tree_sitter::{Node, Parser};
+use unicode_width::UnicodeWidthChar;
 
 use crate::review::CodeBuffer;
 
@@ -578,8 +579,31 @@ fn is_operator_char(ch: char) -> bool {
     )
 }
 
+const DEFAULT_TAB_SIZE: usize = 4;
+
 fn display_col(line: &str, byte_col: usize) -> usize {
-    line[..byte_col.min(line.len())].chars().count()
+    display_col_with_tab_size(line, byte_col, DEFAULT_TAB_SIZE)
+}
+
+fn display_col_with_tab_size(line: &str, byte_col: usize, tab_size: usize) -> usize {
+    let clamped = byte_col.min(line.len());
+    let tab_size = tab_size.max(1);
+    let mut width = 0;
+
+    for (offset, ch) in line.char_indices() {
+        if offset >= clamped {
+            break;
+        }
+
+        if ch == '\t' {
+            width += tab_size - (width % tab_size);
+            continue;
+        }
+
+        width += ch.width().unwrap_or(0);
+    }
+
+    width
 }
 
 fn language_for(language: LanguageId) -> tree_sitter::Language {
@@ -593,7 +617,8 @@ fn language_for(language: LanguageId) -> tree_sitter::Language {
 #[cfg(test)]
 mod tests {
     use super::{
-        BufferSpan, ChunkKind, ChunkRole, chunk_buffer, classify_lexical_chunk, lexical_chunks,
+        BufferSpan, ChunkKind, ChunkRole, chunk_buffer, classify_lexical_chunk, display_col,
+        display_col_with_tab_size, lexical_chunks,
     };
     use crate::{CodeBuffer, LanguageId};
 
@@ -661,5 +686,21 @@ mod tests {
             classify_lexical_chunk("=="),
             (ChunkKind::Operator, ChunkRole::Operator)
         );
+    }
+
+    #[test]
+    fn display_col_uses_terminal_tab_stops() {
+        let line = "\ta\tz";
+        let z_byte = line.rfind('z').expect("z present");
+
+        assert_eq!(display_col_with_tab_size(line, z_byte, 4), 8);
+    }
+
+    #[test]
+    fn display_col_counts_wide_glyph_cells() {
+        let line = "a界z";
+        let z_byte = line.rfind('z').expect("z present");
+
+        assert_eq!(display_col(line, z_byte), 3);
     }
 }

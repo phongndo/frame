@@ -28,6 +28,7 @@ tree-sitter-highlight = "0.26.6"
 tree-sitter-md = "0.5.3"
 tree-sitter-rust = "0.24.0"
 tree-sitter-toml-ng = "0.7.0"
+unicode-width = "0.2.2"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
