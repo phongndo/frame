@@ -19,6 +19,7 @@ use ratatui::{
     widgets::{List, ListItem, ListState, Paragraph},
 };
 use thiserror::Error;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Debug, Error)]
 pub enum ViewError {
@@ -1540,7 +1541,7 @@ fn comment_box_lines(text: &str, width: usize, is_draft: bool) -> Vec<Line<'stat
     lines.extend(wrapped.into_iter().map(|segment| {
         Line::from(vec![
             Span::styled(format!("{}│", " ".repeat(text_indent)), border_style),
-            Span::styled(format!("{segment:<inner_width$}"), body_style),
+            Span::styled(pad_comment_segment(&segment, inner_width), body_style),
             Span::styled("│", border_style),
         ])
     }));
@@ -1568,7 +1569,7 @@ fn wrap_comment_text(text: &str, width: usize) -> Vec<String> {
                 continue;
             }
 
-            if current.len() + 1 + word.len() <= width {
+            if comment_text_width(&current) + 1 + comment_text_width(word) <= width {
                 current.push(' ');
                 current.push_str(word);
             } else {
@@ -1590,31 +1591,69 @@ fn wrap_comment_text(text: &str, width: usize) -> Vec<String> {
 }
 
 fn push_wrapped_word(wrapped: &mut Vec<String>, current: &mut String, word: &str, width: usize) {
-    if word.len() <= width {
+    if comment_text_width(word) <= width {
         current.push_str(word);
         return;
     }
 
     let mut start = 0;
-    let chars = word.chars().collect::<Vec<_>>();
-    while start < chars.len() {
-        let end = (start + width).min(chars.len());
-        let chunk = chars[start..end].iter().collect::<String>();
+    while start < word.len() {
+        let end = take_width_bounded_chunk_end(word, start, width);
+        let chunk = word[start..end].to_owned();
         if current.is_empty() {
-            if end < chars.len() {
+            if end < word.len() {
                 wrapped.push(chunk);
             } else {
                 current.push_str(&chunk);
             }
         } else {
             wrapped.push(std::mem::take(current));
-            if end < chars.len() {
+            if end < word.len() {
                 wrapped.push(chunk);
             } else {
                 current.push_str(&chunk);
             }
         }
         start = end;
+    }
+}
+
+fn comment_text_width(text: &str) -> usize {
+    UnicodeWidthStr::width(text)
+}
+
+fn pad_comment_segment(segment: &str, width: usize) -> String {
+    let padding = width.saturating_sub(comment_text_width(segment));
+    format!("{segment}{}", " ".repeat(padding))
+}
+
+fn take_width_bounded_chunk_end(word: &str, start: usize, width: usize) -> usize {
+    let mut end = start;
+    let mut used_width = 0;
+
+    for (offset, ch) in word[start..].char_indices() {
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if end > start && used_width + char_width > width {
+            break;
+        }
+
+        used_width += char_width;
+        end = start + offset + ch.len_utf8();
+
+        if used_width >= width {
+            break;
+        }
+    }
+
+    if end == start {
+        start
+            + word[start..]
+                .chars()
+                .next()
+                .expect("slice is non-empty")
+                .len_utf8()
+    } else {
+        end
     }
 }
 
@@ -2598,6 +2637,19 @@ mod tests {
         assert_eq!(body.spans[1].style.fg, Some(Color::Cyan));
         assert_eq!(body.spans[2].style.fg, Some(Color::DarkGray));
         assert_eq!(body.to_string(), "│hello                 │");
+    }
+
+    #[test]
+    fn comment_box_wraps_wide_glyphs_by_display_width() {
+        use unicode_width::UnicodeWidthStr;
+
+        let lines = comment_box_lines("界界界界界", 10, true);
+        let top_width = UnicodeWidthStr::width(lines[0].to_string().as_str());
+
+        assert!(lines
+            .iter()
+            .all(|line| UnicodeWidthStr::width(line.to_string().as_str()) == top_width));
+        assert_eq!(lines.len(), 3);
     }
 
     #[test]
