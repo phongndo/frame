@@ -1,0 +1,9 @@
+/target
+.tools/
+
+# Editor and OS noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

@@ -1,0 +1,15 @@
+[package]
+name = "frame"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "Placeholder CLI crate for the Frame application."
+
+[dependencies]
+libframe = { version = "0.1.0", path = "../libframe" }
+
+[lints]
+workspace = true
