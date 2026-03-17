@@ -35,7 +35,7 @@ editor feature.
 - [x] `{count}Ctrl-d` / `{count}Ctrl-u`: scale page motion by count
 - [x] `{count}]c` / `{count}[c`: jump by count review changes
 - [x] `{count}]f` / `{count}[f`: jump by count changed files
-- [ ] `{count}` support should apply to any future motion where it makes sense, including `h`, `l`, `w`, `b`, `n`, and `N`
+- [ ] `{count}` support should apply to any future motion where it makes sense, including `w`, `b`, `n`, and `N`
 
 Examples:
 
