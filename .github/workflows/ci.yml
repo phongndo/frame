@@ -70,4 +70,4 @@ jobs:
         run: typos
       - name: Check dependency policy
         run: cargo deny check bans licenses advisories
-      - uses: rhysd/actionlint@v1
+      - uses: rhysd/actionlint@v1.7.11
