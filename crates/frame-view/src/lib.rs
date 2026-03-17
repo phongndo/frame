@@ -931,7 +931,9 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
                     .enumerate()
                     .skip(app.raw_viewport_top)
                     .take(content_height.max(1))
-                    .map(|(index, row)| raw_row_to_text(index == app.raw_cursor_line, row))
+                    .map(|(index, row)| {
+                        raw_row_to_text(index == app.raw_cursor_line, row, content_width.max(1))
+                    })
                     .collect::<Vec<_>>()
             }
         },
@@ -1091,6 +1093,7 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
             has_comment,
             highlighted_line,
             &row,
+            width,
         ));
 
         if let Some(anchor_line) = row_buffer_line {
@@ -1361,6 +1364,7 @@ fn code_row_to_text(
     has_comment: bool,
     highlighted_line: Option<&HighlightedLine>,
     row: &CodeRenderRow,
+    width: usize,
 ) -> Line<'static> {
     let change_marker = match row.kind {
         CodeRowKind::VirtualDeleted => '-',
@@ -1394,7 +1398,26 @@ fn code_row_to_text(
         }
     }
 
+    if should_fill_code_row(row.change, in_selection, is_selected) {
+        pad_spans_to_width(&mut spans, width, text_style);
+    }
+
     Line::from(spans)
+}
+
+fn should_fill_code_row(change: Option<ChangeKind>, in_selection: bool, is_selected: bool) -> bool {
+    overlay_background(change).is_some() || in_selection || is_selected
+}
+
+fn pad_spans_to_width(spans: &mut Vec<Span<'static>>, width: usize, style: Style) {
+    let current_width = spans
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum::<usize>();
+
+    if current_width < width {
+        spans.push(Span::styled(" ".repeat(width - current_width), style));
+    }
 }
 
 fn prefix_style(
@@ -1566,7 +1589,7 @@ fn syntax_style(style: HighlightStyleKey) -> Style {
     }
 }
 
-fn raw_row_to_text(is_selected: bool, row: &RawRenderRow) -> Line<'static> {
+fn raw_row_to_text(is_selected: bool, row: &RawRenderRow, width: usize) -> Line<'static> {
     let base_style = match row.kind {
         RawRowKind::HunkHeader => Style::default().fg(Color::Blue),
         RawRowKind::Added => Style::default().fg(Color::Green),
@@ -1576,11 +1599,13 @@ fn raw_row_to_text(is_selected: bool, row: &RawRenderRow) -> Line<'static> {
             .fg(Color::Magenta)
             .add_modifier(Modifier::ITALIC),
     };
-    let style = if is_selected {
-        base_style.add_modifier(Modifier::REVERSED)
-    } else {
-        base_style
-    };
+    let mut style = base_style;
+    if let Some(color) = raw_row_background(row.kind) {
+        style = style.bg(color);
+    }
+    if is_selected {
+        style = style.add_modifier(Modifier::REVERSED);
+    }
 
     let marker = match row.kind {
         RawRowKind::Added => '+',
@@ -1600,7 +1625,20 @@ fn raw_row_to_text(is_selected: bool, row: &RawRenderRow) -> Line<'static> {
         ),
     };
 
-    Line::styled(text, style)
+    let mut spans = vec![Span::styled(text, style)];
+    if raw_row_background(row.kind).is_some() || is_selected {
+        pad_spans_to_width(&mut spans, width, style);
+    }
+
+    Line::from(spans)
+}
+
+fn raw_row_background(kind: RawRowKind) -> Option<Color> {
+    match kind {
+        RawRowKind::Added => Some(Color::Rgb(12, 32, 20)),
+        RawRowKind::Removed => Some(Color::Rgb(42, 18, 18)),
+        RawRowKind::HunkHeader | RawRowKind::Context | RawRowKind::Placeholder => None,
+    }
 }
 
 fn format_lineno(lineno: Option<usize>) -> String {
@@ -1618,8 +1656,8 @@ mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use super::{
-        App, CodeRowKind, InputMode, MotionMode, ViewMode, code_rows, comment_box_lines,
-        rendered_code_view,
+        App, CodeRowKind, InputMode, MotionMode, RawRowKind, ViewMode, code_rows,
+        comment_box_lines, raw_row_to_text, raw_rows, rendered_code_view,
     };
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1896,5 +1934,52 @@ mod tests {
                 .collect::<String>(),
             "fn main() {"
         );
+    }
+
+    #[test]
+    fn selected_code_line_pads_to_viewport_width() {
+        let app = App::new(sample_snapshot());
+        let rendered = rendered_code_view(&app, &app.snapshot.files[0], 30);
+        let selected = rendered
+            .lines
+            .get(rendered.cursor_visual_row)
+            .expect("selected line exists");
+
+        assert_eq!(selected.to_string().chars().count(), 30);
+    }
+
+    #[test]
+    fn changed_code_line_pads_to_viewport_width() {
+        let app = App::new(sample_snapshot());
+        let rendered = rendered_code_view(&app, &app.snapshot.files[0], 34);
+        let changed = rendered
+            .lines
+            .iter()
+            .find(|line| line.to_string().contains("extra();"))
+            .expect("changed line exists");
+
+        assert_eq!(changed.to_string().chars().count(), 34);
+    }
+
+    #[test]
+    fn selected_raw_diff_line_pads_to_viewport_width() {
+        let file = sample_main_file();
+        let rows = raw_rows(&file);
+        let selected = raw_row_to_text(true, &rows[0], 32);
+
+        assert_eq!(selected.to_string().chars().count(), 32);
+    }
+
+    #[test]
+    fn changed_raw_diff_line_pads_to_viewport_width() {
+        let file = sample_main_file();
+        let rows = raw_rows(&file);
+        let added = rows
+            .iter()
+            .find(|row| matches!(row.kind, RawRowKind::Added))
+            .expect("added row exists");
+        let rendered = raw_row_to_text(false, added, 36);
+
+        assert_eq!(rendered.to_string().chars().count(), 36);
     }
 }
