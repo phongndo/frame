@@ -168,6 +168,7 @@ impl Drop for TerminalCleanupGuard {
 #[derive(Debug)]
 struct App {
     snapshot: ReviewSnapshot,
+    raw_row_cache: Vec<Vec<RawRenderRow>>,
     active_file_index: usize,
     file_explorer_open: bool,
     code_cursor_line: usize,
@@ -190,8 +191,10 @@ struct App {
 
 impl App {
     fn new(snapshot: ReviewSnapshot) -> Self {
+        let raw_row_cache = snapshot.files.iter().map(raw_rows).collect();
         let mut app = Self {
             snapshot,
+            raw_row_cache,
             active_file_index: 0,
             file_explorer_open: true,
             code_cursor_line: 0,
@@ -217,6 +220,12 @@ impl App {
 
     fn active_file(&self) -> Option<&ReviewFile> {
         self.snapshot.files.get(self.active_file_index)
+    }
+
+    fn active_raw_rows(&self) -> Option<&[RawRenderRow]> {
+        self.raw_row_cache
+            .get(self.active_file_index)
+            .map(Vec::as_slice)
     }
 
     fn set_status(&mut self, message: &str) {
@@ -558,8 +567,9 @@ impl App {
             }
             "diff" => {
                 self.view_mode = ViewMode::RawDiff;
-                if let Some(file) = self.active_file() {
-                    self.raw_cursor_line = raw_row_for_buffer_line(file, self.code_cursor_line);
+                if let (Some(file), Some(rows)) = (self.active_file(), self.active_raw_rows()) {
+                    self.raw_cursor_line =
+                        raw_row_for_buffer_line_in_rows(file, rows, self.code_cursor_line);
                 }
                 self.set_status("Switched to raw diff view.");
             }
@@ -787,8 +797,8 @@ impl App {
             }
             ViewMode::RawDiff => {
                 let max_index = self
-                    .active_file()
-                    .map_or(0, |file| raw_rows(file).len().saturating_sub(1));
+                    .active_raw_rows()
+                    .map_or(0, |rows| rows.len().saturating_sub(1));
                 self.raw_cursor_line = self.raw_cursor_line.saturating_add(count).min(max_index);
                 self.sync_code_cursor_from_raw();
             }
@@ -844,8 +854,8 @@ impl App {
             ViewMode::RawDiff => {
                 self.raw_cursor_line = count.map_or_else(
                     || {
-                        self.active_file()
-                            .map_or(0, |file| raw_rows(file).len().saturating_sub(1))
+                        self.active_raw_rows()
+                            .map_or(0, |rows| rows.len().saturating_sub(1))
                     },
                     |value| value.saturating_sub(1),
                 );
@@ -868,8 +878,8 @@ impl App {
             }
             ViewMode::RawDiff => {
                 let max_index = self
-                    .active_file()
-                    .map_or(0, |file| raw_rows(file).len().saturating_sub(1));
+                    .active_raw_rows()
+                    .map_or(0, |rows| rows.len().saturating_sub(1));
                 self.raw_cursor_line = (self.raw_cursor_line + step).min(max_index);
                 self.sync_code_cursor_from_raw();
             }
@@ -908,13 +918,13 @@ impl App {
                 }
             }
             ViewMode::RawDiff => {
-                let Some(file) = self.active_file() else {
+                let (Some(file), Some(rows)) = (self.active_file(), self.active_raw_rows()) else {
                     return;
                 };
                 let targets = file
                     .anchors
                     .iter()
-                    .map(|anchor| raw_row_for_buffer_line(file, anchor.buffer_line))
+                    .map(|anchor| raw_row_for_buffer_line_in_rows(file, rows, anchor.buffer_line))
                     .collect::<Vec<_>>();
                 if let Some(target) = nth_next_target(&targets, self.raw_cursor_line, count) {
                     self.raw_cursor_line = target;
@@ -940,13 +950,13 @@ impl App {
                 }
             }
             ViewMode::RawDiff => {
-                let Some(file) = self.active_file() else {
+                let (Some(file), Some(rows)) = (self.active_file(), self.active_raw_rows()) else {
                     return;
                 };
                 let targets = file
                     .anchors
                     .iter()
-                    .map(|anchor| raw_row_for_buffer_line(file, anchor.buffer_line))
+                    .map(|anchor| raw_row_for_buffer_line_in_rows(file, rows, anchor.buffer_line))
                     .collect::<Vec<_>>();
                 if let Some(target) = nth_previous_target(&targets, self.raw_cursor_line, count) {
                     self.raw_cursor_line = target;
@@ -983,10 +993,10 @@ impl App {
             return;
         }
 
-        let Some(file) = self.active_file() else {
+        let Some(rows) = self.active_raw_rows() else {
             return;
         };
-        let targets = raw_hunk_targets(file);
+        let targets = raw_hunk_targets_in_rows(rows);
         if let Some(target) = nth_next_target(&targets, self.raw_cursor_line, count) {
             self.raw_cursor_line = target;
             self.sync_code_cursor_from_raw();
@@ -998,10 +1008,10 @@ impl App {
             return;
         }
 
-        let Some(file) = self.active_file() else {
+        let Some(rows) = self.active_raw_rows() else {
             return;
         };
-        let targets = raw_hunk_targets(file);
+        let targets = raw_hunk_targets_in_rows(rows);
         if let Some(target) = nth_previous_target(&targets, self.raw_cursor_line, count) {
             self.raw_cursor_line = target;
             self.sync_code_cursor_from_raw();
@@ -1011,8 +1021,9 @@ impl App {
     fn toggle_mode(&mut self) {
         match self.view_mode {
             ViewMode::Code => {
-                if let Some(file) = self.active_file() {
-                    self.raw_cursor_line = raw_row_for_buffer_line(file, self.code_cursor_line);
+                if let (Some(file), Some(rows)) = (self.active_file(), self.active_raw_rows()) {
+                    self.raw_cursor_line =
+                        raw_row_for_buffer_line_in_rows(file, rows, self.code_cursor_line);
                 }
                 self.clear_visual_mode();
                 self.view_mode = ViewMode::RawDiff;
@@ -1071,7 +1082,9 @@ impl App {
             let code_col = code_chunk
                 .and_then(|index| file.chunk(code_cursor, index))
                 .map_or(0, |chunk| chunk.span.start.display_col);
-            let raw_cursor = raw_row_for_buffer_line(file, code_cursor);
+            let raw_cursor = self.active_raw_rows().map_or(0, |rows| {
+                raw_row_for_buffer_line_in_rows(file, rows, code_cursor)
+            });
             (code_cursor, code_chunk, code_col, raw_cursor)
         } else {
             (0, None, 0, 0)
@@ -1088,7 +1101,10 @@ impl App {
     fn sync_code_cursor_from_raw(&mut self) {
         let new_cursor = self
             .active_file()
-            .and_then(|file| buffer_line_for_raw_row(file, self.raw_cursor_line))
+            .zip(self.active_raw_rows())
+            .and_then(|(file, rows)| {
+                buffer_line_for_raw_row_in_rows(file, rows, self.raw_cursor_line)
+            })
             .unwrap_or(self.code_cursor_line);
         self.set_code_cursor_line_with_preference(new_cursor);
     }
@@ -1123,11 +1139,10 @@ impl App {
     }
 
     fn sync_raw_viewport(&mut self) {
-        let Some(file) = self.active_file() else {
+        let Some(rows) = self.active_raw_rows() else {
             self.raw_viewport_top = 0;
             return;
         };
-        let rows = raw_rows(file);
         self.raw_viewport_top = sync_viewport_top(
             self.raw_viewport_top,
             self.raw_cursor_line,
@@ -1291,7 +1306,7 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
                     .collect::<Vec<_>>()
             }
             ViewMode::RawDiff => {
-                let rows = raw_rows(file);
+                let rows = app.active_raw_rows().unwrap_or(&[]);
                 rows.iter()
                     .enumerate()
                     .skip(app.raw_viewport_top)
@@ -1702,18 +1717,25 @@ fn raw_rows(file: &ReviewFile) -> Vec<RawRenderRow> {
     rows
 }
 
-fn raw_hunk_targets(file: &ReviewFile) -> Vec<usize> {
-    raw_rows(file)
-        .iter()
+fn raw_hunk_targets_in_rows(rows: &[RawRenderRow]) -> Vec<usize> {
+    rows.iter()
         .enumerate()
         .filter_map(|(index, row)| (row.kind == RawRowKind::HunkHeader).then_some(index))
         .collect()
 }
 
+#[cfg(test)]
 fn raw_row_for_buffer_line(file: &ReviewFile, buffer_line: usize) -> usize {
-    let target_lineno = buffer_line + 1;
     let rows = raw_rows(file);
+    raw_row_for_buffer_line_in_rows(file, &rows, buffer_line)
+}
 
+fn raw_row_for_buffer_line_in_rows(
+    file: &ReviewFile,
+    rows: &[RawRenderRow],
+    buffer_line: usize,
+) -> usize {
+    let target_lineno = buffer_line + 1;
     rows.iter()
         .position(|row| relevant_raw_lineno(file, row) == Some(target_lineno))
         .or_else(|| {
@@ -1729,9 +1751,11 @@ fn raw_row_for_buffer_line(file: &ReviewFile, buffer_line: usize) -> usize {
         .unwrap_or(0)
 }
 
-fn buffer_line_for_raw_row(file: &ReviewFile, row_index: usize) -> Option<usize> {
-    let rows = raw_rows(file);
-
+fn buffer_line_for_raw_row_in_rows(
+    file: &ReviewFile,
+    rows: &[RawRenderRow],
+    row_index: usize,
+) -> Option<usize> {
     rows.get(row_index)
         .and_then(|row| relevant_raw_lineno(file, row))
         .map(|lineno| lineno.saturating_sub(1))
@@ -2646,9 +2670,11 @@ mod tests {
         let lines = comment_box_lines("界界界界界", 10, true);
         let top_width = UnicodeWidthStr::width(lines[0].to_string().as_str());
 
-        assert!(lines
-            .iter()
-            .all(|line| UnicodeWidthStr::width(line.to_string().as_str()) == top_width));
+        assert!(
+            lines
+                .iter()
+                .all(|line| UnicodeWidthStr::width(line.to_string().as_str()) == top_width)
+        );
         assert_eq!(lines.len(), 3);
     }
 
