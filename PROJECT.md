@@ -2,7 +2,7 @@
 
 ## Vision (MVP Scope)
 
-`frame` is a **terminal-first AI patch reviewer**.
+`frame` is a **terminal-first AI review IDE**.
 
 It replaces:
 
@@ -11,8 +11,9 @@ It replaces:
 
 With:
 
-* fast keyboard-driven diff navigation
-* inline comments on patches
+* code-first navigation (like Helix)
+* inline change visualization (not raw diffs)
+* inline comments on real code
 * one-key feedback loop to AI CLI
 
 **frame does NOT edit code.**
@@ -24,11 +25,13 @@ It supervises AI-generated changes.
 
 > Reviewing is the mountain we hold.
 
-Everything in `frame` is optimized for one thing:
+Everything in `frame` is optimized for:
 
 ```id="philosophy"
 understanding code changes quickly and confidently
 ```
+
+The user should feel like they are **reading code**, not inspecting patches.
 
 If a feature does not improve review clarity or speed, it does not belong in MVP.
 
@@ -41,95 +44,115 @@ frame
 ```
 
 * detects git repo
-* loads diff
+* loads changes
 * opens UI immediately
 
 No commands. No friction.
 
 ---
 
+## Core Interaction Model
+
+`frame` operates in **code-first mode with change overlays**.
+
+Instead of rendering raw diffs:
+
+```text
+git diff → parse → overlay changes on full file
+```
+
+The user sees:
+
+* full file context
+* highlighted additions/modifications
+* optional ghosted deletions
+
+Diffs are **data**, not the UI.
+
+---
+
 ## Navigation Philosophy (Critical)
 
-Diff behaves like a **Helix/Vim buffer**:
+Navigation behaves like **Helix/Vim**:
 
-* free movement across entire diff
-* no forced snapping to hunks or files
-
-User may lose context, but must recover instantly.
+* free movement across the file buffer
+* no restriction to hunks or diff blocks
+* smooth scrolling like an editor
 
 ### Reorientation Signals
 
-* clear file headers
-* strong hunk boundaries
-* visible line origin:
+Because context is continuous:
 
-  * `+` added
-  * `-` removed
-  * ` ` context
+* clear file headers
+* highlighted changed lines
+* optional subtle markers for change boundaries
 
 ### Reorientation Movements
 
 ```id="nav_reorient"
-]h / [h      next/prev hunk
-]f / [f      next/prev file
+]c / [c      next/prev change
+]f / [f      next/prev changed file
 gg / G       start/end
 ```
 
+Goal:
+
+> allow the user to explore freely, but recover instantly
+
 ---
 
-## Diff Rendering Quality (Critical)
+## Change Visualization (Critical)
 
-Diffs must be **beautiful, readable, and information-dense**.
+Changes are rendered as **overlays on real code**.
 
-This is a primary feature, not polish.
+### Types
+
+* added lines → highlighted
+* modified lines → emphasized
+* removed lines → ghosted or inline (optional)
 
 ### Requirements
 
-* syntax-highlighted code (not plain text)
-* visually distinct additions/removals
-* clear indentation and alignment
-* no visual noise or clutter
+* preserves full code context
+* no broken indentation
+* no visual distortion
+* changes are visible but not overwhelming
 
-### Visual Goals
+### Principle
 
-* easy to scan at high speed
-* differences pop immediately
-* structure is visible at a glance
-
-### Styling Expectations
-
-* additions: readable, not neon
-* deletions: visible but not overwhelming
-* context lines: slightly dimmed
-* hunk headers: clearly separated
-
-### Readability Principles
-
-* prioritize contrast over decoration
-* avoid excessive colors
-* preserve code structure exactly
-* never distort alignment
+> show the code first, show the change second
 
 ---
 
 ## Syntax Highlighting (Critical)
 
-Diff view must feel like reading real code.
-
-Requirements:
+Rendering must feel like a real editor:
 
 * language-aware highlighting
-* consistent with modern editors (nvim / helix)
+* consistent with nvim / helix
 * supports common languages (C++, Rust, Python, TS)
 
 Non-goals (MVP):
 
-* no deep semantic highlighting
-* no LSP-driven analysis
+* no LSP
+* no semantic analysis
 
-But:
+---
 
-> it should feel like an editor, not a pager
+## Diff Mode (Secondary)
+
+Raw diff view exists as a **secondary mode**, not primary.
+
+Used for:
+
+* edge cases
+* precise patch inspection
+
+Navigation:
+
+```id="diff_nav"
+]h / [h      next/prev hunk
+```
 
 ---
 
@@ -140,19 +163,29 @@ But:
    ```bash
    frame
    ```
-2. AI has modified repo
-3. frame loads diff
+
+2. AI modifies repository
+
+3. frame:
+
+   * loads changed files
+   * renders code with change overlays
+
 4. User:
 
-   * navigates
-   * comments
+   * navigates code
+   * reviews changes in context
+   * adds comments
+
 5. User presses:
 
    ```
    A
    ```
+
 6. AI revises patch
-7. frame refreshes
+
+7. frame reloads changes
 
 Loop repeats.
 
@@ -160,19 +193,17 @@ Loop repeats.
 
 ## MVP Features
 
-### 1. Diff Viewer (Critical)
+### 1. Code Viewer (Critical)
 
-* parse `git diff`
-* render:
-
-  * file list (left)
-  * diff buffer (main)
+* load full file contents
+* render as editor-like buffer
+* overlay changes from git diff
 
 Navigation:
 
 ```id="nav_basic"
 j / k        move
-]h / [h      next/prev hunk
+]c / [c      next/prev change
 ]f / [f      next/prev file
 gg / G       top/bottom
 ```
@@ -189,7 +220,7 @@ space
 
 Behavior:
 
-* attach comment to current line
+* attach comment to current code line
 * inline input
 
 Data model:
@@ -207,8 +238,8 @@ comment {
 Notes:
 
 * comments are ephemeral
-* `symbol` is best-effort and optional
-* comments are cleared only after a successful AI send + refresh
+* `symbol` is best-effort
+* cleared after successful AI send + refresh
 
 ---
 
@@ -259,16 +290,18 @@ Requirements:
 
 ### 5. Auto Refresh
 
-After a successful AI run:
+After AI completes:
 
 * re-run `git diff`
-* reload UI automatically
+* reload overlays and files
 
-No manual refresh key in MVP.
+No manual refresh in MVP.
 
 ---
 
 ### 6. File List Panel
+
+Shows changed files:
 
 ```id="file_list"
 src/vector.cpp
@@ -290,13 +323,15 @@ C → commit
 
 ```id="keymap"
 j / k        move
-]h / [h      next/prev hunk
+]c / [c      next/prev change
 ]f / [f      next/prev file
 
 space        comment
 A            send to AI
+
 s            stage (toggle)
 C            commit
+
 q            quit
 ```
 
@@ -317,6 +352,7 @@ q            quit
 * no LSP
 * no semantic diff
 * no modes
+* no full repo explorer (only changed files)
 * no full git UI
 
 ---
@@ -325,13 +361,13 @@ q            quit
 
 frame is usable when:
 
-* diff is visually clear and fast to scan
-* syntax highlighting feels like a real editor
-* user can navigate without losing control
+* user reads real code, not diff blobs
+* changes are clear but not overwhelming
+* navigation feels like an editor
 * review → comment → AI loop is seamless
 
 ---
 
 ## One Sentence Summary
 
-frame = **lazygit for AI patch review**
+frame = **a terminal-first AI review IDE**
