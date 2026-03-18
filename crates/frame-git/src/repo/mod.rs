@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
 };
@@ -11,7 +12,7 @@ use thiserror::Error;
 
 mod shell;
 
-use shell::{run_git, run_git_allowing_status};
+use shell::{run_git, run_git_allowing_status, run_git_with_input_allowing_status};
 
 #[derive(Debug, Error)]
 pub enum GitError {
@@ -101,6 +102,44 @@ pub fn is_path_git_ignored(repo_root: &Path, path: &Path) -> Result<bool, GitErr
     )?;
 
     Ok(output.status.success())
+}
+
+/// Returns the subset of `paths` ignored by Git ignore rules for the
+/// repository at `repo_root`.
+///
+/// Paths outside `repo_root` are ignored.
+///
+/// # Errors
+///
+/// Returns an error if Git cannot be executed or reports an unexpected failure.
+pub fn ignored_paths(repo_root: &Path, paths: &[PathBuf]) -> Result<BTreeSet<PathBuf>, GitError> {
+    let relative_paths: Vec<PathBuf> = paths
+        .iter()
+        .filter_map(|path| path.strip_prefix(repo_root).ok().map(Path::to_path_buf))
+        .collect();
+    if relative_paths.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+
+    let mut stdin = Vec::new();
+    for path in &relative_paths {
+        stdin.extend_from_slice(path.to_string_lossy().as_bytes());
+        stdin.push(0);
+    }
+
+    let output = run_git_with_input_allowing_status(
+        repo_root,
+        ["check-ignore", "--stdin", "-z"],
+        &stdin,
+        &[0, 1],
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    Ok(stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(|path| repo_root.join(path))
+        .collect())
 }
 
 fn resolve_git_path_from_dir(cwd: &Path, rev_parse_flag: &str) -> Result<PathBuf, GitError> {
@@ -257,8 +296,8 @@ fn repo_root(cwd: &Path) -> Result<PathBuf, GitError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_path_git_ignored, load_review_snapshot_from_dir, resolve_git_common_dir_from_dir,
-        resolve_git_dir_from_dir,
+        ignored_paths, is_path_git_ignored, load_review_snapshot_from_dir,
+        resolve_git_common_dir_from_dir, resolve_git_dir_from_dir,
     };
     use frame_core::{BufferSource, ChangeKind, FileChangeKind};
     use std::{
@@ -489,5 +528,27 @@ mod tests {
             !is_path_git_ignored(repo.path(), &repo.path().join("tracked.txt"))
                 .expect("tracked file should not be treated as ignored")
         );
+    }
+
+    #[test]
+    fn batches_git_ignore_checks_for_multiple_paths() {
+        let repo = init_repo();
+        write(&repo.path().join(".gitignore"), "target/\n");
+        fs::create_dir_all(repo.path().join("target")).expect("target dir should be created");
+        write(&repo.path().join("target/generated.txt"), "generated\n");
+        write(&repo.path().join("visible.txt"), "visible\n");
+
+        let ignored = ignored_paths(
+            repo.path(),
+            &[
+                repo.path().join("target/generated.txt"),
+                repo.path().join("visible.txt"),
+                repo.path().join("outside.txt"),
+            ],
+        )
+        .expect("ignored paths should be resolved");
+
+        assert_eq!(ignored.len(), 1);
+        assert!(ignored.contains(&repo.path().join("target/generated.txt")));
     }
 }
