@@ -1,9 +1,22 @@
-use std::{collections::BTreeMap, fmt::Write as _, io, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
+    io,
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    },
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
+};
 
 use frame_core::{
     BufferSource, BufferSpan, ChangeKind, HighlightStyleKey, HighlightedLine, NavigableChunk,
     ReviewFile, ReviewSnapshot,
 };
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -140,6 +153,137 @@ struct ReviewComment {
 }
 
 #[derive(Debug)]
+enum AppEvent {
+    Terminal(Event),
+    TerminalError(io::Error),
+    RefreshResult(Result<ReviewSnapshot, String>),
+    AutoRefreshUnavailable(String),
+}
+
+#[derive(Debug)]
+struct RefreshFilter {
+    repo_root: PathBuf,
+    git_dir: PathBuf,
+    git_common_dir: PathBuf,
+}
+
+impl RefreshFilter {
+    fn new(repo_root: PathBuf, git_dir: PathBuf, git_common_dir: PathBuf) -> Self {
+        Self {
+            repo_root,
+            git_dir,
+            git_common_dir,
+        }
+    }
+
+    #[cfg(test)]
+    fn should_refresh_path(&self, path: &Path) -> Result<bool, String> {
+        if path.starts_with(&self.git_dir) {
+            return Ok(Self::is_relevant_git_path(path, &self.git_dir));
+        }
+
+        if path.starts_with(&self.git_common_dir) {
+            return Ok(Self::is_relevant_git_path(path, &self.git_common_dir));
+        }
+
+        if !path.starts_with(&self.repo_root) {
+            return Ok(false);
+        }
+
+        if frame_git::is_path_git_ignored(&self.repo_root, path)
+            .map_err(|error| format!("Auto-refresh ignore check failed: {error}"))?
+        {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    fn is_relevant_event_kind(kind: EventKind) -> bool {
+        !matches!(kind, EventKind::Access(_))
+    }
+
+    fn queue_relevant_paths(
+        &self,
+        event: &notify::Event,
+        pending_paths: &mut BTreeSet<PathBuf>,
+        needs_rescan: &mut bool,
+    ) -> Result<bool, String> {
+        if !Self::is_relevant_event_kind(event.kind) {
+            return Ok(false);
+        }
+
+        if event.need_rescan() || event.paths.is_empty() {
+            *needs_rescan = true;
+            return Ok(true);
+        }
+
+        let mut relevant_change = false;
+        let mut worktree_paths = Vec::new();
+
+        for path in &event.paths {
+            if path.starts_with(&self.git_dir) {
+                if Self::is_relevant_git_path(path, &self.git_dir) {
+                    pending_paths.insert(path.clone());
+                    relevant_change = true;
+                }
+                continue;
+            }
+
+            if path.starts_with(&self.git_common_dir) {
+                if Self::is_relevant_git_path(path, &self.git_common_dir) {
+                    pending_paths.insert(path.clone());
+                    relevant_change = true;
+                }
+                continue;
+            }
+
+            if path.starts_with(&self.repo_root) {
+                worktree_paths.push(path.clone());
+            }
+        }
+
+        let ignored_paths = frame_git::ignored_paths(&self.repo_root, &worktree_paths)
+            .map_err(|error| format!("Auto-refresh ignore check failed: {error}"))?;
+
+        for path in worktree_paths {
+            if !ignored_paths.contains(&path) {
+                pending_paths.insert(path.clone());
+                relevant_change = true;
+            }
+        }
+
+        Ok(relevant_change)
+    }
+
+    fn is_relevant_git_path(path: &Path, root: &Path) -> bool {
+        let Ok(relative_path) = path.strip_prefix(root) else {
+            return false;
+        };
+
+        if relative_path.as_os_str().is_empty() {
+            return false;
+        }
+
+        if matches!(
+            relative_path
+                .components()
+                .next()
+                .map(std::path::Component::as_os_str),
+            Some(component) if component == "objects" || component == "logs" || component == "hooks"
+        ) {
+            return false;
+        }
+
+        relative_path == Path::new("HEAD")
+            || relative_path == Path::new("index")
+            || relative_path == Path::new("packed-refs")
+            || relative_path == Path::new("info/exclude")
+            || relative_path.starts_with("refs")
+    }
+}
+
+#[derive(Debug)]
 struct TerminalCleanupGuard {
     active: bool,
 }
@@ -187,6 +331,7 @@ struct App {
     input_mode: InputMode,
     comments: Vec<ReviewComment>,
     status_message: String,
+    auto_refresh_warning: Option<String>,
 }
 
 impl App {
@@ -213,9 +358,63 @@ impl App {
             input_mode: InputMode::Normal,
             comments: Vec::new(),
             status_message: "Press : for commands, i to queue a comment for AI.".to_owned(),
+            auto_refresh_warning: None,
         };
         app.reset_active_file_positions();
         app
+    }
+
+    fn apply_snapshot_refresh(&mut self, new_snapshot: ReviewSnapshot) {
+        if new_snapshot == self.snapshot {
+            return;
+        }
+
+        let active_file_path = self
+            .active_file()
+            .map(|file| file.display_path().to_owned());
+        let previous_file_index = self.active_file_index;
+        let previous_line = self.code_cursor_line;
+        let previous_col = self.code_preferred_display_col;
+        let cleared_comment_state =
+            !self.comments.is_empty() || matches!(self.input_mode, InputMode::Comment(_));
+
+        self.snapshot = new_snapshot;
+        self.raw_row_cache = self.snapshot.files.iter().map(raw_rows).collect();
+        self.active_file_index = active_file_path
+            .as_deref()
+            .and_then(|file_path| {
+                self.snapshot
+                    .files
+                    .iter()
+                    .position(|file| file.display_path() == file_path)
+            })
+            .or_else(|| {
+                (!self.snapshot.files.is_empty())
+                    .then_some(previous_file_index.min(self.snapshot.files.len() - 1))
+            })
+            .unwrap_or(0);
+
+        self.code_preferred_display_col = previous_col;
+        self.set_code_cursor_line_with_preference(previous_line);
+        self.raw_cursor_line = self
+            .active_file()
+            .zip(self.active_raw_rows())
+            .map_or(0, |(file, rows)| {
+                raw_row_for_buffer_line_in_rows(file, rows, self.code_cursor_line)
+            });
+
+        self.pending_sequence = PendingSequence::None;
+        self.pending_count = None;
+        self.clear_visual_mode();
+        if matches!(self.input_mode, InputMode::Comment(_)) {
+            self.input_mode = InputMode::Normal;
+        }
+        self.comments.clear();
+        if cleared_comment_state {
+            self.set_status("Auto-refreshed review snapshot. Cleared local comments.");
+        } else {
+            self.set_status("Auto-refreshed review snapshot.");
+        }
     }
 
     fn active_file(&self) -> Option<&ReviewFile> {
@@ -230,6 +429,10 @@ impl App {
 
     fn set_status(&mut self, message: &str) {
         message.clone_into(&mut self.status_message);
+    }
+
+    fn set_auto_refresh_warning(&mut self, message: String) {
+        self.auto_refresh_warning = Some(message);
     }
 
     fn clear_visual_mode(&mut self) {
@@ -1168,13 +1371,17 @@ impl App {
         let count_prefix = self
             .pending_count
             .map_or(String::new(), |count| format!("{count} "));
+        let normal_status = self.auto_refresh_warning.as_ref().map_or_else(
+            || self.status_message.clone(),
+            |warning| format!("{warning} | {}", self.status_message),
+        );
 
         match &self.input_mode {
             InputMode::Normal => format!(
                 "{}{} | {} | {} queued | h/l chunks | v visual | e explorer | : commands | i comment | gd/tab toggle | [c/]c change | [f/]f file",
                 count_prefix,
                 self.mode_label(),
-                self.status_message,
+                normal_status,
                 self.comments.len()
             ),
             InputMode::Command(buffer) => format!(":{buffer}"),
@@ -1211,18 +1418,247 @@ fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     mut app: App,
 ) -> Result<(), ViewError> {
+    let repo_root = app.snapshot.repo_root.clone();
+    let (app_event_tx, app_event_rx) = mpsc::channel();
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    let input_handle = spawn_input_thread(app_event_tx.clone(), Arc::clone(&shutdown));
+    let refresh_handle =
+        match spawn_refresh_thread(&repo_root, app_event_tx.clone(), Arc::clone(&shutdown)) {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                app.set_auto_refresh_warning(format!("Auto-refresh unavailable: {error}"));
+                None
+            }
+        };
+    drop(app_event_tx);
+
+    terminal.draw(|frame| render(frame, &mut app))?;
+
+    let loop_result = loop {
+        let app_event = app_event_rx.recv().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "frame event loop closed unexpectedly",
+            )
+        })?;
+
+        let should_draw = match app_event {
+            AppEvent::Terminal(Event::Key(key)) => {
+                if app.handle_key(key) {
+                    break Ok(());
+                }
+                true
+            }
+            AppEvent::Terminal(Event::Resize(_, _)) => true,
+            AppEvent::Terminal(_) => false,
+            AppEvent::TerminalError(error) => break Err(ViewError::Io(error)),
+            AppEvent::RefreshResult(result) => {
+                match result {
+                    Ok(snapshot) => app.apply_snapshot_refresh(snapshot),
+                    Err(message) => app.set_status(&message),
+                }
+                true
+            }
+            AppEvent::AutoRefreshUnavailable(message) => {
+                app.set_auto_refresh_warning(message);
+                true
+            }
+        };
+
+        if should_draw {
+            terminal.draw(|frame| render(frame, &mut app))?;
+        }
+    };
+
+    shutdown.store(true, Ordering::Relaxed);
+    drop(app_event_rx);
+    join_thread(input_handle, "input")?;
+    if let Some(handle) = refresh_handle {
+        join_thread(handle, "refresh")?;
+    }
+
+    loop_result
+}
+
+fn join_thread(handle: JoinHandle<()>, name: &str) -> Result<(), ViewError> {
+    handle
+        .join()
+        .map_err(|_| io::Error::other(format!("frame {name} thread panicked")))?;
+    Ok(())
+}
+
+fn spawn_input_thread(app_event_tx: Sender<AppEvent>, shutdown: Arc<AtomicBool>) -> JoinHandle<()> {
+    thread::spawn(move || {
+        while !shutdown.load(Ordering::Relaxed) {
+            match event::poll(Duration::from_millis(50)) {
+                Ok(true) => match event::read() {
+                    Ok(event) => {
+                        if app_event_tx.send(AppEvent::Terminal(event)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = app_event_tx.send(AppEvent::TerminalError(error));
+                        break;
+                    }
+                },
+                Err(error) => {
+                    let _ = app_event_tx.send(AppEvent::TerminalError(error));
+                    break;
+                }
+                Ok(false) => {}
+            }
+        }
+    })
+}
+
+fn spawn_refresh_thread(
+    repo_root: &Path,
+    app_event_tx: Sender<AppEvent>,
+    shutdown: Arc<AtomicBool>,
+) -> Result<JoinHandle<()>, String> {
+    let repo_root = repo_root.to_path_buf();
+    let git_dir =
+        frame_git::resolve_git_dir_from_dir(&repo_root).map_err(|error| error.to_string())?;
+    let git_common_dir = frame_git::resolve_git_common_dir_from_dir(&repo_root)
+        .map_err(|error| error.to_string())?;
+    let filter = RefreshFilter::new(repo_root.clone(), git_dir.clone(), git_common_dir.clone());
+    let (watch_tx, watch_rx) = mpsc::channel();
+    let mut watcher = notify::recommended_watcher(watch_tx).map_err(|error| error.to_string())?;
+
+    let mut watched_roots = Vec::new();
+    for path in [&repo_root, &git_dir, &git_common_dir] {
+        watch_path_if_needed(&mut watcher, &mut watched_roots, path)
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(thread::spawn(move || {
+        run_refresh_loop(
+            &repo_root,
+            &filter,
+            &watch_rx,
+            &app_event_tx,
+            shutdown.as_ref(),
+            watcher,
+        );
+    }))
+}
+
+fn watch_path_if_needed(
+    watcher: &mut RecommendedWatcher,
+    watched_roots: &mut Vec<PathBuf>,
+    path: &Path,
+) -> notify::Result<()> {
+    if watched_roots.iter().any(|root| path.starts_with(root)) {
+        return Ok(());
+    }
+
+    watcher.watch(path, RecursiveMode::Recursive)?;
+    watched_roots.push(path.to_path_buf());
+    Ok(())
+}
+
+fn run_refresh_loop(
+    repo_root: &Path,
+    filter: &RefreshFilter,
+    watch_rx: &Receiver<notify::Result<notify::Event>>,
+    app_event_tx: &Sender<AppEvent>,
+    shutdown: &AtomicBool,
+    _watcher: RecommendedWatcher,
+) {
+    const DEBOUNCE: Duration = Duration::from_millis(100);
+    const SHUTDOWN_POLL: Duration = Duration::from_millis(50);
+
+    let mut pending_paths = BTreeSet::new();
+    let mut needs_rescan = false;
+    let mut refresh_deadline: Option<Instant> = None;
+
     loop {
-        terminal.draw(|frame| render(frame, &mut app))?;
+        if shutdown.load(Ordering::Relaxed) {
+            break;
+        }
 
-        if !event::poll(Duration::from_millis(250))? {
+        if let Some(deadline) = refresh_deadline {
+            let now = Instant::now();
+            if now >= deadline {
+                if let Some(refresh_result) =
+                    take_refresh_action(repo_root, &mut pending_paths, &mut needs_rescan)
+                    && app_event_tx
+                        .send(AppEvent::RefreshResult(refresh_result))
+                        .is_err()
+                {
+                    break;
+                }
+                refresh_deadline = None;
+                continue;
+            }
+        }
+
+        let timeout = refresh_deadline.map_or(SHUTDOWN_POLL, |deadline| {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(SHUTDOWN_POLL)
+        });
+
+        let result = match watch_rx.recv_timeout(timeout) {
+            Ok(result) => Some(result),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+
+        let Some(result) = result else {
             continue;
-        }
+        };
 
-        if let Event::Key(key) = event::read()?
-            && app.handle_key(key)
-        {
-            return Ok(());
+        match result {
+            Ok(event) => {
+                match filter.queue_relevant_paths(&event, &mut pending_paths, &mut needs_rescan) {
+                    Ok(true) => {
+                        refresh_deadline = Some(Instant::now() + DEBOUNCE);
+                    }
+                    Ok(false) => {}
+                    Err(message) => {
+                        if app_event_tx
+                            .send(AppEvent::RefreshResult(Err(message)))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                if app_event_tx
+                    .send(AppEvent::AutoRefreshUnavailable(format!(
+                        "Auto-refresh unavailable: watcher failed: {error}",
+                    )))
+                    .is_err()
+                {
+                    break;
+                }
+                break;
+            }
         }
+    }
+}
+
+fn take_refresh_action(
+    repo_root: &Path,
+    pending_paths: &mut BTreeSet<PathBuf>,
+    needs_rescan: &mut bool,
+) -> Option<Result<ReviewSnapshot, String>> {
+    let should_refresh = *needs_rescan || !pending_paths.is_empty();
+    pending_paths.clear();
+    *needs_rescan = false;
+
+    if should_refresh {
+        Some(
+            frame_git::load_review_snapshot_from_dir(repo_root)
+                .map_err(|error| format!("Auto-refresh failed: {error}")),
+        )
+    } else {
+        None
     }
 }
 
@@ -2242,7 +2678,19 @@ fn format_lineno(lineno: Option<usize>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        collections::BTreeSet,
+        fs,
+        path::{Path, PathBuf},
+        process::Command,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            mpsc,
+        },
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
 
     use frame_core::{
         BufferSource, FileChangeKind, LineKind, PatchFile, PatchHunk, PatchLine, ReviewFile,
@@ -2252,13 +2700,74 @@ mod tests {
     use ratatui::style::Color;
 
     use super::{
-        App, CodeRowKind, CommentTarget, InputMode, MotionMode, RawRowKind, ViewMode, code_rows,
-        comment_box_lines, raw_row_for_buffer_line, raw_row_to_text, raw_rows, relevant_raw_lineno,
-        rendered_code_view,
+        App, AppEvent, CodeRowKind, CommentTarget, InputMode, MotionMode, RawRowKind,
+        RefreshFilter, ViewMode, code_rows, comment_box_lines, raw_row_for_buffer_line,
+        raw_row_to_text, raw_rows, relevant_raw_lineno, rendered_code_view, run_refresh_loop,
     };
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Debug)]
+    struct TempGitDir {
+        path: PathBuf,
+    }
+
+    impl TempGitDir {
+        fn new(name: &str) -> Self {
+            let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let unique = format!(
+                "frame-view-{name}-{}-{}-{counter}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system time should be after the unix epoch")
+                    .as_nanos()
+            );
+            let path = std::env::temp_dir().join(unique);
+            fs::create_dir_all(&path).expect("temp dir should be created");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempGitDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn git(cwd: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .status()
+            .expect("git command should start");
+        assert!(status.success(), "git command should succeed");
+    }
+
+    fn write(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("parent directories should be created");
+        }
+        fs::write(path, contents).expect("file write should succeed");
+    }
+
+    fn init_git_repo() -> TempGitDir {
+        let temp = TempGitDir::new("repo");
+        git(temp.path(), &["init", "--quiet"]);
+        git(
+            temp.path(),
+            &["config", "user.email", "frame-tests@example.com"],
+        );
+        git(temp.path(), &["config", "user.name", "Frame Tests"]);
+        temp
     }
 
     fn sample_main_file() -> ReviewFile {
@@ -2381,6 +2890,17 @@ mod tests {
             repo_root: PathBuf::from("/tmp/frame-test"),
             files: vec![sample_main_file(), sample_added_file()],
         }
+    }
+
+    fn sample_main_file_with_tail() -> ReviewFile {
+        let sample = sample_main_file();
+        ReviewFile::new(ReviewFileInput {
+            patch: sample.patch,
+            buffer: frame_core::CodeBuffer::from_text(
+                "fn main() {\n    new();\n    extra();\n}\n\n\nfn later() {\n    other();\n}\nfn tail() {}\n",
+            ),
+            source: BufferSource::PostImage,
+        })
     }
 
     #[test]
@@ -2629,6 +3149,359 @@ mod tests {
         assert!(!app.handle_key(key(KeyCode::Char('h'))));
         assert_eq!(app.code_cursor_line, 0);
         assert_eq!(app.code_cursor_chunk, Some(0));
+    }
+
+    #[test]
+    fn refresh_preserves_active_file_by_path_across_reorder() {
+        let mut app = App::new(sample_snapshot());
+        app.set_active_file(1);
+
+        app.apply_snapshot_refresh(ReviewSnapshot {
+            repo_root: PathBuf::from("/tmp/frame-test"),
+            files: vec![sample_added_file(), sample_main_file()],
+        });
+
+        assert_eq!(app.active_file_index, 0);
+        assert_eq!(
+            app.active_file().map(ReviewFile::display_path),
+            Some("src/lib.rs")
+        );
+    }
+
+    #[test]
+    fn refresh_falls_back_when_active_file_disappears() {
+        let mut app = App::new(sample_snapshot());
+        app.set_active_file(1);
+
+        app.apply_snapshot_refresh(ReviewSnapshot {
+            repo_root: PathBuf::from("/tmp/frame-test"),
+            files: vec![sample_main_file()],
+        });
+
+        assert_eq!(app.active_file_index, 0);
+        assert_eq!(
+            app.active_file().map(ReviewFile::display_path),
+            Some("src/main.rs")
+        );
+    }
+
+    #[test]
+    fn refresh_clears_comment_state_on_snapshot_change() {
+        let mut app = App::new(sample_snapshot());
+        app.motion_mode = MotionMode::Visual;
+        app.visual_anchor = Some(app.cursor_anchor());
+        app.input_mode = InputMode::Comment("draft".to_owned());
+        app.comments.push(super::ReviewComment {
+            file_path: "src/main.rs".to_owned(),
+            target: CommentTarget::LineRange {
+                start_line: 1,
+                end_line: 1,
+            },
+            text: "Keep this visible".to_owned(),
+        });
+
+        app.apply_snapshot_refresh(ReviewSnapshot {
+            repo_root: PathBuf::from("/tmp/frame-test"),
+            files: vec![sample_added_file(), sample_main_file()],
+        });
+
+        assert!(matches!(app.input_mode, InputMode::Normal));
+        assert!(app.comments.is_empty());
+        assert_eq!(app.motion_mode, MotionMode::Normal);
+    }
+
+    #[test]
+    fn refresh_keeps_command_mode_active() {
+        let mut app = App::new(sample_snapshot());
+        app.input_mode = InputMode::Command("diff".to_owned());
+
+        app.apply_snapshot_refresh(ReviewSnapshot {
+            repo_root: PathBuf::from("/tmp/frame-test"),
+            files: vec![sample_added_file(), sample_main_file()],
+        });
+
+        assert!(matches!(app.input_mode, InputMode::Command(_)));
+    }
+
+    #[test]
+    fn refresh_is_noop_for_unchanged_snapshot() {
+        let mut app = App::new(sample_snapshot());
+        app.comments.push(super::ReviewComment {
+            file_path: "src/main.rs".to_owned(),
+            target: CommentTarget::LineRange {
+                start_line: 1,
+                end_line: 1,
+            },
+            text: "Keep this visible".to_owned(),
+        });
+
+        app.apply_snapshot_refresh(app.snapshot.clone());
+
+        assert_eq!(app.comments.len(), 1);
+    }
+
+    #[test]
+    fn refresh_keeps_raw_diff_cursor_near_same_buffer_line() {
+        let mut app = App::new(sample_snapshot());
+        app.code_cursor_line = 7;
+        app.set_code_cursor_to_first_chunk(7);
+        app.toggle_mode();
+
+        app.apply_snapshot_refresh(ReviewSnapshot {
+            repo_root: PathBuf::from("/tmp/frame-test"),
+            files: vec![sample_main_file_with_tail(), sample_added_file()],
+        });
+
+        let rows = app.active_raw_rows().expect("raw rows should exist");
+        assert_eq!(app.view_mode, ViewMode::RawDiff);
+        assert_eq!(app.code_cursor_line, 7);
+        assert_eq!(
+            relevant_raw_lineno(
+                app.active_file().expect("active file should exist"),
+                &rows[app.raw_cursor_line]
+            ),
+            Some(8)
+        );
+    }
+
+    #[test]
+    fn footer_keeps_auto_refresh_warning_visible_after_status_changes() {
+        let mut app = App::new(sample_snapshot());
+        app.set_auto_refresh_warning("Auto-refresh unavailable: watcher failed".to_owned());
+        app.set_status("Switched to code view.");
+
+        let footer = app.footer_text();
+
+        assert!(footer.contains("Auto-refresh unavailable: watcher failed"));
+        assert!(footer.contains("Switched to code view."));
+    }
+
+    #[test]
+    fn refresh_filter_uses_gitignore_and_git_metadata_rules() {
+        let repo = init_git_repo();
+        write(&repo.path().join(".gitignore"), "target/\n");
+        write(&repo.path().join("src/main.rs"), "fn main() {}\n");
+        write(
+            &repo.path().join("target/generated.rs"),
+            "pub fn ignored() {}\n",
+        );
+
+        let filter = RefreshFilter::new(
+            repo.path().to_path_buf(),
+            repo.path().join(".git"),
+            repo.path().join(".git"),
+        );
+
+        assert!(
+            filter
+                .should_refresh_path(&repo.path().join("src/main.rs"))
+                .expect("tracked worktree file should be checked")
+        );
+        assert!(
+            !filter
+                .should_refresh_path(&repo.path().join("target/generated.rs"))
+                .expect("ignored path should be checked")
+        );
+        assert!(
+            filter
+                .should_refresh_path(&repo.path().join(".git/index"))
+                .expect("git index should be checked")
+        );
+        assert!(
+            filter
+                .should_refresh_path(&repo.path().join(".git/packed-refs"))
+                .expect("packed refs should be checked")
+        );
+        assert!(
+            filter
+                .should_refresh_path(&repo.path().join(".git/info/exclude"))
+                .expect("git info exclude should be checked")
+        );
+        assert!(
+            !filter
+                .should_refresh_path(&repo.path().join(".git/objects/ab/cdef"))
+                .expect("git object noise should be ignored")
+        );
+    }
+
+    #[test]
+    fn refresh_filter_detects_common_dir_refs_for_worktrees() {
+        let repo = init_git_repo();
+        let filter = RefreshFilter::new(
+            repo.path().to_path_buf(),
+            repo.path().join(".git/worktrees/frame"),
+            repo.path().join(".git"),
+        );
+
+        assert!(
+            filter
+                .should_refresh_path(&repo.path().join(".git/worktrees/frame/HEAD"))
+                .expect("worktree head should be checked")
+        );
+        assert!(
+            filter
+                .should_refresh_path(&repo.path().join(".git/refs/heads/main"))
+                .expect("common dir refs should be checked")
+        );
+        assert!(
+            !filter
+                .should_refresh_path(&repo.path().join(".git/logs/HEAD"))
+                .expect("git logs should be ignored")
+        );
+    }
+
+    #[test]
+    fn ignored_events_do_not_enter_refresh_queue() {
+        let repo = init_git_repo();
+        write(&repo.path().join(".gitignore"), "target/\n");
+        write(
+            &repo.path().join("target/generated.rs"),
+            "pub fn ignored() {}\n",
+        );
+        let filter = RefreshFilter::new(
+            repo.path().to_path_buf(),
+            repo.path().join(".git"),
+            repo.path().join(".git"),
+        );
+        let mut pending_paths = BTreeSet::new();
+        let mut needs_rescan = false;
+
+        filter
+            .queue_relevant_paths(
+                &notify::Event {
+                    kind: notify::EventKind::Modify(notify::event::ModifyKind::Any),
+                    paths: vec![repo.path().join("target/generated.rs")],
+                    attrs: notify::event::EventAttributes::new(),
+                },
+                &mut pending_paths,
+                &mut needs_rescan,
+            )
+            .expect("ignored event should be classified");
+
+        assert!(pending_paths.is_empty());
+        assert!(!needs_rescan);
+    }
+
+    #[test]
+    fn mixed_events_only_queue_unignored_worktree_paths() {
+        let repo = init_git_repo();
+        write(&repo.path().join(".gitignore"), "target/\n");
+        write(&repo.path().join("src/main.rs"), "fn main() {}\n");
+        write(
+            &repo.path().join("target/generated.rs"),
+            "pub fn ignored() {}\n",
+        );
+        let filter = RefreshFilter::new(
+            repo.path().to_path_buf(),
+            repo.path().join(".git"),
+            repo.path().join(".git"),
+        );
+        let mut pending_paths = BTreeSet::new();
+        let mut needs_rescan = false;
+
+        let queued = filter
+            .queue_relevant_paths(
+                &notify::Event {
+                    kind: notify::EventKind::Modify(notify::event::ModifyKind::Any),
+                    paths: vec![
+                        repo.path().join("src/main.rs"),
+                        repo.path().join("target/generated.rs"),
+                    ],
+                    attrs: notify::event::EventAttributes::new(),
+                },
+                &mut pending_paths,
+                &mut needs_rescan,
+            )
+            .expect("mixed event should be classified");
+
+        assert!(queued);
+        assert_eq!(pending_paths.len(), 1);
+        assert!(pending_paths.contains(&repo.path().join("src/main.rs")));
+        assert!(!needs_rescan);
+    }
+
+    #[test]
+    fn refresh_loop_flushes_pending_refresh_despite_ignored_noise() {
+        let repo = init_git_repo();
+        write(&repo.path().join(".gitignore"), "target/\n");
+        write(&repo.path().join("tracked.txt"), "line one\nline two\n");
+        write(
+            &repo.path().join("target/generated.rs"),
+            "pub fn ignored() {}\n",
+        );
+
+        let filter = RefreshFilter::new(
+            repo.path().to_path_buf(),
+            repo.path().join(".git"),
+            repo.path().join(".git"),
+        );
+        let (watch_tx, watch_rx) = mpsc::channel();
+        let (app_event_tx, app_event_rx) = mpsc::channel();
+        let (dummy_watch_tx, _dummy_watch_rx) = mpsc::channel();
+        let watcher =
+            notify::recommended_watcher(dummy_watch_tx).expect("dummy watcher should be created");
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let refresh_thread = {
+            let repo_root = repo.path().to_path_buf();
+            let shutdown = Arc::clone(&shutdown);
+            thread::spawn(move || {
+                run_refresh_loop(
+                    &repo_root,
+                    &filter,
+                    &watch_rx,
+                    &app_event_tx,
+                    shutdown.as_ref(),
+                    watcher,
+                );
+            })
+        };
+
+        watch_tx
+            .send(Ok(notify::Event {
+                kind: notify::EventKind::Modify(notify::event::ModifyKind::Any),
+                paths: vec![repo.path().join("tracked.txt")],
+                attrs: notify::event::EventAttributes::new(),
+            }))
+            .expect("tracked file event should send");
+
+        let noise_repo_root = repo.path().to_path_buf();
+        let noise_thread = thread::spawn(move || {
+            let start = std::time::Instant::now();
+            while start.elapsed() < Duration::from_millis(500) {
+                if watch_tx
+                    .send(Ok(notify::Event {
+                        kind: notify::EventKind::Modify(notify::event::ModifyKind::Any),
+                        paths: vec![noise_repo_root.join("target/generated.rs")],
+                        attrs: notify::event::EventAttributes::new(),
+                    }))
+                    .is_err()
+                {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        let refresh_result = app_event_rx
+            .recv_timeout(Duration::from_millis(300))
+            .expect("refresh should not wait for ignored noise to stop");
+
+        assert!(matches!(refresh_result, AppEvent::RefreshResult(Ok(_))));
+        let AppEvent::RefreshResult(Ok(snapshot)) = refresh_result else {
+            return;
+        };
+        let paths: Vec<_> = snapshot
+            .files
+            .iter()
+            .filter_map(|file| file.patch.new_path.as_deref())
+            .collect();
+
+        assert!(paths.contains(&"tracked.txt"));
+        assert!(!paths.contains(&"target/generated.rs"));
+
+        shutdown.store(true, Ordering::Relaxed);
+        noise_thread.join().expect("noise thread should join");
+        refresh_thread.join().expect("refresh thread should join");
     }
 
     #[test]
