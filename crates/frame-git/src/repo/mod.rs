@@ -57,6 +57,64 @@ pub fn load_review_snapshot_from_dir(cwd: &Path) -> Result<ReviewSnapshot, GitEr
     Ok(ReviewSnapshot { repo_root, files })
 }
 
+/// Resolves the Git metadata directory for the repository that contains `cwd`.
+///
+/// # Errors
+///
+/// Returns an error if `cwd` is not inside a Git repository or Git cannot be
+/// executed.
+pub fn resolve_git_dir_from_dir(cwd: &Path) -> Result<PathBuf, GitError> {
+    resolve_git_path_from_dir(cwd, "--git-dir")
+}
+
+/// Resolves the shared Git metadata directory for the repository that contains
+/// `cwd`.
+///
+/// # Errors
+///
+/// Returns an error if `cwd` is not inside a Git repository or Git cannot be
+/// executed.
+pub fn resolve_git_common_dir_from_dir(cwd: &Path) -> Result<PathBuf, GitError> {
+    resolve_git_path_from_dir(cwd, "--git-common-dir")
+}
+
+/// Returns whether `path` is ignored by Git ignore rules for the repository at
+/// `repo_root`.
+///
+/// # Errors
+///
+/// Returns an error if Git cannot be executed or reports an unexpected failure.
+pub fn is_path_git_ignored(repo_root: &Path, path: &Path) -> Result<bool, GitError> {
+    let Ok(relative_path) = path.strip_prefix(repo_root) else {
+        return Ok(false);
+    };
+
+    let output = run_git_allowing_status(
+        repo_root,
+        [
+            std::ffi::OsStr::new("check-ignore"),
+            std::ffi::OsStr::new("-q"),
+            std::ffi::OsStr::new("--"),
+            relative_path.as_os_str(),
+        ],
+        &[0, 1],
+    )?;
+
+    Ok(output.status.success())
+}
+
+fn resolve_git_path_from_dir(cwd: &Path, rev_parse_flag: &str) -> Result<PathBuf, GitError> {
+    let output = run_git(cwd, ["rev-parse", rev_parse_flag])?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let git_path = PathBuf::from(stdout.trim());
+
+    Ok(if git_path.is_absolute() {
+        git_path
+    } else {
+        cwd.join(git_path)
+    })
+}
+
 fn load_review_files(repo_root: &Path, patch_set: PatchSet) -> Result<Vec<ReviewFile>, GitError> {
     patch_set
         .files
@@ -198,14 +256,20 @@ fn repo_root(cwd: &Path) -> Result<PathBuf, GitError> {
 
 #[cfg(test)]
 mod tests {
-    use super::load_review_snapshot_from_dir;
+    use super::{
+        is_path_git_ignored, load_review_snapshot_from_dir, resolve_git_common_dir_from_dir,
+        resolve_git_dir_from_dir,
+    };
     use frame_core::{BufferSource, ChangeKind, FileChangeKind};
     use std::{
         fs,
         path::{Path, PathBuf},
         process::Command,
+        sync::atomic::{AtomicUsize, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     #[derive(Debug)]
     struct TempGitDir {
@@ -214,8 +278,9 @@ mod tests {
 
     impl TempGitDir {
         fn new(name: &str) -> Self {
+            let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
             let unique = format!(
-                "frame-{name}-{}-{}",
+                "frame-{name}-{}-{}-{counter}",
                 std::process::id(),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -359,5 +424,70 @@ mod tests {
         assert_eq!(file.source, BufferSource::PostImage);
         assert_eq!(file.patch.new_path.as_deref(), Some("new.rs"));
         assert_eq!(file.buffer.line(0), Some("pub fn preview() {}"));
+    }
+
+    #[test]
+    fn resolves_git_dir_relative_to_repo_root() {
+        let repo = init_repo();
+
+        let git_dir =
+            resolve_git_dir_from_dir(repo.path()).expect("git dir should resolve successfully");
+
+        assert_eq!(git_dir, repo.path().join(".git"));
+    }
+
+    #[test]
+    fn resolves_git_common_dir_for_linked_worktree() {
+        let repo = init_repo();
+        let worktree = TempGitDir::new("worktree");
+        fs::remove_dir_all(worktree.path()).expect("precreated temp dir should be removed");
+
+        git(repo.path(), &["branch", "linked"]);
+        git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                worktree
+                    .path()
+                    .to_str()
+                    .expect("worktree path should be valid"),
+                "linked",
+            ],
+        );
+
+        let git_dir =
+            resolve_git_dir_from_dir(worktree.path()).expect("git dir should resolve for worktree");
+        let common_dir = resolve_git_common_dir_from_dir(worktree.path())
+            .expect("git common dir should resolve for worktree");
+
+        assert_ne!(git_dir, common_dir);
+        assert_eq!(
+            common_dir
+                .canonicalize()
+                .expect("common dir should canonicalize"),
+            repo.path()
+                .join(".git")
+                .canonicalize()
+                .expect("repo git dir should canonicalize")
+        );
+    }
+
+    #[test]
+    fn detects_git_ignored_paths_without_hiding_tracked_files() {
+        let repo = init_repo();
+        write(&repo.path().join(".gitignore"), "target/\n");
+        fs::create_dir_all(repo.path().join("target")).expect("target dir should be created");
+        write(&repo.path().join("target/generated.txt"), "generated\n");
+
+        assert!(
+            is_path_git_ignored(repo.path(), &repo.path().join("target/generated.txt"))
+                .expect("ignored path should be checked")
+        );
+        assert!(
+            !is_path_git_ignored(repo.path(), &repo.path().join("tracked.txt"))
+                .expect("tracked file should not be treated as ignored")
+        );
     }
 }

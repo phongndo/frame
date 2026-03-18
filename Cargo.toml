@@ -21,6 +21,7 @@ repository = "https://github.com/phongndo/frame"
 homepage = "https://github.com/phongndo/frame"
 
 [workspace.dependencies]
+notify = "8.2.0"
 ratatui = "0.30.0"
 thiserror = "2.0"
 tree-sitter = "0.26.6"
