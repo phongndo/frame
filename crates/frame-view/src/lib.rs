@@ -381,6 +381,7 @@ struct App {
     sidebar_viewport_top: usize,
     sidebar_height: usize,
     expanded_dirs: BTreeSet<String>,
+    sidebar_row_cache: Vec<SidebarRow>,
     code_cursor_line: usize,
     code_viewport_top: usize,
     raw_cursor_line: usize,
@@ -400,9 +401,12 @@ struct App {
 
 impl App {
     fn new(snapshot: ReviewSnapshot) -> Self {
+        let expanded_dirs = sidebar_directory_paths(&snapshot);
         let raw_row_cache = snapshot.files.iter().map(raw_rows).collect();
+        let sidebar_row_cache = build_sidebar_rows(&snapshot, &expanded_dirs);
         let mut app = Self {
-            expanded_dirs: sidebar_directory_paths(&snapshot),
+            expanded_dirs,
+            sidebar_row_cache,
             snapshot,
             raw_row_cache,
             active_file_index: 0,
@@ -432,6 +436,10 @@ impl App {
         app
     }
 
+    fn rebuild_sidebar_rows(&mut self) {
+        self.sidebar_row_cache = build_sidebar_rows(&self.snapshot, &self.expanded_dirs);
+    }
+
     fn apply_snapshot_refresh(&mut self, new_snapshot: ReviewSnapshot) {
         if new_snapshot == self.snapshot {
             return;
@@ -459,6 +467,7 @@ impl App {
             })
             .cloned()
             .collect();
+        self.rebuild_sidebar_rows();
         self.active_file_index = active_file_path
             .as_deref()
             .and_then(|file_path| {
@@ -510,8 +519,8 @@ impl App {
             .map(Vec::as_slice)
     }
 
-    fn sidebar_rows(&self) -> Vec<SidebarRow> {
-        build_sidebar_rows(&self.snapshot, &self.expanded_dirs)
+    fn sidebar_rows(&self) -> &[SidebarRow] {
+        &self.sidebar_row_cache
     }
 
     fn current_sidebar_key(&self) -> Option<SidebarNodePath> {
@@ -581,16 +590,10 @@ impl App {
             return;
         };
 
-        expand_directory_ancestors(&mut self.expanded_dirs, &file_path);
         let rows = self.sidebar_rows();
-        if let Some(index) = rows
-            .iter()
-            .position(|row| matches!(&row.key, SidebarNodePath::File(path) if path == &file_path))
-        {
-            self.sidebar_cursor_row = index;
-        } else {
-            self.sidebar_cursor_row = self.sidebar_cursor_row.min(rows.len().saturating_sub(1));
-        }
+        let target_index = sidebar_cursor_index_for_file(rows, &file_path)
+            .unwrap_or_else(|| self.sidebar_cursor_row.min(rows.len().saturating_sub(1)));
+        self.sidebar_cursor_row = target_index;
         self.sync_sidebar_viewport();
     }
 
@@ -607,7 +610,7 @@ impl App {
         }
 
         let restored_index = previous_key
-            .and_then(|key| sidebar_restore_index(&rows, key))
+            .and_then(|key| sidebar_restore_index(rows, key))
             .or_else(|| {
                 self.active_file().and_then(|file| {
                     rows.iter().position(
@@ -617,8 +620,12 @@ impl App {
             })
             .unwrap_or(0);
 
+        let preview_file_index = preview_selected_file
+            .then(|| rows[restored_index].file_index())
+            .flatten();
+
         self.sidebar_cursor_row = restored_index;
-        if preview_selected_file && let Some(file_index) = rows[restored_index].file_index() {
+        if let Some(file_index) = preview_file_index {
             self.set_active_file_from_sidebar(file_index);
         }
         self.sync_sidebar_viewport();
@@ -629,18 +636,18 @@ impl App {
     }
 
     fn sync_sidebar_viewport(&mut self) {
-        let rows = self.sidebar_rows();
-        if rows.is_empty() {
+        let row_count = self.sidebar_rows().len();
+        if row_count == 0 {
             self.sidebar_cursor_row = 0;
             self.sidebar_viewport_top = 0;
             return;
         }
 
-        self.sidebar_cursor_row = self.sidebar_cursor_row.min(rows.len().saturating_sub(1));
+        self.sidebar_cursor_row = self.sidebar_cursor_row.min(row_count.saturating_sub(1));
         self.sidebar_viewport_top = sync_viewport_top(
             self.sidebar_viewport_top,
             self.sidebar_cursor_row,
-            rows.len(),
+            row_count,
             self.sidebar_height,
         );
     }
@@ -653,8 +660,11 @@ impl App {
             return;
         }
 
-        self.sidebar_cursor_row = row_index.min(rows.len().saturating_sub(1));
-        if let Some(file_index) = rows[self.sidebar_cursor_row].file_index() {
+        let target_index = row_index.min(rows.len().saturating_sub(1));
+        let file_index = rows[target_index].file_index();
+
+        self.sidebar_cursor_row = target_index;
+        if let Some(file_index) = file_index {
             self.set_active_file_from_sidebar(file_index);
         }
         self.sync_sidebar_viewport();
@@ -670,11 +680,11 @@ impl App {
             return;
         }
 
-        self.set_sidebar_cursor(
-            self.sidebar_cursor_row
-                .saturating_add(count)
-                .min(rows.len().saturating_sub(1)),
-        );
+        let target_index = self
+            .sidebar_cursor_row
+            .saturating_add(count)
+            .min(rows.len().saturating_sub(1));
+        self.set_sidebar_cursor(target_index);
     }
 
     fn move_sidebar_to_start(&mut self, count: Option<usize>) {
@@ -712,13 +722,26 @@ impl App {
         self.sidebar_rows().get(self.sidebar_cursor_row).cloned()
     }
 
-    fn toggle_sidebar_directory(&mut self, path: &str) -> bool {
-        if !self.expanded_dirs.remove(path) {
-            self.expanded_dirs.insert(path.to_owned());
-            return true;
+    fn expand_sidebar_directory(&mut self, path: &str) -> bool {
+        let changed = self.expanded_dirs.insert(path.to_owned());
+        if changed {
+            self.rebuild_sidebar_rows();
         }
+        changed
+    }
 
-        false
+    fn collapse_sidebar_directory(&mut self, path: &str) -> bool {
+        let changed = self.expanded_dirs.remove(path);
+        if changed {
+            self.rebuild_sidebar_rows();
+        }
+        changed
+    }
+
+    fn toggle_sidebar_directory(&mut self, path: &str) {
+        if !self.collapse_sidebar_directory(path) {
+            let _ = self.expand_sidebar_directory(path);
+        }
     }
 
     fn handle_sidebar_left(&mut self) {
@@ -727,7 +750,7 @@ impl App {
         };
 
         if row.directory_expanded().is_some_and(|expanded| expanded) {
-            self.expanded_dirs.remove(row.path());
+            let _ = self.collapse_sidebar_directory(row.path());
             self.sync_sidebar_viewport();
             return;
         }
@@ -753,13 +776,13 @@ impl App {
         match row.kind {
             SidebarRowKind::Directory { expanded } => {
                 if !expanded {
-                    self.expanded_dirs.insert(row.path().to_owned());
+                    let _ = self.expand_sidebar_directory(row.path());
                     self.sync_sidebar_viewport();
                     return;
                 }
 
                 let rows = self.sidebar_rows();
-                if let Some(child_index) = sidebar_first_child_index(&rows, self.sidebar_cursor_row)
+                if let Some(child_index) = sidebar_first_child_index(rows, self.sidebar_cursor_row)
                 {
                     self.set_sidebar_cursor(child_index);
                 }
@@ -775,7 +798,7 @@ impl App {
 
         match row.kind {
             SidebarRowKind::Directory { .. } => {
-                let _ = self.toggle_sidebar_directory(row.path());
+                self.toggle_sidebar_directory(row.path());
                 self.sync_sidebar_viewport();
             }
             SidebarRowKind::File { .. } => self.exit_explorer_mode(),
@@ -788,7 +811,7 @@ impl App {
         }
     }
 
-    fn selection_target(&self, _file: &ReviewFile) -> Option<CommentTarget> {
+    fn selection_target(&self) -> Option<CommentTarget> {
         if self.view_mode != ViewMode::Code || self.motion_mode != MotionMode::Visual {
             return None;
         }
@@ -800,8 +823,8 @@ impl App {
         })
     }
 
-    fn line_in_selection(&self, file: &ReviewFile, line_index: usize) -> bool {
-        self.selection_target(file)
+    fn line_in_selection(&self, line_index: usize) -> bool {
+        self.selection_target()
             .is_some_and(|target| target.intersects_line(line_index))
     }
 
@@ -814,14 +837,8 @@ impl App {
 
     fn comment_box_anchor_line(&self, file: &ReviewFile) -> Option<usize> {
         self.comment_draft().map(|_| {
-            self.selection_target(file)
-                .unwrap_or_else(|| {
-                    self.current_comment_target(file)
-                        .unwrap_or(CommentTarget::LineRange {
-                            start_line: self.code_cursor_line,
-                            end_line: self.code_cursor_line,
-                        })
-                })
+            self.selection_target()
+                .unwrap_or_else(|| self.current_comment_target(file))
                 .end_line()
                 .min(file.buffer.line_count().saturating_sub(1))
         })
@@ -1183,12 +1200,12 @@ impl App {
             return;
         }
 
-        let Some((file_path, target)) = self.active_file().and_then(|file| {
-            Some((
+        let Some((file_path, target)) = self.active_file().map(|file| {
+            (
                 file.display_path().to_owned(),
-                self.selection_target(file)
-                    .or_else(|| self.current_comment_target(file))?,
-            ))
+                self.selection_target()
+                    .unwrap_or_else(|| self.current_comment_target(file)),
+            )
         }) else {
             self.set_status("No active file for comment.");
             return;
@@ -1206,13 +1223,13 @@ impl App {
             format!("Queued AI comment on {display_target}. Use :comments to review.");
     }
 
-    fn current_comment_target(&self, file: &ReviewFile) -> Option<CommentTarget> {
+    fn current_comment_target(&self, file: &ReviewFile) -> CommentTarget {
         let next_line = line_index_for_file(file, self.code_cursor_line);
 
-        Some(CommentTarget::LineRange {
+        CommentTarget::LineRange {
             start_line: next_line,
             end_line: next_line,
-        })
+        }
     }
 
     fn set_code_cursor_line(&mut self, line: usize) {
@@ -1395,25 +1412,33 @@ impl App {
     }
 
     fn jump_next_file(&mut self, count: usize) {
-        if self.snapshot.files.is_empty() {
+        let file_order = sidebar_file_order(&self.snapshot);
+        if file_order.is_empty() {
             return;
         }
 
-        let targets = (0..self.snapshot.files.len()).collect::<Vec<_>>();
-        if let Some(target) = nth_next_target(&targets, self.active_file_index, count) {
-            self.set_active_file(target);
-        }
+        let current_index = file_order
+            .iter()
+            .position(|file_index| *file_index == self.active_file_index)
+            .unwrap_or(0);
+        let target_index = current_index
+            .saturating_add(count.max(1))
+            .min(file_order.len().saturating_sub(1));
+        self.set_active_file(file_order[target_index]);
     }
 
     fn jump_previous_file(&mut self, count: usize) {
-        if self.snapshot.files.is_empty() {
+        let file_order = sidebar_file_order(&self.snapshot);
+        if file_order.is_empty() {
             return;
         }
 
-        let targets = (0..self.snapshot.files.len()).collect::<Vec<_>>();
-        if let Some(target) = nth_previous_target(&targets, self.active_file_index, count) {
-            self.set_active_file(target);
-        }
+        let current_index = file_order
+            .iter()
+            .position(|file_index| *file_index == self.active_file_index)
+            .unwrap_or(0);
+        let target_index = current_index.saturating_sub(count.max(1));
+        self.set_active_file(file_order[target_index]);
     }
 
     fn jump_next_hunk(&mut self, count: usize) {
@@ -1486,14 +1511,12 @@ impl App {
     fn toggle_file_explorer(&mut self) {
         self.clear_prefixes();
 
-        match (self.file_explorer_open, self.interaction_mode) {
-            (false, _) => self.enter_explorer_mode(),
-            (true, InteractionMode::Content) => self.enter_explorer_mode(),
-            (true, InteractionMode::Explorer) => {
-                self.file_explorer_open = false;
-                self.interaction_mode = InteractionMode::Content;
-                self.set_status("Explorer closed.");
-            }
+        if self.file_explorer_open && self.interaction_mode == InteractionMode::Explorer {
+            self.file_explorer_open = false;
+            self.interaction_mode = InteractionMode::Content;
+            self.set_status("Explorer closed.");
+        } else {
+            self.enter_explorer_mode();
         }
     }
 
@@ -1603,8 +1626,7 @@ impl App {
                     self.comments.len()
                 ),
                 InteractionMode::Explorer => format!(
-                    "{}EXPLORER | {} | enter confirm | esc content | h/l tree | j/k move | e close",
-                    count_prefix, normal_status
+                    "{count_prefix}EXPLORER | {normal_status} | enter confirm | esc content | h/l tree | j/k move | e close"
                 ),
             },
             InputMode::Command(buffer) => format!(":{buffer}"),
@@ -2024,19 +2046,22 @@ fn sidebar_directory_paths(snapshot: &ReviewSnapshot) -> BTreeSet<String> {
     directories
 }
 
-fn expand_directory_ancestors(expanded_dirs: &mut BTreeSet<String>, path: &str) {
+fn sidebar_parent_paths(path: &str) -> Vec<String> {
     let segments = path
         .split('/')
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
+    let mut parents = Vec::new();
     let mut current = String::new();
     for directory in segments.iter().take(segments.len().saturating_sub(1)) {
         if !current.is_empty() {
             current.push('/');
         }
         current.push_str(directory);
-        expanded_dirs.insert(current.clone());
+        parents.push(current.clone());
     }
+
+    parents
 }
 
 fn build_sidebar_rows(
@@ -2112,6 +2137,32 @@ fn sidebar_file_stats(file: &ReviewFile) -> SidebarFileStats {
     }
 
     stats
+}
+
+fn sidebar_cursor_index_for_file(rows: &[SidebarRow], file_path: &str) -> Option<usize> {
+    if let Some(index) = rows
+        .iter()
+        .position(|row| matches!(&row.key, SidebarNodePath::File(path) if path == file_path))
+    {
+        return Some(index);
+    }
+
+    for parent_path in sidebar_parent_paths(file_path).into_iter().rev() {
+        if let Some(index) = rows.iter().position(
+            |row| matches!(&row.key, SidebarNodePath::Directory(path) if path == &parent_path),
+        ) {
+            return Some(index);
+        }
+    }
+
+    None
+}
+
+fn sidebar_file_order(snapshot: &ReviewSnapshot) -> Vec<usize> {
+    build_sidebar_rows(snapshot, &sidebar_directory_paths(snapshot))
+        .into_iter()
+        .filter_map(|row| row.file_index())
+        .collect()
 }
 
 fn sidebar_restore_index(rows: &[SidebarRow], previous_key: &SidebarNodePath) -> Option<usize> {
@@ -2471,7 +2522,7 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
         let is_selected = row.buffer_line == Some(app.code_cursor_line);
         let in_selection = row
             .buffer_line
-            .is_some_and(|line| app.line_in_selection(file, line));
+            .is_some_and(|line| app.line_in_selection(line));
         let has_comment = row
             .buffer_line
             .is_some_and(|line| app.line_has_comment(file.display_path(), line));
@@ -2824,7 +2875,7 @@ fn code_text_overlays(app: &App, file: &ReviewFile, line_index: usize) -> Vec<Te
     let mut overlays = Vec::new();
     let line_text = file.buffer.line(line_index).unwrap_or_default();
 
-    if let Some(target) = app.selection_target(file)
+    if let Some(target) = app.selection_target()
         && let Some((start_byte, end_byte)) =
             target_segment_for_line(&target, line_index, line_text)
     {
@@ -3511,13 +3562,18 @@ mod tests {
 
     #[test]
     fn app_navigates_between_changes_and_files() {
-        let mut app = App::new(sample_snapshot());
+        let mut app = App::new(sample_tree_snapshot());
+        app.set_active_file(1);
 
         assert_eq!(app.code_cursor_line, 1);
         app.jump_next_change(1);
         assert_eq!(app.code_cursor_line, 7);
+        app.set_active_file(3);
         app.jump_next_file(1);
-        assert_eq!(app.active_file_index, 1);
+        assert_eq!(
+            app.active_file().map(ReviewFile::display_path),
+            Some("src/lib.rs")
+        );
         assert_eq!(app.code_cursor_line, 0);
     }
 
@@ -3565,7 +3621,7 @@ mod tests {
         assert!(!app.handle_key(key(KeyCode::Char('v'))));
         assert_eq!(app.motion_mode, MotionMode::Visual);
         assert_eq!(
-            app.selection_target(&app.snapshot.files[0]),
+            app.selection_target(),
             Some(CommentTarget::LineRange {
                 start_line: 1,
                 end_line: 1,
@@ -3573,7 +3629,7 @@ mod tests {
         );
         assert!(!app.handle_key(key(KeyCode::Char('j'))));
         assert_eq!(
-            app.selection_target(&app.snapshot.files[0]),
+            app.selection_target(),
             Some(CommentTarget::LineRange {
                 start_line: 1,
                 end_line: 2,
@@ -3581,7 +3637,7 @@ mod tests {
         );
         assert!(!app.handle_key(key(KeyCode::Esc)));
         assert_eq!(app.motion_mode, MotionMode::Normal);
-        assert_eq!(app.selection_target(&app.snapshot.files[0]), None);
+        assert_eq!(app.selection_target(), None);
     }
 
     #[test]
@@ -3617,7 +3673,7 @@ mod tests {
         assert!(!app.handle_key(key(KeyCode::Char('k'))));
 
         assert_eq!(
-            app.selection_target(&app.snapshot.files[0]),
+            app.selection_target(),
             Some(CommentTarget::LineRange {
                 start_line: 1,
                 end_line: 2,
@@ -4238,7 +4294,7 @@ mod tests {
         app.enter_explorer_mode();
         app.move_sidebar_to_start(None);
         app.move_sidebar_down(1);
-        app.expanded_dirs.remove("src/ui");
+        let _ = app.collapse_sidebar_directory("src/ui");
 
         app.apply_snapshot_refresh(ReviewSnapshot {
             repo_root: PathBuf::from("/tmp/frame-test"),
@@ -4255,6 +4311,65 @@ mod tests {
             Some(SidebarNodePath::Directory("src/ui".to_owned()))
         );
         assert!(!app.expanded_dirs.contains("src/ui"));
+    }
+
+    #[test]
+    fn syncing_active_file_preserves_collapsed_ancestor_directory() {
+        let mut app = App::new(sample_tree_snapshot());
+        app.set_active_file(1);
+        app.enter_explorer_mode();
+        app.move_sidebar_to_start(None);
+        app.handle_sidebar_enter();
+
+        assert!(!app.expanded_dirs.contains("src"));
+        assert_eq!(
+            app.current_sidebar_key(),
+            Some(SidebarNodePath::Directory("src".to_owned()))
+        );
+
+        app.exit_explorer_mode();
+        assert!(!app.expanded_dirs.contains("src"));
+        assert_eq!(
+            app.current_sidebar_key(),
+            Some(SidebarNodePath::Directory("src".to_owned()))
+        );
+
+        app.enter_explorer_mode();
+        assert!(!app.expanded_dirs.contains("src"));
+        assert_eq!(
+            app.current_sidebar_key(),
+            Some(SidebarNodePath::Directory("src".to_owned()))
+        );
+    }
+
+    #[test]
+    fn file_jumps_follow_sidebar_tree_order() {
+        let mut app = App::new(sample_tree_snapshot());
+        app.set_active_file(3);
+
+        app.jump_next_file(1);
+        assert_eq!(
+            app.active_file().map(ReviewFile::display_path),
+            Some("src/lib.rs")
+        );
+
+        app.jump_next_file(1);
+        assert_eq!(
+            app.active_file().map(ReviewFile::display_path),
+            Some("src/main.rs")
+        );
+
+        app.jump_next_file(1);
+        assert_eq!(
+            app.active_file().map(ReviewFile::display_path),
+            Some("Cargo.toml")
+        );
+
+        app.jump_previous_file(2);
+        assert_eq!(
+            app.active_file().map(ReviewFile::display_path),
+            Some("src/lib.rs")
+        );
     }
 
     #[test]
