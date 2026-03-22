@@ -18,7 +18,4 @@ pub use review::{
     BufferSource, ChangeAnchor, ChangeKind, CodeBuffer, DeletedLine, OverlaySpan, ReviewFile,
     ReviewFileInput, ReviewSnapshot,
 };
-pub use syntax::{
-    BufferPoint, BufferSpan, ChunkKind, ChunkRole, ChunkedFile, ChunkedLine, NavigableChunk,
-};
 pub use syntax::{HighlightSpan, HighlightStyleKey, HighlightedFile, HighlightedLine, LanguageId};
