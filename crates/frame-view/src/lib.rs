@@ -382,6 +382,7 @@ struct App {
     sidebar_height: usize,
     expanded_dirs: BTreeSet<String>,
     sidebar_row_cache: Vec<SidebarRow>,
+    sidebar_file_order_cache: Vec<usize>,
     code_cursor_line: usize,
     code_viewport_top: usize,
     raw_cursor_line: usize,
@@ -404,9 +405,11 @@ impl App {
         let expanded_dirs = sidebar_directory_paths(&snapshot);
         let raw_row_cache = snapshot.files.iter().map(raw_rows).collect();
         let sidebar_row_cache = build_sidebar_rows(&snapshot, &expanded_dirs);
+        let sidebar_file_order_cache = sidebar_file_order(&snapshot);
         let mut app = Self {
             expanded_dirs,
             sidebar_row_cache,
+            sidebar_file_order_cache,
             snapshot,
             raw_row_cache,
             active_file_index: 0,
@@ -436,8 +439,9 @@ impl App {
         app
     }
 
-    fn rebuild_sidebar_rows(&mut self) {
+    fn rebuild_sidebar_caches(&mut self) {
         self.sidebar_row_cache = build_sidebar_rows(&self.snapshot, &self.expanded_dirs);
+        self.sidebar_file_order_cache = sidebar_file_order(&self.snapshot);
     }
 
     fn apply_snapshot_refresh(&mut self, new_snapshot: ReviewSnapshot) {
@@ -467,7 +471,7 @@ impl App {
             })
             .cloned()
             .collect();
-        self.rebuild_sidebar_rows();
+        self.rebuild_sidebar_caches();
         self.active_file_index = active_file_path
             .as_deref()
             .and_then(|file_path| {
@@ -521,6 +525,10 @@ impl App {
 
     fn sidebar_rows(&self) -> &[SidebarRow] {
         &self.sidebar_row_cache
+    }
+
+    fn sidebar_file_order(&self) -> &[usize] {
+        &self.sidebar_file_order_cache
     }
 
     fn current_sidebar_key(&self) -> Option<SidebarNodePath> {
@@ -725,7 +733,7 @@ impl App {
     fn expand_sidebar_directory(&mut self, path: &str) -> bool {
         let changed = self.expanded_dirs.insert(path.to_owned());
         if changed {
-            self.rebuild_sidebar_rows();
+            self.rebuild_sidebar_caches();
         }
         changed
     }
@@ -733,7 +741,7 @@ impl App {
     fn collapse_sidebar_directory(&mut self, path: &str) -> bool {
         let changed = self.expanded_dirs.remove(path);
         if changed {
-            self.rebuild_sidebar_rows();
+            self.rebuild_sidebar_caches();
         }
         changed
     }
@@ -1412,7 +1420,7 @@ impl App {
     }
 
     fn jump_next_file(&mut self, count: usize) {
-        let file_order = sidebar_file_order(&self.snapshot);
+        let file_order = self.sidebar_file_order();
         if file_order.is_empty() {
             return;
         }
@@ -1428,7 +1436,7 @@ impl App {
     }
 
     fn jump_previous_file(&mut self, count: usize) {
-        let file_order = sidebar_file_order(&self.snapshot);
+        let file_order = self.sidebar_file_order();
         if file_order.is_empty() {
             return;
         }
