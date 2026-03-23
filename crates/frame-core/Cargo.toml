@@ -15,7 +15,6 @@ tree-sitter-highlight.workspace = true
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-toml-ng.workspace = true
-unicode-width.workspace = true
 
 [lints]
 workspace = true

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::{
     PatchFile,
     review::overlay::derive_review_data,
-    syntax::{ChunkedFile, HighlightedFile, LanguageId, chunk_buffer, highlight_buffer},
+    syntax::{HighlightedFile, LanguageId, highlight_buffer},
 };
 
 use super::{ChangeAnchor, CodeBuffer, DeletedLine, OverlaySpan};
@@ -42,7 +42,6 @@ pub struct ReviewFile {
     pub source: BufferSource,
     pub language: Option<LanguageId>,
     pub highlights: Option<HighlightedFile>,
-    pub chunks: ChunkedFile,
     pub overlays: Vec<OverlaySpan>,
     pub deleted_lines: Vec<DeletedLine>,
     pub anchors: Vec<ChangeAnchor>,
@@ -56,11 +55,6 @@ impl ReviewFile {
             .then(|| LanguageId::detect(input.patch.display_path()))
             .flatten();
         let highlights = language.and_then(|language| highlight_buffer(language, &input.buffer));
-        let chunks = if matches!(input.source, BufferSource::Placeholder) {
-            ChunkedFile::empty(input.buffer.line_count())
-        } else {
-            chunk_buffer(language, &input.buffer)
-        };
 
         Self {
             patch: input.patch,
@@ -68,7 +62,6 @@ impl ReviewFile {
             source: input.source,
             language,
             highlights,
-            chunks,
             overlays: derived.overlays,
             deleted_lines: derived.deleted_lines,
             anchors: derived.anchors,
@@ -91,11 +84,6 @@ impl ReviewFile {
     #[must_use]
     pub fn highlighted_line(&self, line_index: usize) -> Option<&crate::HighlightedLine> {
         self.highlights.as_ref()?.line(line_index)
-    }
-
-    #[must_use]
-    pub fn chunk(&self, line_index: usize, chunk_index: usize) -> Option<&crate::NavigableChunk> {
-        self.chunks.chunk(line_index, chunk_index)
     }
 }
 

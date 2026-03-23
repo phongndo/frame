@@ -398,7 +398,6 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-rust",
  "tree-sitter-toml-ng",
- "unicode-width",
 ]
 
 [[package]]
