@@ -22,7 +22,7 @@ Legend:
 - [ ] `Ctrl-f` / `Ctrl-b`: full-page down and up
 - [ ] `H` / `M` / `L`: jump to top, middle, and bottom visible line
 - [ ] `zz`: center the cursor line in the viewport
-- [ ] `zt` / `zb`: place the cursor line at the top or bottom of the viewport
+- [ ] `zt` / [x] `zb`: place the cursor line at the top or bottom of the viewport
 
 ## Count Prefixes
 
