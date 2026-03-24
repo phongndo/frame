@@ -64,6 +64,7 @@ Examples:
 
 - [x] `v`: visual selection
   Current behavior: line-range selection in code view, used for review comments rather than editing.
+  Long-term split: if `v` later becomes character-wise, `V` preserves today's linewise behavior.
 - [ ] `V`: explicit linewise visual mode
 - [ ] `Ctrl-v`: blockwise visual mode
 - [ ] `o`: swap visual selection anchor and active edge
