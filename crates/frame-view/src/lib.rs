@@ -1087,11 +1087,11 @@ impl App {
     }
 
     fn handle_zt_sequence(&mut self) {
-        if self.pending_sequence == PendingSequence::Z {
-            self.pending_count = None;
+        let should_align = self.pending_sequence == PendingSequence::Z;
+        self.clear_prefixes();
+        if should_align {
             self.align_viewport_to_cursor_top();
         }
-        self.pending_sequence = PendingSequence::None;
     }
 
     fn handle_d_sequence(&mut self) {
@@ -1640,8 +1640,11 @@ impl App {
                     self.raw_viewport_top = 0;
                     return;
                 };
-                self.raw_viewport_top =
-                    top_aligned_viewport_top(self.raw_cursor_line, rows.len(), self.viewport_height);
+                self.raw_viewport_top = top_aligned_viewport_top(
+                    self.raw_cursor_line,
+                    rows.len(),
+                    self.viewport_height,
+                );
             }
         }
     }
@@ -3818,6 +3821,16 @@ mod tests {
         assert!(!app.handle_key(key(KeyCode::Char('z'))));
         assert!(!app.handle_key(key(KeyCode::Char('t'))));
         assert_eq!(app.code_viewport_top, 0);
+    }
+
+    #[test]
+    fn bare_t_clears_pending_count_before_next_motion() {
+        let mut app = App::new(sample_snapshot());
+
+        assert!(!app.handle_key(key(KeyCode::Char('2'))));
+        assert!(!app.handle_key(key(KeyCode::Char('t'))));
+        assert!(!app.handle_key(key(KeyCode::Char('j'))));
+        assert_eq!(app.code_cursor_line, 2);
     }
 
     #[test]
