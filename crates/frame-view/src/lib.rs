@@ -1087,11 +1087,11 @@ impl App {
     }
 
     fn handle_zb_sequence(&mut self) {
-        if self.pending_sequence == PendingSequence::Z {
-            self.pending_count = None;
+        let should_align = self.pending_sequence == PendingSequence::Z;
+        self.clear_prefixes();
+        if should_align {
             self.align_viewport_to_cursor_bottom();
         }
-        self.pending_sequence = PendingSequence::None;
     }
 
     fn handle_d_sequence(&mut self) {
@@ -2481,7 +2481,9 @@ fn bottom_aligned_viewport_top(cursor_row: usize, total_rows: usize, height: usi
     }
 
     let max_top = total_rows.saturating_sub(height);
-    cursor_row.saturating_sub(height.saturating_sub(1)).min(max_top)
+    cursor_row
+        .saturating_sub(height.saturating_sub(1))
+        .min(max_top)
 }
 
 fn code_cursor_visual_row(rows: &[CodeRenderRow], cursor_line: usize) -> usize {
@@ -3821,6 +3823,16 @@ mod tests {
         assert!(!app.handle_key(key(KeyCode::Char('z'))));
         assert!(!app.handle_key(key(KeyCode::Char('b'))));
         assert_eq!(app.code_viewport_top, 0);
+    }
+
+    #[test]
+    fn bare_b_clears_pending_count_before_next_motion() {
+        let mut app = App::new(sample_snapshot());
+
+        assert!(!app.handle_key(key(KeyCode::Char('2'))));
+        assert!(!app.handle_key(key(KeyCode::Char('b'))));
+        assert!(!app.handle_key(key(KeyCode::Char('j'))));
+        assert_eq!(app.code_cursor_line, 2);
     }
 
     #[test]
