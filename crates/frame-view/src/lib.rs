@@ -1038,6 +1038,11 @@ impl App {
                 self.pending_sequence = PendingSequence::None;
                 self.move_to_end(count);
             }
+            KeyCode::Char('M') => {
+                self.pending_count = None;
+                self.pending_sequence = PendingSequence::None;
+                self.move_to_middle_visible_line();
+            }
             KeyCode::Char('g') => {
                 self.handle_g_sequence();
             }
@@ -1314,6 +1319,42 @@ impl App {
                     },
                     |value| value.saturating_sub(1),
                 );
+                self.sync_code_cursor_from_raw();
+            }
+        }
+    }
+
+    fn move_to_middle_visible_line(&mut self) {
+        match self.view_mode {
+            ViewMode::Code => {
+                let Some(file) = self.active_file() else {
+                    return;
+                };
+                let rendered = rendered_code_view(self, file, self.viewport_width);
+                if let Some(line) = middle_visible_buffer_line(
+                    &rendered.buffer_lines_by_visual_row,
+                    self.code_viewport_top,
+                    self.viewport_height,
+                ) {
+                    self.set_code_cursor_line(line);
+                }
+            }
+            ViewMode::RawDiff => {
+                let Some(rows) = self.active_raw_rows() else {
+                    return;
+                };
+                if rows.is_empty() {
+                    return;
+                }
+
+                let visible_len = rows
+                    .len()
+                    .saturating_sub(self.raw_viewport_top)
+                    .min(self.viewport_height.max(1));
+                self.raw_cursor_line = self
+                    .raw_viewport_top
+                    .saturating_add(visible_len / 2)
+                    .min(rows.len().saturating_sub(1));
                 self.sync_code_cursor_from_raw();
             }
         }
@@ -2438,6 +2479,7 @@ fn code_cursor_visual_row(rows: &[CodeRenderRow], cursor_line: usize) -> usize {
 struct RenderedCodeView {
     lines: Vec<Line<'static>>,
     cursor_visual_row: usize,
+    buffer_lines_by_visual_row: Vec<Option<usize>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2525,6 +2567,7 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
 
     let mut lines = Vec::new();
     let mut cursor_visual_row = code_cursor_visual_row(&rows, app.code_cursor_line);
+    let mut buffer_lines_by_visual_row = Vec::new();
 
     for row in rows {
         let is_selected = row.buffer_line == Some(app.code_cursor_line);
@@ -2550,10 +2593,12 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
             &row,
             width,
         ));
+        buffer_lines_by_visual_row.push(row_buffer_line);
 
         if let Some(anchor_line) = row_buffer_line {
             if let Some(comment_boxes) = persisted_comment_boxes.remove(&anchor_line) {
                 for comment_box in comment_boxes {
+                    buffer_lines_by_visual_row.extend(std::iter::repeat_n(None, comment_box.len()));
                     lines.extend(comment_box);
                 }
             }
@@ -2561,6 +2606,8 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
             if let Some((comment_box_lines, draft_anchor_line)) = &draft_comment_box
                 && anchor_line == *draft_anchor_line
             {
+                buffer_lines_by_visual_row
+                    .extend(std::iter::repeat_n(None, comment_box_lines.len()));
                 lines.extend(comment_box_lines.iter().cloned());
             }
         }
@@ -2569,7 +2616,37 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
     RenderedCodeView {
         lines,
         cursor_visual_row,
+        buffer_lines_by_visual_row,
     }
+}
+
+fn middle_visible_buffer_line(
+    buffer_lines_by_visual_row: &[Option<usize>],
+    viewport_top: usize,
+    viewport_height: usize,
+) -> Option<usize> {
+    let visible_end = buffer_lines_by_visual_row
+        .len()
+        .min(viewport_top.saturating_add(viewport_height.max(1)));
+    if viewport_top >= visible_end {
+        return None;
+    }
+
+    let midpoint = viewport_top + ((visible_end - viewport_top) / 2);
+    buffer_lines_by_visual_row
+        .iter()
+        .enumerate()
+        .take(visible_end)
+        .skip(midpoint)
+        .find_map(|(_, line)| *line)
+        .or_else(|| {
+            buffer_lines_by_visual_row
+                .iter()
+                .take(midpoint)
+                .skip(viewport_top)
+                .rev()
+                .find_map(|line| *line)
+        })
 }
 
 fn comment_box_lines(text: &str, width: usize, is_draft: bool) -> Vec<Line<'static>> {
@@ -3718,6 +3795,37 @@ mod tests {
         assert!(!app.handle_key(key(KeyCode::Char('^'))));
         assert!(!app.handle_key(key(KeyCode::Char('$'))));
         assert_eq!(app.code_cursor_line, 1);
+    }
+
+    #[test]
+    fn m_moves_to_middle_visible_code_line() {
+        let mut app = App::new(sample_snapshot());
+        app.set_viewport_size(5, 80);
+        app.code_viewport_top = 2;
+        app.set_code_cursor_line(7);
+        app.comments.push(super::ReviewComment {
+            file_path: "src/main.rs".to_owned(),
+            target: CommentTarget::LineRange {
+                start_line: 1,
+                end_line: 1,
+            },
+            text: "note".to_owned(),
+        });
+
+        assert!(!app.handle_key(key(KeyCode::Char('M'))));
+        assert_eq!(app.code_cursor_line, 2);
+    }
+
+    #[test]
+    fn m_moves_to_middle_visible_raw_diff_row() {
+        let mut app = App::new(sample_snapshot());
+        app.set_viewport_size(4, 80);
+        app.toggle_mode();
+        app.raw_viewport_top = 1;
+        app.raw_cursor_line = 6;
+
+        assert!(!app.handle_key(key(KeyCode::Char('M'))));
+        assert_eq!(app.raw_cursor_line, 3);
     }
 
     #[test]
