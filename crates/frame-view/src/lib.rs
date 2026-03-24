@@ -1330,9 +1330,10 @@ impl App {
                 let Some(file) = self.active_file() else {
                     return;
                 };
-                let rendered = rendered_code_view(self, file, self.viewport_width);
                 if let Some(line) = last_visible_buffer_line(
-                    &rendered.buffer_lines_by_visual_row,
+                    self,
+                    file,
+                    self.viewport_width,
                     self.code_viewport_top,
                     self.viewport_height,
                 ) {
@@ -2479,7 +2480,6 @@ fn code_cursor_visual_row(rows: &[CodeRenderRow], cursor_line: usize) -> usize {
 struct RenderedCodeView {
     lines: Vec<Line<'static>>,
     cursor_visual_row: usize,
-    buffer_lines_by_visual_row: Vec<Option<usize>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2567,7 +2567,6 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
 
     let mut lines = Vec::new();
     let mut cursor_visual_row = code_cursor_visual_row(&rows, app.code_cursor_line);
-    let mut buffer_lines_by_visual_row = Vec::new();
 
     for row in rows {
         let is_selected = row.buffer_line == Some(app.code_cursor_line);
@@ -2593,12 +2592,10 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
             &row,
             width,
         ));
-        buffer_lines_by_visual_row.push(row_buffer_line);
 
         if let Some(anchor_line) = row_buffer_line {
             if let Some(comment_boxes) = persisted_comment_boxes.remove(&anchor_line) {
                 for comment_box in comment_boxes {
-                    buffer_lines_by_visual_row.extend(std::iter::repeat_n(None, comment_box.len()));
                     lines.extend(comment_box);
                 }
             }
@@ -2606,8 +2603,6 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
             if let Some((comment_box_lines, draft_anchor_line)) = &draft_comment_box
                 && anchor_line == *draft_anchor_line
             {
-                buffer_lines_by_visual_row
-                    .extend(std::iter::repeat_n(None, comment_box_lines.len()));
                 lines.extend(comment_box_lines.iter().cloned());
             }
         }
@@ -2616,21 +2611,82 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
     RenderedCodeView {
         lines,
         cursor_visual_row,
-        buffer_lines_by_visual_row,
     }
 }
 
 fn last_visible_buffer_line(
-    buffer_lines_by_visual_row: &[Option<usize>],
+    app: &App,
+    file: &ReviewFile,
+    width: usize,
     viewport_top: usize,
     viewport_height: usize,
 ) -> Option<usize> {
-    buffer_lines_by_visual_row
+    let visible_end = viewport_top.saturating_add(viewport_height.max(1));
+    let comment_rows_by_anchor = comment_box_rows_by_anchor(app, file, width);
+    let mut visual_row = 0usize;
+    let mut last_visible_line = None;
+
+    for row in code_rows(file) {
+        if visual_row >= visible_end {
+            break;
+        }
+
+        if visual_row >= viewport_top
+            && let Some(line) = row.buffer_line
+        {
+            last_visible_line = Some(line);
+        }
+
+        visual_row = visual_row.saturating_add(1);
+        if let Some(anchor_line) = row.buffer_line {
+            visual_row = visual_row.saturating_add(
+                comment_rows_by_anchor
+                    .get(&anchor_line)
+                    .copied()
+                    .unwrap_or(0),
+            );
+        }
+    }
+
+    last_visible_line
+}
+
+fn comment_box_rows_by_anchor(
+    app: &App,
+    file: &ReviewFile,
+    width: usize,
+) -> BTreeMap<usize, usize> {
+    let mut rows_by_anchor = BTreeMap::new();
+    for comment in app
+        .comments
         .iter()
-        .skip(viewport_top)
-        .take(viewport_height.max(1))
-        .rev()
-        .find_map(|line| *line)
+        .filter(|comment| comment.file_path == file.display_path())
+    {
+        let anchor_line = comment
+            .target
+            .end_line()
+            .min(file.buffer.line_count().saturating_sub(1));
+        *rows_by_anchor.entry(anchor_line).or_default() +=
+            comment_box_visual_height(&comment.text, width, false);
+    }
+
+    if let Some((draft, anchor_line)) = app.comment_draft().zip(app.comment_box_anchor_line(file)) {
+        *rows_by_anchor.entry(anchor_line).or_default() +=
+            comment_box_visual_height(draft, width, true);
+    }
+
+    rows_by_anchor
+}
+
+fn comment_box_visual_height(text: &str, width: usize, is_draft: bool) -> usize {
+    let inner_width = width.saturating_sub(2).max(12);
+    let body = if is_draft && text.is_empty() {
+        "Type feedback for AI..."
+    } else {
+        text
+    };
+
+    wrap_comment_text(body, inner_width).len().saturating_add(2)
 }
 
 fn comment_box_lines(text: &str, width: usize, is_draft: bool) -> Vec<Line<'static>> {
