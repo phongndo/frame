@@ -23,7 +23,7 @@ Legend:
 - [x] `H`: jump to the top visible line
 - [ ] `M`: jump to the middle visible line
 - [ ] `L`: jump to the bottom visible line
-- [ ] `zz`: center the cursor line in the viewport
+- [x] `zz`: center the cursor line in the viewport
 - [ ] `zt` / `zb`: place the cursor line at the top or bottom of the viewport
 
 ## Count Prefixes
@@ -136,8 +136,6 @@ being read-only.
 
 ## Notes
 
-- The first missing motion to add is `zz`. It is simple, high value, and fits
-  the existing line-oriented cursor model.
 - Numeric count prefixes are already part of the motion model and should be
   preserved as new motions are added.
 - The second group to add should be `zt`, `zb`, `H`, `M`, and `L` because they
