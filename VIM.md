@@ -22,7 +22,7 @@ Legend:
 - [ ] `Ctrl-f` / `Ctrl-b`: full-page down and up
 - [x] `H`: jump to the top visible line
 - [ ] `M`: jump to the middle visible line
-- [ ] `L`: jump to the bottom visible line
+- [x] `L`: jump to the bottom visible line
 - [x] `zz`: center the cursor line in the viewport
 - [x] `zt`: place the cursor line at the top of the viewport
 - [ ] `zb`: place the cursor line at the bottom of the viewport
