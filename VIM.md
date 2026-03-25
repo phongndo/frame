@@ -21,7 +21,7 @@ Legend:
 - [x] `Ctrl-u`: half-page up
 - [ ] `Ctrl-f` / `Ctrl-b`: full-page down and up
 - [x] `H`: jump to the top visible line
-- [ ] `M`: jump to the middle visible line
+- [x] `M`: jump to the middle visible line
 - [x] `L`: jump to the bottom visible line
 - [x] `zz`: center the cursor line in the viewport
 - [x] `zt`: place the cursor line at the top of the viewport
@@ -126,7 +126,7 @@ being read-only.
 
 - Numeric count prefixes are already part of the motion model and should be
   preserved as new motions are added.
-- The second group to add should be `zt`, `zb`, `H`, `M`, and `L` because they
-  improve reorientation without requiring search or symbol navigation first.
 - Hybrid relative line numbers are a better default for code view than absolute
   line numbers because `frame` is keyboard-first and read-only.
+- Horizontal chunk or column navigation is intentionally out of scope for this
+  read-only viewer.
