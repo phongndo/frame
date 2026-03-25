@@ -25,7 +25,7 @@ Legend:
 - [x] `L`: jump to the bottom visible line
 - [x] `zz`: center the cursor line in the viewport
 - [x] `zt`: place the cursor line at the top of the viewport
-- [ ] `zb`: place the cursor line at the bottom of the viewport
+- [x] `zb`: place the cursor line at the bottom of the viewport
 
 ## Count Prefixes
 

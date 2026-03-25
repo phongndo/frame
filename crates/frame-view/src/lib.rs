@@ -1062,6 +1062,9 @@ impl App {
             KeyCode::Char('t') => {
                 self.handle_zt_sequence();
             }
+            KeyCode::Char('b') => {
+                self.handle_zb_sequence();
+            }
             KeyCode::Char('d') => self.handle_d_sequence(),
             KeyCode::Char(']') => self.pending_sequence = PendingSequence::CloseBracket,
             KeyCode::Char('[') => self.pending_sequence = PendingSequence::OpenBracket,
@@ -1111,6 +1114,14 @@ impl App {
         self.clear_prefixes();
         if should_align {
             self.align_viewport_to_cursor_top();
+        }
+    }
+
+    fn handle_zb_sequence(&mut self) {
+        let should_align = self.pending_sequence == PendingSequence::Z;
+        self.clear_prefixes();
+        if should_align {
+            self.align_viewport_to_cursor_bottom();
         }
     }
 
@@ -1789,6 +1800,34 @@ impl App {
                     return;
                 };
                 self.raw_viewport_top = top_aligned_viewport_top(
+                    self.raw_cursor_line,
+                    rows.len(),
+                    self.viewport_height,
+                );
+            }
+        }
+    }
+
+    fn align_viewport_to_cursor_bottom(&mut self) {
+        match self.view_mode {
+            ViewMode::Code => {
+                let Some(file) = self.active_file() else {
+                    self.code_viewport_top = 0;
+                    return;
+                };
+                let rendered = rendered_code_view(self, file, self.viewport_width);
+                self.code_viewport_top = bottom_aligned_viewport_top(
+                    rendered.cursor_visual_row,
+                    rendered.lines.len(),
+                    self.viewport_height,
+                );
+            }
+            ViewMode::RawDiff => {
+                let Some(rows) = self.active_raw_rows() else {
+                    self.raw_viewport_top = 0;
+                    return;
+                };
+                self.raw_viewport_top = bottom_aligned_viewport_top(
                     self.raw_cursor_line,
                     rows.len(),
                     self.viewport_height,
@@ -2639,6 +2678,17 @@ fn top_aligned_viewport_top(cursor_row: usize, total_rows: usize, height: usize)
 
     let max_top = total_rows.saturating_sub(height);
     cursor_row.min(max_top)
+}
+
+fn bottom_aligned_viewport_top(cursor_row: usize, total_rows: usize, height: usize) -> usize {
+    if total_rows <= height {
+        return 0;
+    }
+
+    let max_top = total_rows.saturating_sub(height);
+    cursor_row
+        .saturating_sub(height.saturating_sub(1))
+        .min(max_top)
 }
 
 fn code_cursor_visual_row(rows: &[CodeRenderRow], cursor_line: usize) -> usize {
@@ -3676,10 +3726,10 @@ mod tests {
     use super::{
         App, AppEvent, CodeRowKind, CommentTarget, InputMode, InteractionMode, MotionMode,
         RawRowKind, RefreshFilter, SidebarFileStats, SidebarNodePath, SidebarRow, SidebarRowKind,
-        ViewMode, build_sidebar_rows, centered_viewport_top, code_rows, comment_box_lines,
-        raw_hunk_targets_in_rows, raw_row_for_buffer_line, raw_row_to_text, raw_rows,
-        relevant_raw_lineno, rendered_code_view, run_refresh_loop, sidebar_directory_paths,
-        sidebar_row_to_text, top_aligned_viewport_top,
+        ViewMode, bottom_aligned_viewport_top, build_sidebar_rows, centered_viewport_top,
+        code_rows, comment_box_lines, raw_hunk_targets_in_rows, raw_row_for_buffer_line,
+        raw_row_to_text, raw_rows, relevant_raw_lineno, rendered_code_view, run_refresh_loop,
+        sidebar_directory_paths, sidebar_row_to_text, top_aligned_viewport_top,
     };
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -4316,6 +4366,62 @@ mod tests {
 
         assert!(!app.handle_key(key(KeyCode::Char('2'))));
         assert!(!app.handle_key(key(KeyCode::Char('t'))));
+        assert!(!app.handle_key(key(KeyCode::Char('j'))));
+        assert_eq!(app.code_cursor_line, 2);
+    }
+
+    #[test]
+    fn zb_aligns_cursor_to_bottom_in_code_view() {
+        let mut app = App::new(sample_snapshot());
+        app.set_viewport_size(4, 80);
+        app.set_code_cursor_line(7);
+
+        let file = app.active_file().expect("file exists");
+        let rendered = rendered_code_view(&app, file, app.viewport_width);
+        let expected_top = bottom_aligned_viewport_top(
+            rendered.cursor_visual_row,
+            rendered.lines.len(),
+            app.viewport_height,
+        );
+
+        assert!(!app.handle_key(key(KeyCode::Char('z'))));
+        assert!(!app.handle_key(key(KeyCode::Char('b'))));
+        assert_eq!(app.code_viewport_top, expected_top);
+    }
+
+    #[test]
+    fn zb_aligns_cursor_to_bottom_in_raw_diff_view() {
+        let mut app = App::new(sample_snapshot());
+        app.set_viewport_size(4, 80);
+        app.toggle_mode();
+        app.raw_cursor_line = 4;
+
+        let rows = app.active_raw_rows().expect("raw rows exist");
+        let expected_top =
+            bottom_aligned_viewport_top(app.raw_cursor_line, rows.len(), app.viewport_height);
+
+        assert!(!app.handle_key(key(KeyCode::Char('z'))));
+        assert!(!app.handle_key(key(KeyCode::Char('b'))));
+        assert_eq!(app.raw_viewport_top, expected_top);
+    }
+
+    #[test]
+    fn zb_keeps_short_buffers_at_top() {
+        let mut app = App::new(sample_snapshot());
+        app.set_viewport_size(40, 80);
+        app.set_code_cursor_line(7);
+
+        assert!(!app.handle_key(key(KeyCode::Char('z'))));
+        assert!(!app.handle_key(key(KeyCode::Char('b'))));
+        assert_eq!(app.code_viewport_top, 0);
+    }
+
+    #[test]
+    fn bare_b_clears_pending_count_before_next_motion() {
+        let mut app = App::new(sample_snapshot());
+
+        assert!(!app.handle_key(key(KeyCode::Char('2'))));
+        assert!(!app.handle_key(key(KeyCode::Char('b'))));
         assert!(!app.handle_key(key(KeyCode::Char('j'))));
         assert_eq!(app.code_cursor_line, 2);
     }
