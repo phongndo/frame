@@ -21,7 +21,7 @@ Legend:
 - [x] `Ctrl-u`: half-page up
 - [ ] `Ctrl-f` / `Ctrl-b`: full-page down and up
 - [ ] `H` / `M` / `L`: jump to top, middle, and bottom visible line
-- [ ] `zz`: center the cursor line in the viewport
+- [x] `zz`: center the cursor line in the viewport
 - [x] `zt`: place the cursor line at the top of the viewport
 - [ ] `zb`: place the cursor line at the bottom of the viewport
 
@@ -135,8 +135,6 @@ being read-only.
 
 ## Notes
 
-- The first missing motion to add is `zz`. It is simple, high value, and fits
-  the existing line-oriented cursor model.
 - Numeric count prefixes are already part of the motion model and should be
   preserved as new motions are added.
 - The second group to add should be `zt`, `zb`, `H`, `M`, and `L` because they
