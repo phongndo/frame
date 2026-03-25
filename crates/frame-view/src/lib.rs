@@ -1044,6 +1044,10 @@ impl App {
                 self.pending_sequence = PendingSequence::None;
                 self.move_to_middle_visible_line();
             }
+            KeyCode::Char('H') => {
+                self.clear_prefixes();
+                self.move_to_top_visible_line();
+            }
             KeyCode::Char('z') => {
                 self.handle_z_sequence();
             }
@@ -1333,6 +1337,35 @@ impl App {
                     },
                     |value| value.saturating_sub(1),
                 );
+                self.sync_code_cursor_from_raw();
+            }
+        }
+    }
+
+    fn move_to_top_visible_line(&mut self) {
+        match self.view_mode {
+            ViewMode::Code => {
+                let Some(file) = self.active_file() else {
+                    return;
+                };
+                if let Some(line) = first_visible_buffer_line(
+                    self,
+                    file,
+                    self.viewport_width,
+                    self.code_viewport_top,
+                    self.viewport_height,
+                ) {
+                    self.set_code_cursor_line(line);
+                }
+            }
+            ViewMode::RawDiff => {
+                let Some(rows) = self.active_raw_rows() else {
+                    return;
+                };
+                if rows.is_empty() {
+                    return;
+                }
+                self.raw_cursor_line = self.raw_viewport_top.min(rows.len().saturating_sub(1));
                 self.sync_code_cursor_from_raw();
             }
         }
@@ -2662,6 +2695,42 @@ fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCod
     }
 }
 
+fn first_visible_buffer_line(
+    app: &App,
+    file: &ReviewFile,
+    width: usize,
+    viewport_top: usize,
+    viewport_height: usize,
+) -> Option<usize> {
+    let visible_end = viewport_top.saturating_add(viewport_height.max(1));
+    let comment_rows_by_anchor = comment_box_rows_by_anchor(app, file, width);
+    let mut visual_row = 0usize;
+
+    for row in code_rows(file) {
+        if visual_row >= visible_end {
+            break;
+        }
+
+        if visual_row >= viewport_top
+            && let Some(line) = row.buffer_line
+        {
+            return Some(line);
+        }
+
+        visual_row = visual_row.saturating_add(1);
+        if let Some(anchor_line) = row.buffer_line {
+            visual_row = visual_row.saturating_add(
+                comment_rows_by_anchor
+                    .get(&anchor_line)
+                    .copied()
+                    .unwrap_or(0),
+            );
+        }
+    }
+
+    None
+}
+
 fn middle_visible_buffer_line(
     app: &App,
     file: &ReviewFile,
@@ -3917,6 +3986,29 @@ mod tests {
         assert!(!app.handle_key(key(KeyCode::Char('^'))));
         assert!(!app.handle_key(key(KeyCode::Char('$'))));
         assert_eq!(app.code_cursor_line, 1);
+    }
+
+    #[test]
+    fn shift_h_moves_to_first_visible_code_line() {
+        let mut app = App::new(sample_snapshot());
+        app.set_viewport_size(4, 80);
+        app.code_viewport_top = 1;
+        app.set_code_cursor_line(7);
+
+        assert!(!app.handle_key(key(KeyCode::Char('H'))));
+        assert_eq!(app.code_cursor_line, 1);
+    }
+
+    #[test]
+    fn shift_h_moves_to_first_visible_raw_diff_row() {
+        let mut app = App::new(sample_snapshot());
+        app.set_viewport_size(4, 80);
+        app.toggle_mode();
+        app.raw_viewport_top = 3;
+        app.raw_cursor_line = 6;
+
+        assert!(!app.handle_key(key(KeyCode::Char('H'))));
+        assert_eq!(app.raw_cursor_line, 3);
     }
 
     #[test]

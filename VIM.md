@@ -20,7 +20,7 @@ Legend:
 - [x] `Ctrl-d`: half-page down
 - [x] `Ctrl-u`: half-page up
 - [ ] `Ctrl-f` / `Ctrl-b`: full-page down and up
-- [ ] `H`: jump to the top visible line
+- [x] `H`: jump to the top visible line
 - [x] `M`: jump to the middle visible line
 - [ ] `L`: jump to the bottom visible line
 - [x] `zz`: center the cursor line in the viewport
