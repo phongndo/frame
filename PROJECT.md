@@ -182,7 +182,7 @@ Navigation:
 
 5. User either presses:
 
-   ```
+   ```text
    A
    ```
 

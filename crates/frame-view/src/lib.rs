@@ -440,6 +440,35 @@ impl Drop for TerminalCleanupGuard {
     }
 }
 
+fn describe_git_status_error(error: &frame_git::GitError) -> String {
+    match error {
+        frame_git::GitError::NotInRepo | frame_git::GitError::GitUnavailable => {
+            format!("Git panel unavailable: {error}")
+        }
+        _ => format!("Git status unavailable: {error}"),
+    }
+}
+
+fn git_file_change_count_map(status: &GitStatusSnapshot) -> BTreeMap<String, (usize, usize)> {
+    let mut counts = BTreeMap::new();
+
+    for file in &status.staged.files {
+        counts
+            .entry(file.display_path().to_owned())
+            .or_insert((0, 0))
+            .0 = patch_file_changed_line_count(file);
+    }
+
+    for file in &status.unstaged.files {
+        counts
+            .entry(file.display_path().to_owned())
+            .or_insert((0, 0))
+            .1 = patch_file_changed_line_count(file);
+    }
+
+    counts
+}
+
 #[derive(Debug)]
 struct App {
     snapshot: ReviewSnapshot,
@@ -466,6 +495,7 @@ struct App {
     visual_anchor: Option<CursorAnchor>,
     input_mode: InputMode,
     git_status: Option<GitStatusSnapshot>,
+    git_file_change_count_cache: BTreeMap<String, (usize, usize)>,
     git_status_error: Option<String>,
     git_panel: GitPanelState,
     comments: Vec<ReviewComment>,
@@ -479,10 +509,17 @@ impl App {
         let raw_row_cache = snapshot.files.iter().map(raw_rows).collect();
         let sidebar_row_cache = build_sidebar_rows(&snapshot, &expanded_dirs);
         let sidebar_file_order_cache = sidebar_file_order(&snapshot);
-        let (git_status, git_status_error) =
+        let (git_status, git_file_change_count_cache, git_status_error) =
             match frame_git::load_git_status_from_dir(&snapshot.repo_root) {
-                Ok(status) => (Some(status), None),
-                Err(error) => (None, Some(format!("Git panel unavailable: {error}"))),
+                Ok(status) => {
+                    let counts = git_file_change_count_map(&status);
+                    (Some(status), counts, None)
+                }
+                Err(error) => (
+                    None,
+                    BTreeMap::new(),
+                    Some(describe_git_status_error(&error)),
+                ),
             };
         let mut app = Self {
             expanded_dirs,
@@ -509,6 +546,7 @@ impl App {
             visual_anchor: None,
             input_mode: InputMode::Normal,
             git_status,
+            git_file_change_count_cache,
             git_status_error,
             git_panel: GitPanelState::default(),
             comments: Vec::new(),
@@ -529,12 +567,14 @@ impl App {
     fn reload_git_status(&mut self) {
         match frame_git::load_git_status_from_dir(&self.snapshot.repo_root) {
             Ok(status) => {
+                self.git_file_change_count_cache = git_file_change_count_map(&status);
                 self.git_status = Some(status);
                 self.git_status_error = None;
             }
             Err(error) => {
+                self.git_file_change_count_cache.clear();
                 self.git_status = None;
-                self.git_status_error = Some(format!("Git panel unavailable: {error}"));
+                self.git_status_error = Some(describe_git_status_error(&error));
             }
         }
     }
@@ -1391,7 +1431,6 @@ impl App {
                     self.set_status(&format!("Staged change, but refresh failed: {error}"));
                     return;
                 }
-                self.reload_git_status();
                 self.ensure_git_panel_cursor();
                 self.set_status("Updated staged changes.");
             }
@@ -2088,22 +2127,10 @@ impl App {
     }
 
     fn git_file_change_counts(&self, file_path: &str) -> (usize, usize) {
-        let Some(status) = &self.git_status else {
-            return (0, 0);
-        };
-        let staged = status
-            .staged
-            .files
-            .iter()
-            .find(|file| file.display_path() == file_path)
-            .map_or(0, patch_file_changed_line_count);
-        let unstaged = status
-            .unstaged
-            .files
-            .iter()
-            .find(|file| file.display_path() == file_path)
-            .map_or(0, patch_file_changed_line_count);
-        (staged, unstaged)
+        self.git_file_change_count_cache
+            .get(file_path)
+            .copied()
+            .unwrap_or((0, 0))
     }
 
     fn line_has_comment(&self, file_path: &str, line_index: usize) -> bool {
@@ -4265,7 +4292,7 @@ mod tests {
         ReviewFile, ReviewFileInput, ReviewSnapshot,
     };
     use frame_git::{
-        BranchStatus, CommitMode, GitDiffSide, GitStatusSnapshot, PullRequestCheck,
+        BranchStatus, CommitMode, GitDiffSide, GitError, GitStatusSnapshot, PullRequestCheck,
         PullRequestStatus, PushMode,
     };
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -4275,9 +4302,9 @@ mod tests {
         App, AppEvent, CodeRowKind, CommentTarget, InputMode, InteractionMode, MotionMode,
         RawRowKind, RefreshFilter, SidebarFileStats, SidebarNodePath, SidebarRow, SidebarRowKind,
         ViewMode, build_git_panel_rows, build_sidebar_rows, code_rows, comment_box_lines,
-        raw_hunk_targets_in_rows, raw_row_for_buffer_line, raw_row_to_text, raw_rows,
-        relevant_raw_lineno, rendered_code_view, run_refresh_loop, sidebar_directory_paths,
-        sidebar_row_to_text,
+        describe_git_status_error, git_file_change_count_map, raw_hunk_targets_in_rows,
+        raw_row_for_buffer_line, raw_row_to_text, raw_rows, relevant_raw_lineno,
+        rendered_code_view, run_refresh_loop, sidebar_directory_paths, sidebar_row_to_text,
     };
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -4616,6 +4643,26 @@ mod tests {
                 files: vec![sample_added_file().patch],
             },
         }
+    }
+
+    #[test]
+    fn git_status_errors_distinguish_panel_from_status_failures() {
+        assert_eq!(
+            describe_git_status_error(&GitError::NotInRepo),
+            "Git panel unavailable: current directory is not inside a git repository"
+        );
+        assert_eq!(
+            describe_git_status_error(&GitError::MalformedStatus("bad".to_owned())),
+            "Git status unavailable: git status output was malformed: bad"
+        );
+    }
+
+    #[test]
+    fn precomputes_git_file_change_counts() {
+        let counts = git_file_change_count_map(&sample_git_status_snapshot());
+
+        assert_eq!(counts.get("src/main.rs"), Some(&(5, 0)));
+        assert_eq!(counts.get("src/lib.rs"), Some(&(0, 1)));
     }
 
     #[test]

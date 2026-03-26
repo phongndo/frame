@@ -2,6 +2,7 @@ use std::{
     env,
     ffi::OsStr,
     fmt::Write as _,
+    fs,
     path::Path,
     process::{Command, Output},
 };
@@ -10,6 +11,9 @@ use frame_core::{LineKind, PatchFile, PatchHunk, PatchSet, parse_patch};
 use serde::Deserialize;
 
 use super::{GitError, head_exists, repo_root, shell::run_git_allowing_status, untracked_files};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchStatus {
@@ -212,7 +216,7 @@ pub fn toggle_stage_from_dir(cwd: &Path, selection: &GitSelection) -> Result<(),
             let hunk = file.hunks.get(*hunk_index).ok_or_else(|| {
                 GitError::UnsupportedSelection(format!("{path}: missing hunk {hunk_index}"))
             })?;
-            let patch_text = render_patch_text(file, std::slice::from_ref(hunk));
+            let patch_text = render_patch_text(&repo_root, file, std::slice::from_ref(hunk))?;
             apply_patch_to_index(&repo_root, &patch_text, *side == GitDiffSide::Staged)
         }
         GitSelection::Line {
@@ -223,6 +227,14 @@ pub fn toggle_stage_from_dir(cwd: &Path, selection: &GitSelection) -> Result<(),
         } => {
             let status = load_git_status_from_dir(&repo_root)?;
             let file = find_patch_file(&status, *side, path)?;
+            if matches!(
+                file.change,
+                frame_core::FileChangeKind::Renamed | frame_core::FileChangeKind::Copied
+            ) {
+                return Err(GitError::UnsupportedSelection(format!(
+                    "{path}: partial staging is not supported for renamed/copied files"
+                )));
+            }
             let hunk = file.hunks.get(*hunk_index).ok_or_else(|| {
                 GitError::UnsupportedSelection(format!("{path}: missing hunk {hunk_index}"))
             })?;
@@ -231,7 +243,7 @@ pub fn toggle_stage_from_dir(cwd: &Path, selection: &GitSelection) -> Result<(),
                     "{path}: line staging is only supported for added/removed diff lines"
                 ))
             })?;
-            let patch_text = render_patch_text(file, std::slice::from_ref(&line_hunk));
+            let patch_text = render_patch_text(&repo_root, file, std::slice::from_ref(&line_hunk))?;
             apply_patch_to_index(&repo_root, &patch_text, *side == GitDiffSide::Staged)
         }
     }
@@ -309,10 +321,14 @@ pub fn push_from_dir(cwd: &Path, mode: PushMode) -> Result<(), GitError> {
         }
     } else {
         let branch_name = current_branch_name_from_dir(&repo_root)?;
-        let mut args = vec!["push", "--set-upstream", "origin", branch_name.as_str()];
+        let remote_name = configured_remote_for_branch(&repo_root, &branch_name)?
+            .unwrap_or_else(|| "origin".to_owned());
+        let mut args = vec!["push".to_owned(), "--set-upstream".to_owned()];
         if matches!(mode, PushMode::ForceWithLease) {
-            args.insert(1, "--force-with-lease");
+            args.push("--force-with-lease".to_owned());
         }
+        args.push(remote_name);
+        args.push(branch_name);
         run_git_allowing_status(&repo_root, args, &[0])?;
     }
 
@@ -574,14 +590,22 @@ fn apply_patch_to_index(cwd: &Path, patch_text: &str, reverse: bool) -> Result<(
     Ok(())
 }
 
-fn render_patch_text(file: &PatchFile, hunks: &[PatchHunk]) -> String {
+fn render_patch_text(
+    cwd: &Path,
+    file: &PatchFile,
+    hunks: &[PatchHunk],
+) -> Result<String, GitError> {
     let old_display = display_old_path(file);
     let new_display = display_new_path(file);
     let mut patch = String::new();
     let _ = writeln!(patch, "diff --git {old_display} {new_display}");
     match file.change {
-        frame_core::FileChangeKind::Added => patch.push_str("new file mode 100644\n"),
-        frame_core::FileChangeKind::Deleted => patch.push_str("deleted file mode 100644\n"),
+        frame_core::FileChangeKind::Added => {
+            let _ = writeln!(patch, "new file mode {}", added_file_mode(cwd, file)?);
+        }
+        frame_core::FileChangeKind::Deleted => {
+            let _ = writeln!(patch, "deleted file mode {}", deleted_file_mode(cwd, file)?);
+        }
         frame_core::FileChangeKind::Renamed => {
             if let Some(old_path) = &file.old_path {
                 let _ = writeln!(patch, "rename from {old_path}");
@@ -600,8 +624,8 @@ fn render_patch_text(file: &PatchFile, hunks: &[PatchHunk]) -> String {
         }
         frame_core::FileChangeKind::Modified => {}
     }
-    let _ = writeln!(patch, "--- {}", prefixed_old_path(file));
-    let _ = writeln!(patch, "+++ {}", prefixed_new_path(file));
+    let _ = writeln!(patch, "--- {}", display_old_path(file));
+    let _ = writeln!(patch, "+++ {}", display_new_path(file));
     for hunk in hunks {
         let _ = writeln!(patch, "{}", hunk.header);
         for line in &hunk.lines {
@@ -615,19 +639,15 @@ fn render_patch_text(file: &PatchFile, hunks: &[PatchHunk]) -> String {
             patch.push('\n');
         }
     }
-    patch
+    Ok(patch)
 }
 
-fn prefixed_old_path(file: &PatchFile) -> String {
-    file.old_path
+fn added_file_mode(cwd: &Path, file: &PatchFile) -> Result<&'static str, GitError> {
+    let path = file
+        .new_path
         .as_deref()
-        .map_or_else(|| "/dev/null".to_owned(), |path| format!("a/{path}"))
-}
-
-fn prefixed_new_path(file: &PatchFile) -> String {
-    file.new_path
-        .as_deref()
-        .map_or_else(|| "/dev/null".to_owned(), |path| format!("b/{path}"))
+        .ok_or_else(|| GitError::UnsupportedSelection("added file path unavailable".to_owned()))?;
+    worktree_file_mode(&cwd.join(path))
 }
 
 fn display_old_path(file: &PatchFile) -> String {
@@ -640,6 +660,72 @@ fn display_new_path(file: &PatchFile) -> String {
     file.new_path
         .as_deref()
         .map_or_else(|| "/dev/null".to_owned(), |path| format!("b/{path}"))
+}
+
+fn deleted_file_mode(cwd: &Path, file: &PatchFile) -> Result<String, GitError> {
+    let path = file.old_path.as_deref().ok_or_else(|| {
+        GitError::UnsupportedSelection("deleted file path unavailable".to_owned())
+    })?;
+    if let Some(mode) = index_file_mode(cwd, path)? {
+        return Ok(mode);
+    }
+    if let Some(mode) = head_file_mode(cwd, path)? {
+        return Ok(mode);
+    }
+    Ok("100644".to_owned())
+}
+
+fn worktree_file_mode(path: &Path) -> Result<&'static str, GitError> {
+    let metadata = fs::metadata(path)?;
+    Ok(mode_for_metadata(&metadata))
+}
+
+#[cfg(unix)]
+fn mode_for_metadata(metadata: &fs::Metadata) -> &'static str {
+    if metadata.permissions().mode() & 0o111 != 0 {
+        "100755"
+    } else {
+        "100644"
+    }
+}
+
+#[cfg(not(unix))]
+fn mode_for_metadata(_metadata: &fs::Metadata) -> &'static str {
+    "100644"
+}
+
+fn index_file_mode(cwd: &Path, path: &str) -> Result<Option<String>, GitError> {
+    let output = run_git_allowing_status(cwd, ["ls-files", "--stage", "--", path], &[0])?;
+    Ok(parse_mode_from_listing(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn head_file_mode(cwd: &Path, path: &str) -> Result<Option<String>, GitError> {
+    if !head_exists(cwd)? {
+        return Ok(None);
+    }
+    let output = run_git_allowing_status(cwd, ["ls-tree", "HEAD", "--", path], &[0])?;
+    Ok(parse_mode_from_listing(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn parse_mode_from_listing(output: &str) -> Option<String> {
+    output
+        .lines()
+        .find_map(|line| line.split_whitespace().next().map(ToOwned::to_owned))
+}
+
+fn configured_remote_for_branch(cwd: &Path, branch_name: &str) -> Result<Option<String>, GitError> {
+    let key = format!("branch.{branch_name}.remote");
+    let output = run_git_allowing_status(cwd, ["config", "--get", key.as_str()], &[0, 1])?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let remote = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((!remote.is_empty()).then_some(remote))
 }
 
 fn run_git_with_input_allowing_status<I, S>(
@@ -743,7 +829,7 @@ mod tests {
     use super::{
         BranchStatus, CommitMode, CommitRequest, GitDiffSide, GitSelection, commit_from_dir,
         current_branch_name_from_dir, head_commit_message_from_dir, load_git_status_from_dir,
-        parse_branch_status, toggle_stage_from_dir,
+        parse_branch_status, push_from_dir, toggle_stage_from_dir,
     };
     use std::{
         fs,
@@ -752,6 +838,9 @@ mod tests {
         sync::atomic::{AtomicUsize, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -1005,6 +1094,104 @@ mod tests {
         assert!(cached.contains("-line two"));
         assert!(!cached.contains("-line three"));
         assert!(unstaged.contains("-line three"));
+    }
+
+    #[test]
+    fn rejects_line_staging_for_renamed_files() {
+        let repo = init_repo();
+        git(repo.path(), &["mv", "tracked.txt", "renamed.txt"]);
+        write(
+            &repo.path().join("renamed.txt"),
+            "line one\nline two renamed\nline three\n",
+        );
+        git(repo.path(), &["add", "-A"]);
+
+        let error = toggle_stage_from_dir(
+            repo.path(),
+            &GitSelection::Line {
+                side: GitDiffSide::Staged,
+                path: "renamed.txt".to_owned(),
+                hunk_index: 0,
+                line_index: 2,
+            },
+        )
+        .expect_err("renamed line staging should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("partial staging is not supported for renamed/copied files")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserves_executable_mode_when_partially_staging_new_files() {
+        let repo = init_repo();
+        let script_path = repo.path().join("script.sh");
+        write(&script_path, "#!/bin/sh\necho one\necho two\n");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("script metadata should load")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script mode should be updated");
+
+        toggle_stage_from_dir(
+            repo.path(),
+            &GitSelection::Line {
+                side: GitDiffSide::Unstaged,
+                path: "script.sh".to_owned(),
+                hunk_index: 0,
+                line_index: 0,
+            },
+        )
+        .expect("line should stage");
+
+        let index = git_output(repo.path(), &["ls-files", "--stage", "--", "script.sh"]);
+        assert!(index.starts_with("100755 "));
+    }
+
+    #[test]
+    fn first_push_uses_configured_branch_remote_when_present() {
+        let repo = init_repo();
+        let remote = TempGitDir::new("remote");
+        git(remote.path(), &["init", "--bare", "--quiet"]);
+        git(
+            repo.path(),
+            &[
+                "remote",
+                "add",
+                "upstream",
+                remote.path().to_str().expect("utf8"),
+            ],
+        );
+        git(repo.path(), &["checkout", "-b", "feature", "--quiet"]);
+        write(
+            &repo.path().join("tracked.txt"),
+            "line one\nline two changed\nline three\n",
+        );
+        git(repo.path(), &["add", "tracked.txt"]);
+        commit_from_dir(
+            repo.path(),
+            &CommitRequest {
+                message: "feature".to_owned(),
+                mode: CommitMode::Create,
+            },
+        )
+        .expect("commit should succeed");
+        git(
+            repo.path(),
+            &["config", "branch.feature.remote", "upstream"],
+        );
+
+        push_from_dir(repo.path(), super::PushMode::Normal)
+            .expect("push should use configured remote");
+
+        let remote_refs = git_output(
+            remote.path(),
+            &["for-each-ref", "--format=%(refname)", "refs/heads"],
+        );
+        assert!(remote_refs.contains("refs/heads/feature"));
     }
 
     #[test]

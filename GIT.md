@@ -62,6 +62,8 @@ Legend:
 
 - The current implementation is intentionally current-branch-only. `frame`
   should help review and ship the branch you are already on.
+- First push prefers `branch.<name>.remote` when Git has one configured for the
+  current branch and otherwise falls back to `origin`.
 - GitHub integration is `gh`-backed today. When `gh` is unavailable,
   review features still work, but PR actions and check summaries do not.
 - The review surface remains primary. The Git panel is a secondary overlay,
