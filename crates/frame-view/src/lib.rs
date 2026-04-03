@@ -27,7 +27,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
 };
 use thiserror::Error;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -1932,10 +1932,15 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
     let vertical =
         Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).split(frame.area());
     let content_area = if app.file_explorer_open {
-        let layout =
-            Layout::horizontal([Constraint::Length(40), Constraint::Min(10)]).split(vertical[0]);
+        let layout = Layout::horizontal([
+            Constraint::Length(40),
+            Constraint::Length(1),
+            Constraint::Min(10),
+        ])
+        .split(vertical[0]);
         render_sidebar(frame, app, layout[0]);
-        layout[1]
+        render_pane_separator(frame, layout[1]);
+        layout[2]
     } else {
         vertical[0]
     };
@@ -1984,6 +1989,18 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
     frame.render_widget(footer, vertical[1]);
 }
 
+fn render_pane_separator(frame: &mut Frame<'_>, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let style = Style::default().fg(Color::DarkGray);
+    let lines = (0..area.height)
+        .map(|_| Line::styled("│".repeat(area.width as usize), style))
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
 impl SidebarTreeNode {
     fn insert_file(&mut self, path: &str, file_index: usize) {
         let segments = path
@@ -2003,20 +2020,30 @@ impl SidebarTreeNode {
 }
 
 fn render_sidebar(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let block = Block::default().borders(Borders::ALL).title("Files");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let (header_area, body_area) = sidebar_areas(area);
 
-    if inner.width == 0 || inner.height == 0 {
+    if header_area.width > 0 && header_area.height > 0 {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                fit_display_text("Files", header_area.width as usize),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            header_area,
+        );
+    }
+
+    if body_area.width == 0 || body_area.height == 0 {
         return;
     }
 
-    app.set_sidebar_size(inner.height as usize);
+    app.set_sidebar_size(body_area.height as usize);
     app.sync_sidebar_viewport();
     let rows = app.sidebar_rows();
     let lines = if rows.is_empty() {
         vec![Line::styled(
-            pad_display_text("No changed files", inner.width as usize),
+            pad_display_text("No changed files", body_area.width as usize),
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
@@ -2025,12 +2052,29 @@ fn render_sidebar(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         rows.iter()
             .enumerate()
             .skip(app.sidebar_viewport_top)
-            .take(inner.height as usize)
-            .map(|(index, row)| sidebar_row_to_text(app, row, index, inner.width as usize))
+            .take(body_area.height as usize)
+            .map(|(index, row)| sidebar_row_to_text(app, row, index, body_area.width as usize))
             .collect()
     };
 
-    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(Paragraph::new(lines), body_area);
+}
+
+fn sidebar_areas(area: Rect) -> (Rect, Rect) {
+    let header_height = u16::from(area.height > 0);
+    let header_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: header_height,
+    };
+    let body_area = Rect {
+        x: area.x,
+        y: area.y.saturating_add(header_height),
+        width: area.width,
+        height: area.height.saturating_sub(header_height),
+    };
+    (header_area, body_area)
 }
 
 fn sidebar_directory_paths(snapshot: &ReviewSnapshot) -> BTreeSet<String> {
@@ -3276,15 +3320,19 @@ mod tests {
         BufferSource, FileChangeKind, LineKind, PatchFile, PatchHunk, PatchLine, ReviewFile,
         ReviewFileInput, ReviewSnapshot,
     };
-    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::style::Color;
+    use ratatui::{
+        crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
+        layout::Rect,
+        style::Color,
+    };
 
     use super::{
         App, AppEvent, CodeRowKind, CommentTarget, InputMode, InteractionMode, MotionMode,
         RawRowKind, RefreshFilter, SidebarFileStats, SidebarNodePath, SidebarRow, SidebarRowKind,
         ViewMode, build_sidebar_rows, code_rows, comment_box_lines, raw_hunk_targets_in_rows,
         raw_row_for_buffer_line, raw_row_to_text, raw_rows, relevant_raw_lineno,
-        rendered_code_view, run_refresh_loop, sidebar_directory_paths, sidebar_row_to_text,
+        rendered_code_view, run_refresh_loop, sidebar_areas, sidebar_directory_paths,
+        sidebar_row_to_text,
     };
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -4404,5 +4452,17 @@ mod tests {
         assert!(line.contains('…'));
         assert!(line.contains("[M] +12 -4"));
         assert_eq!(UnicodeWidthStr::width(line.as_str()), 20);
+    }
+
+    #[test]
+    fn sidebar_areas_reserve_a_header_row() {
+        let (header, body) = sidebar_areas(Rect::new(4, 2, 40, 12));
+
+        assert_eq!(header, Rect::new(4, 2, 40, 1));
+        assert_eq!(body, Rect::new(4, 3, 40, 11));
+
+        let (empty_header, empty_body) = sidebar_areas(Rect::new(1, 1, 20, 0));
+        assert_eq!(empty_header, Rect::new(1, 1, 20, 0));
+        assert_eq!(empty_body, Rect::new(1, 1, 20, 0));
     }
 }

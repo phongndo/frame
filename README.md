@@ -7,6 +7,7 @@ Frame is a keyboard-first code review tool for AI-scale diffs. The current imple
 ## Planning
 
 The current product scope lives in [PROJECT.md](PROJECT.md).
+The execution checklist for MVP and release readiness lives in [TODO.md](TODO.md).
 
 ## Current Status
 
