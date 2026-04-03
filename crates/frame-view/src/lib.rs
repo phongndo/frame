@@ -27,7 +27,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 use thiserror::Error;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -50,6 +50,183 @@ enum InputMode {
     Command(String),
     Comment(String),
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OverlayMode {
+    None,
+    Keymap(KeymapPaletteState),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct KeymapPaletteState {
+    query: String,
+    search_active: bool,
+    cursor: usize,
+    scroll: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum KeymapSection {
+    Navigation,
+    Views,
+    Explorer,
+    AiComments,
+    Commands,
+}
+
+impl KeymapSection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Navigation => "Navigation",
+            Self::Views => "Views",
+            Self::Explorer => "Explorer",
+            Self::AiComments => "AI",
+            Self::Commands => "Commands",
+        }
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Self::Navigation => Color::LightBlue,
+            Self::Views => Color::LightMagenta,
+            Self::Explorer => Color::LightCyan,
+            Self::AiComments => Color::LightYellow,
+            Self::Commands => Color::Gray,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KeymapBinding {
+    section: KeymapSection,
+    keys: &'static str,
+    action: &'static str,
+    search_terms: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KeymapMatch {
+    binding: &'static KeymapBinding,
+    score: usize,
+    order: usize,
+}
+
+const KEYMAP_BINDINGS: &[KeymapBinding] = &[
+    KeymapBinding {
+        section: KeymapSection::Navigation,
+        keys: "j / k",
+        action: "Move cursor",
+        search_terms: "move cursor up down lines",
+    },
+    KeymapBinding {
+        section: KeymapSection::Navigation,
+        keys: "Ctrl-d / Ctrl-u",
+        action: "Half-page down/up",
+        search_terms: "scroll half page",
+    },
+    KeymapBinding {
+        section: KeymapSection::Navigation,
+        keys: "gg / G",
+        action: "Jump to start/end",
+        search_terms: "top bottom first last",
+    },
+    KeymapBinding {
+        section: KeymapSection::Navigation,
+        keys: "]c / [c",
+        action: "Jump to next/prev change",
+        search_terms: "change jump next previous",
+    },
+    KeymapBinding {
+        section: KeymapSection::Navigation,
+        keys: "]f / [f",
+        action: "Jump to next/prev file",
+        search_terms: "file jump next previous changed files",
+    },
+    KeymapBinding {
+        section: KeymapSection::Navigation,
+        keys: "]h / [h",
+        action: "Jump to next/prev hunk",
+        search_terms: "hunk jump raw diff next previous",
+    },
+    KeymapBinding {
+        section: KeymapSection::Views,
+        keys: "Tab / gd",
+        action: "Toggle code and raw diff",
+        search_terms: "toggle diff raw code view",
+    },
+    KeymapBinding {
+        section: KeymapSection::Views,
+        keys: "v",
+        action: "Toggle visual selection",
+        search_terms: "visual select range highlight",
+    },
+    KeymapBinding {
+        section: KeymapSection::Explorer,
+        keys: "e",
+        action: "Open or focus explorer",
+        search_terms: "files sidebar explorer tree panel",
+    },
+    KeymapBinding {
+        section: KeymapSection::Explorer,
+        keys: "Enter",
+        action: "Open selected file",
+        search_terms: "confirm open file explorer",
+    },
+    KeymapBinding {
+        section: KeymapSection::Explorer,
+        keys: "h / l",
+        action: "Collapse or expand folders",
+        search_terms: "tree folders directories collapse expand",
+    },
+    KeymapBinding {
+        section: KeymapSection::Explorer,
+        keys: "Esc",
+        action: "Leave explorer focus",
+        search_terms: "close explorer return content",
+    },
+    KeymapBinding {
+        section: KeymapSection::AiComments,
+        keys: "i",
+        action: "Queue an AI comment",
+        search_terms: "comment feedback ai inline review",
+    },
+    KeymapBinding {
+        section: KeymapSection::Commands,
+        keys: ":",
+        action: "Open command prompt",
+        search_terms: "commands command mode prompt",
+    },
+    KeymapBinding {
+        section: KeymapSection::Commands,
+        keys: ":code",
+        action: "Switch to code view",
+        search_terms: "command code view",
+    },
+    KeymapBinding {
+        section: KeymapSection::Commands,
+        keys: ":diff",
+        action: "Switch to raw diff view",
+        search_terms: "command diff raw view",
+    },
+    KeymapBinding {
+        section: KeymapSection::Commands,
+        keys: ":comments",
+        action: "Show queued comment count",
+        search_terms: "queued comments ai feedback count",
+    },
+    KeymapBinding {
+        section: KeymapSection::Commands,
+        keys: "?",
+        action: "Open the keymap palette",
+        search_terms: "help keymap bindings palette",
+    },
+    KeymapBinding {
+        section: KeymapSection::Commands,
+        keys: "q",
+        action: "Quit",
+        search_terms: "quit exit close",
+    },
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MotionMode {
@@ -394,6 +571,7 @@ struct App {
     view_mode: ViewMode,
     motion_mode: MotionMode,
     visual_anchor: Option<CursorAnchor>,
+    overlay_mode: OverlayMode,
     input_mode: InputMode,
     comments: Vec<ReviewComment>,
     status_message: String,
@@ -429,9 +607,10 @@ impl App {
             view_mode: ViewMode::Code,
             motion_mode: MotionMode::Normal,
             visual_anchor: None,
+            overlay_mode: OverlayMode::None,
             input_mode: InputMode::Normal,
             comments: Vec::new(),
-            status_message: "Press : for commands, i to queue a comment for AI.".to_owned(),
+            status_message: String::new(),
             auto_refresh_warning: None,
         };
         app.reset_active_file_positions();
@@ -543,6 +722,28 @@ impl App {
 
     fn set_auto_refresh_warning(&mut self, message: String) {
         self.auto_refresh_warning = Some(message);
+    }
+
+    fn open_keymap_palette(&mut self) {
+        self.overlay_mode = OverlayMode::Keymap(KeymapPaletteState::default());
+    }
+
+    fn close_keymap_palette(&mut self) {
+        self.overlay_mode = OverlayMode::None;
+    }
+
+    fn keymap_state(&self) -> Option<&KeymapPaletteState> {
+        let OverlayMode::Keymap(state) = &self.overlay_mode else {
+            return None;
+        };
+        Some(state)
+    }
+
+    fn keymap_state_mut(&mut self) -> Option<&mut KeymapPaletteState> {
+        let OverlayMode::Keymap(state) = &mut self.overlay_mode else {
+            return None;
+        };
+        Some(state)
     }
 
     fn clear_visual_mode(&mut self) {
@@ -852,10 +1053,29 @@ impl App {
         })
     }
 
-    fn mode_label(&self) -> String {
-        match self.motion_mode {
-            MotionMode::Normal => "NORMAL".to_owned(),
-            MotionMode::Visual => "VISUAL".to_owned(),
+    fn mode_label(&self) -> &'static str {
+        if let OverlayMode::Keymap(state) = &self.overlay_mode {
+            return if state.search_active {
+                "SEARCH"
+            } else {
+                "KEYMAP"
+            };
+        }
+
+        match &self.input_mode {
+            InputMode::Command(_) => "COMMAND",
+            InputMode::Comment(_) => "COMMENT",
+            InputMode::Normal => {
+                if self.interaction_mode == InteractionMode::Explorer {
+                    "EXPLORER"
+                } else if self.motion_mode == MotionMode::Visual {
+                    "VISUAL"
+                } else if self.view_mode == ViewMode::RawDiff {
+                    "DIFF"
+                } else {
+                    "NORMAL"
+                }
+            }
         }
     }
 
@@ -888,6 +1108,10 @@ impl App {
 
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return true;
+        }
+
+        if matches!(self.overlay_mode, OverlayMode::Keymap(_)) {
+            return self.handle_keymap_key(key);
         }
 
         if !matches!(self.input_mode, InputMode::Normal) {
@@ -930,6 +1154,10 @@ impl App {
 
         match key.code {
             KeyCode::Char('q') => return true,
+            KeyCode::Char('?') => {
+                self.clear_prefixes();
+                self.open_keymap_palette();
+            }
             KeyCode::Char(ch) if ch.is_ascii_digit() => {
                 if ch == '0' && self.pending_count.is_none() {
                     self.pending_sequence = PendingSequence::None;
@@ -983,6 +1211,10 @@ impl App {
     fn handle_normal_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Char('q') => return true,
+            KeyCode::Char('?') => {
+                self.clear_prefixes();
+                self.open_keymap_palette();
+            }
             KeyCode::Char(ch) if ch.is_ascii_digit() => {
                 if ch == '0' && self.pending_count.is_none() {
                     self.pending_sequence = PendingSequence::None;
@@ -1112,6 +1344,84 @@ impl App {
         self.pending_sequence = PendingSequence::None;
     }
 
+    fn handle_keymap_key(&mut self, key: KeyEvent) -> bool {
+        let Some(snapshot) = self.keymap_state().cloned() else {
+            return false;
+        };
+
+        if snapshot.search_active {
+            match key.code {
+                KeyCode::Esc => {
+                    self.close_keymap_palette();
+                }
+                KeyCode::Enter => {
+                    if let Some(state) = self.keymap_state_mut() {
+                        state.search_active = false;
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(state) = self.keymap_state_mut() {
+                        state.query.pop();
+                        state.cursor = 0;
+                        state.scroll = 0;
+                    }
+                }
+                KeyCode::Char(ch)
+                    if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+                {
+                    if let Some(state) = self.keymap_state_mut() {
+                        state.query.push(ch);
+                        state.cursor = 0;
+                        state.scroll = 0;
+                    }
+                }
+                _ => {}
+            }
+            return false;
+        }
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+                self.close_keymap_palette();
+            }
+            KeyCode::Char('i') => {
+                if let Some(state) = self.keymap_state_mut() {
+                    state.search_active = true;
+                }
+            }
+            KeyCode::Char('j') => {
+                let match_count = filtered_keymap_bindings(&snapshot.query).len();
+                if match_count > 0
+                    && let Some(state) = self.keymap_state_mut()
+                {
+                    state.cursor = state.cursor.saturating_add(1).min(match_count - 1);
+                }
+            }
+            KeyCode::Char('k') => {
+                if let Some(state) = self.keymap_state_mut() {
+                    state.cursor = state.cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Char('g') => {
+                if let Some(state) = self.keymap_state_mut() {
+                    state.cursor = 0;
+                    state.scroll = 0;
+                }
+            }
+            KeyCode::Char('G') => {
+                let match_count = filtered_keymap_bindings(&snapshot.query).len();
+                if match_count > 0
+                    && let Some(state) = self.keymap_state_mut()
+                {
+                    state.cursor = match_count - 1;
+                }
+            }
+            _ => {}
+        }
+
+        false
+    }
+
     fn handle_input_key(&mut self, key: KeyEvent) -> bool {
         match &mut self.input_mode {
             InputMode::Normal => false,
@@ -1192,7 +1502,7 @@ impl App {
                 };
             }
             "help" => {
-                self.set_status("Commands: :q, :code, :diff, :comments, :help.");
+                self.open_keymap_palette();
             }
             _ => {
                 self.status_message = format!("Unknown command: {command}");
@@ -1615,30 +1925,94 @@ impl App {
         })
     }
 
+    #[cfg(test)]
     fn footer_text(&self) -> String {
-        let count_prefix = self
-            .pending_count
-            .map_or(String::new(), |count| format!("{count} "));
-        let normal_status = self.auto_refresh_warning.as_ref().map_or_else(
-            || self.status_message.clone(),
-            |warning| format!("{warning} | {}", self.status_message),
-        );
+        let mut parts = vec![self.mode_label().to_owned(), self.footer_center_text()];
+        let right = self.footer_right_text();
+        if !right.is_empty() {
+            parts.push(right);
+        }
+        parts.join(" | ")
+    }
 
+    fn footer_center_text(&self) -> String {
+        let context = self.footer_context_text();
+        match (
+            self.auto_refresh_warning.as_ref(),
+            self.footer_status_text(),
+        ) {
+            (Some(warning), Some(status)) => format!("{warning}  {status}"),
+            (Some(warning), None) => warning.clone(),
+            (None, Some(status)) if !context.is_empty() => format!("{context}  {status}"),
+            (None, Some(status)) => status,
+            (None, None) => context,
+        }
+    }
+
+    fn footer_status_text(&self) -> Option<String> {
+        let status = self.status_message.trim();
+        if status.is_empty()
+            || matches!(
+                status,
+                "Explorer focused." | "Returned to content." | "Review snapshot ready."
+            )
+        {
+            return None;
+        }
+
+        Some(status.to_owned())
+    }
+
+    fn footer_context_text(&self) -> String {
         match &self.input_mode {
-            InputMode::Normal => match self.interaction_mode {
-                InteractionMode::Content => format!(
-                    "{}{} | {} | {} queued | v visual | e explorer | : commands | i comment | gd/tab toggle | [c/]c change | [f/]f file",
-                    count_prefix,
-                    self.mode_label(),
-                    normal_status,
-                    self.comments.len()
-                ),
-                InteractionMode::Explorer => format!(
-                    "{count_prefix}EXPLORER | {normal_status} | enter confirm | esc content | h/l tree | j/k move | e close"
-                ),
-            },
             InputMode::Command(buffer) => format!(":{buffer}"),
-            InputMode::Comment(_) => "AI comment | Enter submit | Esc cancel".to_owned(),
+            InputMode::Comment(_) => "Drafting AI comment".to_owned(),
+            InputMode::Normal => {
+                if self.interaction_mode == InteractionMode::Explorer {
+                    self.current_sidebar_key()
+                        .map(|key| key.path().to_owned())
+                        .unwrap_or_else(|| "Files".to_owned())
+                } else {
+                    self.active_file()
+                        .map(|file| file.display_path().to_owned())
+                        .unwrap_or_else(|| "No changes".to_owned())
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn footer_right_text(&self) -> String {
+        let mut segments = Vec::new();
+        if let Some(position) = self.footer_position_text() {
+            segments.push(position);
+        }
+        segments.push(format!(
+            "{} comment{}",
+            self.comments.len(),
+            if self.comments.len() == 1 { "" } else { "s" }
+        ));
+        segments.push("?".to_owned());
+        segments.join("  ")
+    }
+
+    fn footer_position_text(&self) -> Option<String> {
+        if self.interaction_mode == InteractionMode::Explorer {
+            let total = self.sidebar_rows().len();
+            return (total > 0).then(|| format!("{}/{}", self.sidebar_cursor_row + 1, total));
+        }
+
+        match self.view_mode {
+            ViewMode::Code => self.active_file().map(|file| {
+                format!(
+                    "{}/{}",
+                    self.code_cursor_line + 1,
+                    file.buffer.line_count().max(1)
+                )
+            }),
+            ViewMode::RawDiff => self
+                .active_raw_rows()
+                .map(|rows| format!("{}/{}", self.raw_cursor_line + 1, rows.len().max(1))),
         }
     }
 }
@@ -1985,8 +2359,114 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
     let content_view = Paragraph::new(content);
     frame.render_widget(content_view, content_area);
 
-    let footer = Paragraph::new(app.footer_text()).style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(footer, vertical[1]);
+    render_footer(frame, app, vertical[1]);
+
+    if app.keymap_state().is_some() {
+        render_keymap_palette(frame, app, frame.area());
+    }
+}
+
+fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let base_style = Style::default()
+        .bg(Color::Rgb(20, 23, 29))
+        .fg(Color::Rgb(196, 200, 208));
+    let mode_style = footer_mode_style(app);
+    let mode_text = format!(" {} ", app.mode_label());
+    let mode_width = UnicodeWidthStr::width(mode_text.as_str());
+
+    let right_spans = footer_right_spans(app, base_style);
+    let right_width = spans_display_width(&right_spans);
+    let center_width = area
+        .width
+        .saturating_sub(mode_width as u16)
+        .saturating_sub(right_width as u16) as usize;
+    let center_text = if center_width == 0 {
+        String::new()
+    } else {
+        fit_display_text(&format!(" {}", app.footer_center_text()), center_width)
+    };
+    let center_style = footer_center_style(app).patch(base_style);
+
+    let mut spans = vec![
+        Span::styled(mode_text, mode_style),
+        Span::styled(center_text, center_style),
+    ];
+    spans.extend(right_spans);
+    pad_spans_to_display_width(&mut spans, area.width as usize, base_style);
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn footer_mode_style(app: &App) -> Style {
+    let background = match app.mode_label() {
+        "NORMAL" => Color::Rgb(97, 175, 239),
+        "VISUAL" => Color::Rgb(229, 192, 123),
+        "DIFF" => Color::Rgb(198, 120, 221),
+        "EXPLORER" => Color::Rgb(86, 182, 194),
+        "COMMAND" => Color::Rgb(152, 195, 121),
+        "COMMENT" => Color::Rgb(209, 154, 102),
+        "KEYMAP" | "SEARCH" => Color::Rgb(224, 108, 117),
+        _ => Color::Rgb(97, 175, 239),
+    };
+
+    Style::default()
+        .bg(background)
+        .fg(Color::Black)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn footer_center_style(app: &App) -> Style {
+    if app.auto_refresh_warning.is_some() {
+        Style::default()
+            .fg(Color::Rgb(224, 108, 117))
+            .add_modifier(Modifier::BOLD)
+    } else if app.footer_status_text().is_some() {
+        Style::default().fg(Color::Rgb(230, 232, 236))
+    } else {
+        Style::default().fg(Color::Rgb(212, 216, 224))
+    }
+}
+
+fn footer_right_spans(app: &App, base_style: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+
+    if let Some(position) = app.footer_position_text() {
+        spans.push(Span::styled(
+            format!("  {position}"),
+            base_style.patch(
+                Style::default()
+                    .fg(Color::Rgb(230, 232, 236))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ));
+    }
+
+    let comment_color = if app.comments.is_empty() {
+        Color::Rgb(140, 145, 155)
+    } else {
+        Color::Rgb(229, 192, 123)
+    };
+    spans.push(Span::styled(
+        format!(
+            "  {} comment{}",
+            app.comments.len(),
+            if app.comments.len() == 1 { "" } else { "s" }
+        ),
+        base_style.patch(Style::default().fg(comment_color)),
+    ));
+    spans.push(Span::styled(
+        "  ?".to_owned(),
+        base_style.patch(
+            Style::default()
+                .fg(Color::Rgb(86, 182, 194))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ));
+
+    spans
 }
 
 fn render_pane_separator(frame: &mut Frame<'_>, area: Rect) {
@@ -1999,6 +2479,238 @@ fn render_pane_separator(frame: &mut Frame<'_>, area: Rect) {
         .map(|_| Line::styled("│".repeat(area.width as usize), style))
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_keymap_palette(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let popup_area = centered_rect(area, 78, 70);
+    if popup_area.width < 24 || popup_area.height < 8 {
+        return;
+    }
+
+    let Some(state) = app.keymap_state_mut() else {
+        return;
+    };
+
+    let matches = filtered_keymap_bindings(&state.query);
+    if matches.is_empty() {
+        state.cursor = 0;
+        state.scroll = 0;
+    } else {
+        state.cursor = state.cursor.min(matches.len() - 1);
+    }
+
+    let block = Block::default()
+        .title(" Keymap ")
+        .borders(Borders::ALL)
+        .style(Style::default().bg(Color::Rgb(12, 14, 18)).fg(Color::Gray));
+    let inner = block.inner(popup_area);
+    let sections = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Min(3),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(block, popup_area);
+
+    let search_line = if state.search_active {
+        Line::from(vec![
+            Span::styled("Search: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                if state.query.is_empty() {
+                    "_".to_owned()
+                } else {
+                    state.query.clone()
+                },
+                Style::default().fg(Color::White),
+            ),
+        ])
+    } else if state.query.is_empty() {
+        Line::styled(
+            "Press i to fuzzy-search bindings",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )
+    } else {
+        Line::from(vec![
+            Span::styled("Search: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(state.query.clone(), Style::default().fg(Color::White)),
+        ])
+    };
+    frame.render_widget(Paragraph::new(search_line), sections[0]);
+
+    let visible_rows = sections[1].height as usize;
+    state.scroll = sync_viewport_top(
+        state.scroll,
+        state.cursor,
+        matches.len().max(1),
+        visible_rows.max(1),
+    );
+
+    let lines = if matches.is_empty() {
+        vec![Line::styled(
+            "No bindings match the current search.",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )]
+    } else {
+        matches
+            .iter()
+            .enumerate()
+            .skip(state.scroll)
+            .take(visible_rows.max(1))
+            .map(|(index, binding)| {
+                keymap_binding_line(
+                    binding.binding,
+                    index == state.cursor,
+                    sections[1].width as usize,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    frame.render_widget(Paragraph::new(lines), sections[1]);
+
+    let helper = if state.search_active {
+        "Type to filter | Enter done | Esc close"
+    } else {
+        "i search | j/k move | Esc close"
+    };
+    frame.render_widget(
+        Paragraph::new(Line::styled(helper, Style::default().fg(Color::DarkGray))),
+        sections[2],
+    );
+}
+
+fn centered_rect(area: Rect, width_percent: u16, height_percent: u16) -> Rect {
+    let vertical = Layout::vertical([
+        Constraint::Percentage((100_u16.saturating_sub(height_percent)) / 2),
+        Constraint::Percentage(height_percent),
+        Constraint::Percentage((100_u16.saturating_sub(height_percent)) / 2),
+    ])
+    .split(area);
+    Layout::horizontal([
+        Constraint::Percentage((100_u16.saturating_sub(width_percent)) / 2),
+        Constraint::Percentage(width_percent),
+        Constraint::Percentage((100_u16.saturating_sub(width_percent)) / 2),
+    ])
+    .split(vertical[1])[1]
+}
+
+fn filtered_keymap_bindings(query: &str) -> Vec<KeymapMatch> {
+    let trimmed_query = query.trim();
+    let mut matches = KEYMAP_BINDINGS
+        .iter()
+        .enumerate()
+        .filter_map(|(order, binding)| {
+            if trimmed_query.is_empty() {
+                return Some(KeymapMatch {
+                    binding,
+                    score: 0,
+                    order,
+                });
+            }
+
+            fuzzy_score(trimmed_query, &keymap_search_text(binding)).map(|score| KeymapMatch {
+                binding,
+                score,
+                order,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if trimmed_query.is_empty() {
+        return matches;
+    }
+
+    matches.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.binding.section.cmp(&right.binding.section))
+            .then_with(|| left.order.cmp(&right.order))
+    });
+    matches
+}
+
+fn keymap_search_text(binding: &KeymapBinding) -> String {
+    format!(
+        "{} {} {} {}",
+        binding.section.label(),
+        binding.keys,
+        binding.action,
+        binding.search_terms
+    )
+}
+
+fn fuzzy_score(query: &str, text: &str) -> Option<usize> {
+    let query = query.to_ascii_lowercase();
+    let text = text.to_ascii_lowercase();
+    let query_bytes = query.as_bytes();
+    let text_bytes = text.as_bytes();
+
+    let mut query_index = 0usize;
+    let mut score = 0usize;
+    let mut first_match = None;
+    let mut previous_match = None;
+
+    for (index, ch) in text_bytes.iter().enumerate() {
+        if query_index >= query_bytes.len() || *ch != query_bytes[query_index] {
+            continue;
+        }
+
+        if first_match.is_none() {
+            first_match = Some(index);
+        }
+
+        score += 1;
+        if previous_match.is_some_and(|previous| previous + 1 == index) {
+            score += 3;
+        }
+
+        previous_match = Some(index);
+        query_index += 1;
+    }
+
+    if query_index != query_bytes.len() {
+        return None;
+    }
+
+    Some(score + 100usize.saturating_sub(first_match.unwrap_or(0)))
+}
+
+fn keymap_binding_line(binding: &KeymapBinding, selected: bool, width: usize) -> Line<'static> {
+    let base_style = if selected {
+        Style::default().bg(Color::Rgb(32, 36, 44))
+    } else {
+        Style::default()
+    };
+    let section_width = 11usize.min(width);
+    let keys_width = 16usize.min(width.saturating_sub(section_width + 1));
+    let action_width = width.saturating_sub(section_width + keys_width + 2);
+
+    let mut spans = vec![
+        Span::styled(
+            fit_display_text(binding.section.label(), section_width),
+            base_style
+                .patch(Style::default().fg(binding.section.color()))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ".to_owned(), base_style),
+        Span::styled(
+            fit_display_text(binding.keys, keys_width),
+            base_style.patch(Style::default().fg(Color::White)),
+        ),
+        Span::styled(" ".to_owned(), base_style),
+        Span::styled(
+            fit_display_text(binding.action, action_width),
+            base_style.patch(Style::default().fg(Color::Gray)),
+        ),
+    ];
+    pad_spans_to_display_width(&mut spans, width, base_style);
+    Line::from(spans)
 }
 
 impl SidebarTreeNode {
@@ -3328,11 +4040,11 @@ mod tests {
 
     use super::{
         App, AppEvent, CodeRowKind, CommentTarget, InputMode, InteractionMode, MotionMode,
-        RawRowKind, RefreshFilter, SidebarFileStats, SidebarNodePath, SidebarRow, SidebarRowKind,
-        ViewMode, build_sidebar_rows, code_rows, comment_box_lines, raw_hunk_targets_in_rows,
-        raw_row_for_buffer_line, raw_row_to_text, raw_rows, relevant_raw_lineno,
-        rendered_code_view, run_refresh_loop, sidebar_areas, sidebar_directory_paths,
-        sidebar_row_to_text,
+        OverlayMode, RawRowKind, RefreshFilter, SidebarFileStats, SidebarNodePath, SidebarRow,
+        SidebarRowKind, ViewMode, build_sidebar_rows, code_rows, comment_box_lines,
+        filtered_keymap_bindings, raw_hunk_targets_in_rows, raw_row_for_buffer_line,
+        raw_row_to_text, raw_rows, relevant_raw_lineno, rendered_code_view, run_refresh_loop,
+        sidebar_areas, sidebar_directory_paths, sidebar_row_to_text,
     };
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -3792,6 +4504,64 @@ mod tests {
         let app = App::new(sample_snapshot());
 
         assert!(!app.footer_text().contains("chunks"));
+    }
+
+    #[test]
+    fn footer_uses_a_single_keymap_entrypoint() {
+        let app = App::new(sample_snapshot());
+        let footer = app.footer_text();
+
+        assert!(footer.contains("NORMAL"));
+        assert!(footer.contains("src/main.rs"));
+        assert!(footer.contains("?"));
+        assert!(!footer.contains("Press :"));
+        assert!(!footer.contains("gd/tab"));
+    }
+
+    #[test]
+    fn question_mark_opens_keymap_palette() {
+        let mut app = App::new(sample_snapshot());
+
+        assert!(!app.handle_key(key(KeyCode::Char('?'))));
+        assert!(matches!(app.overlay_mode, OverlayMode::Keymap(_)));
+    }
+
+    #[test]
+    fn keymap_palette_enters_search_with_i_and_filters_fuzzily() {
+        let mut app = App::new(sample_snapshot());
+
+        assert!(!app.handle_key(key(KeyCode::Char('?'))));
+        assert!(!app.handle_key(key(KeyCode::Char('i'))));
+        assert!(!app.handle_key(key(KeyCode::Char('f'))));
+        assert!(!app.handle_key(key(KeyCode::Char('l'))));
+
+        let OverlayMode::Keymap(state) = &app.overlay_mode else {
+            panic!("expected keymap overlay");
+        };
+        assert!(state.search_active);
+        assert_eq!(state.query, "fl");
+
+        let results = filtered_keymap_bindings(&state.query);
+        assert!(
+            results
+                .iter()
+                .any(|result| result.binding.keys == "]f / [f")
+        );
+        assert!(!results.iter().any(|result| result.binding.keys == "q"));
+    }
+
+    #[test]
+    fn help_command_opens_keymap_palette() {
+        let mut app = App::new(sample_snapshot());
+
+        assert!(!app.handle_key(key(KeyCode::Char(':'))));
+        assert!(!app.handle_key(key(KeyCode::Char('h'))));
+        assert!(!app.handle_key(key(KeyCode::Char('e'))));
+        assert!(!app.handle_key(key(KeyCode::Char('l'))));
+        assert!(!app.handle_key(key(KeyCode::Char('p'))));
+        assert!(!app.handle_key(key(KeyCode::Enter)));
+
+        assert!(matches!(app.overlay_mode, OverlayMode::Keymap(_)));
     }
 
     #[test]
