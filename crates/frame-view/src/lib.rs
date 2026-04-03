@@ -264,6 +264,12 @@ struct CodeRenderRow {
     change: Option<ChangeKind>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodeRowsCache {
+    rows: Vec<CodeRenderRow>,
+    buffer_line_to_row_index: Vec<usize>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RawRowKind {
     HunkHeader,
@@ -322,6 +328,12 @@ struct ReviewComment {
     file_path: String,
     target: CommentTarget,
     text: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CommentBoxSpec<'a> {
+    text: &'a str,
+    is_draft: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -550,6 +562,7 @@ impl Drop for TerminalCleanupGuard {
 #[derive(Debug)]
 struct App {
     snapshot: ReviewSnapshot,
+    code_row_cache: Vec<CodeRowsCache>,
     raw_row_cache: Vec<Vec<RawRenderRow>>,
     active_file_index: usize,
     file_explorer_open: bool,
@@ -581,6 +594,7 @@ struct App {
 impl App {
     fn new(snapshot: ReviewSnapshot) -> Self {
         let expanded_dirs = sidebar_directory_paths(&snapshot);
+        let code_row_cache = snapshot.files.iter().map(build_code_rows_cache).collect();
         let raw_row_cache = snapshot.files.iter().map(raw_rows).collect();
         let sidebar_row_cache = build_sidebar_rows(&snapshot, &expanded_dirs);
         let sidebar_file_order_cache = sidebar_file_order(&snapshot);
@@ -589,6 +603,7 @@ impl App {
             sidebar_row_cache,
             sidebar_file_order_cache,
             snapshot,
+            code_row_cache,
             raw_row_cache,
             active_file_index: 0,
             file_explorer_open: true,
@@ -640,6 +655,12 @@ impl App {
             !self.comments.is_empty() || matches!(self.input_mode, InputMode::Comment(_));
 
         self.snapshot = new_snapshot;
+        self.code_row_cache = self
+            .snapshot
+            .files
+            .iter()
+            .map(build_code_rows_cache)
+            .collect();
         self.raw_row_cache = self.snapshot.files.iter().map(raw_rows).collect();
         let current_directory_paths = sidebar_directory_paths(&self.snapshot);
         self.expanded_dirs = current_directory_paths
@@ -700,6 +721,10 @@ impl App {
         self.raw_row_cache
             .get(self.active_file_index)
             .map(Vec::as_slice)
+    }
+
+    fn active_code_rows_cache(&self) -> Option<&CodeRowsCache> {
+        self.code_row_cache.get(self.active_file_index)
     }
 
     fn sidebar_rows(&self) -> &[SidebarRow] {
@@ -1030,11 +1055,6 @@ impl App {
             start_line: anchor.line.min(self.code_cursor_line),
             end_line: anchor.line.max(self.code_cursor_line),
         })
-    }
-
-    fn line_in_selection(&self, line_index: usize) -> bool {
-        self.selection_target()
-            .is_some_and(|target| target.intersects_line(line_index))
     }
 
     fn comment_draft(&self) -> Option<&str> {
@@ -1886,15 +1906,23 @@ impl App {
     }
 
     fn sync_code_viewport(&mut self) {
-        let Some(file) = self.active_file() else {
+        let (Some(file), Some(cache)) = (self.active_file(), self.active_code_rows_cache()) else {
             self.code_viewport_top = 0;
             return;
         };
-        let rendered = rendered_code_view(self, file, self.viewport_width);
+
+        let rendered = rendered_code_view_segment(
+            self,
+            file,
+            cache,
+            self.viewport_width,
+            0,
+            self.viewport_height,
+        );
         self.code_viewport_top = sync_viewport_top(
             self.code_viewport_top,
             rendered.cursor_visual_row,
-            rendered.lines.len(),
+            rendered.total_lines,
             self.viewport_height,
         );
     }
@@ -1917,12 +1945,6 @@ impl App {
             .iter()
             .filter(|comment| comment.file_path == file_path)
             .count()
-    }
-
-    fn line_has_comment(&self, file_path: &str, line_index: usize) -> bool {
-        self.comments.iter().any(|comment| {
-            comment.file_path == file_path && comment.target.intersects_line(line_index)
-        })
     }
 
     #[cfg(test)]
@@ -2326,16 +2348,20 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
 
     let content = match app.active_file() {
         Some(file) => match app.view_mode {
-            ViewMode::Code => {
-                let rendered = rendered_code_view(app, file, content_width.max(1));
-                rendered
+            ViewMode::Code => app
+                .active_code_rows_cache()
+                .map(|cache| {
+                    rendered_code_view_segment(
+                        app,
+                        file,
+                        cache,
+                        content_width.max(1),
+                        app.code_viewport_top,
+                        content_height.max(1),
+                    )
                     .lines
-                    .iter()
-                    .skip(app.code_viewport_top)
-                    .take(content_height.max(1))
-                    .cloned()
-                    .collect::<Vec<_>>()
-            }
+                })
+                .unwrap_or_default(),
             ViewMode::RawDiff => {
                 let rows = app.active_raw_rows().unwrap_or(&[]);
                 rows.iter()
@@ -3184,9 +3210,11 @@ fn sync_viewport_top(
     current_top.min(max_top)
 }
 
-fn code_cursor_visual_row(rows: &[CodeRenderRow], cursor_line: usize) -> usize {
-    rows.iter()
-        .position(|row| row.buffer_line == Some(cursor_line))
+fn code_cursor_visual_row(cache: &CodeRowsCache, cursor_line: usize) -> usize {
+    cache
+        .buffer_line_to_row_index
+        .get(cursor_line)
+        .copied()
         .unwrap_or(0)
 }
 
@@ -3194,6 +3222,7 @@ fn code_cursor_visual_row(rows: &[CodeRenderRow], cursor_line: usize) -> usize {
 struct RenderedCodeView {
     lines: Vec<Line<'static>>,
     cursor_visual_row: usize,
+    total_lines: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3256,81 +3285,208 @@ fn code_rows(file: &ReviewFile) -> Vec<CodeRenderRow> {
     rows
 }
 
-fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCodeView {
+fn build_code_rows_cache(file: &ReviewFile) -> CodeRowsCache {
     let rows = code_rows(file);
-    let mut persisted_comment_boxes = BTreeMap::<usize, Vec<Vec<Line<'static>>>>::new();
-    for comment in app
+    let mut buffer_line_to_row_index = vec![0; file.buffer.line_count()];
+
+    for (row_index, row) in rows.iter().enumerate() {
+        if let Some(buffer_line) = row.buffer_line
+            && let Some(slot) = buffer_line_to_row_index.get_mut(buffer_line)
+        {
+            *slot = row_index;
+        }
+    }
+
+    CodeRowsCache {
+        rows,
+        buffer_line_to_row_index,
+    }
+}
+
+#[cfg(test)]
+fn rendered_code_view(app: &App, file: &ReviewFile, width: usize) -> RenderedCodeView {
+    let cache = build_code_rows_cache(file);
+    rendered_code_view_segment(app, file, &cache, width, 0, usize::MAX)
+}
+
+fn rendered_code_view_segment(
+    app: &App,
+    file: &ReviewFile,
+    cache: &CodeRowsCache,
+    width: usize,
+    row_start: usize,
+    max_lines: usize,
+) -> RenderedCodeView {
+    let comment_boxes = code_view_comment_boxes(app, file);
+    let cursor_visual_row = code_view_cursor_visual_row(app, cache, width, &comment_boxes);
+    let total_lines = cache.rows.len() + code_view_comment_line_count(width, &comment_boxes);
+    let row_end = row_start.saturating_add(max_lines);
+    let selection_target = app.selection_target();
+    let file_comments = app
         .comments
         .iter()
         .filter(|comment| comment.file_path == file.display_path())
-    {
-        persisted_comment_boxes
-            .entry(
-                comment
-                    .target
-                    .end_line()
-                    .min(file.buffer.line_count().saturating_sub(1)),
-            )
-            .or_default()
-            .push(comment_box_lines(&comment.text, width, false));
-    }
-    let draft_comment_box = app
-        .comment_draft()
-        .zip(app.comment_box_anchor_line(file))
-        .map(|(draft, anchor_line)| (comment_box_lines(draft, width, true), anchor_line));
-
+        .collect::<Vec<_>>();
     let mut lines = Vec::new();
-    let mut cursor_visual_row = code_cursor_visual_row(&rows, app.code_cursor_line);
+    let mut visual_row = 0usize;
 
-    for row in rows {
-        let is_selected = row.buffer_line == Some(app.code_cursor_line);
-        let in_selection = row
-            .buffer_line
-            .is_some_and(|line| app.line_in_selection(line));
-        let has_comment = row
-            .buffer_line
-            .is_some_and(|line| app.line_has_comment(file.display_path(), line));
-        if is_selected {
-            cursor_visual_row = lines.len();
+    for row in &cache.rows {
+        if visual_row >= row_end {
+            break;
         }
-        let row_buffer_line = row.buffer_line;
-        let highlighted_line = row_buffer_line.and_then(|line| file.highlighted_line(line));
-        let text_overlays =
-            row_buffer_line.map_or_else(Vec::new, |line| code_text_overlays(app, file, line));
-        lines.push(code_row_to_text(
-            is_selected,
-            in_selection,
-            has_comment,
-            highlighted_line,
-            &text_overlays,
-            &row,
-            width,
-        ));
 
-        if let Some(anchor_line) = row_buffer_line {
-            if let Some(comment_boxes) = persisted_comment_boxes.remove(&anchor_line) {
-                for comment_box in comment_boxes {
-                    lines.extend(comment_box);
-                }
+        if visual_row >= row_start {
+            lines.push(rendered_code_row(
+                app,
+                file,
+                &selection_target,
+                &file_comments,
+                row,
+                width,
+            ));
+        }
+        visual_row += 1;
+
+        let Some(anchor_line) = row.buffer_line else {
+            continue;
+        };
+        let Some(boxes) = comment_boxes.get(&anchor_line) else {
+            continue;
+        };
+
+        for comment_box in boxes {
+            let line_count = comment_box_line_count(comment_box.text, width, comment_box.is_draft);
+            if visual_row >= row_end {
+                break;
             }
 
-            if let Some((comment_box_lines, draft_anchor_line)) = &draft_comment_box
-                && anchor_line == *draft_anchor_line
-            {
-                lines.extend(comment_box_lines.iter().cloned());
+            if visual_row + line_count <= row_start {
+                visual_row += line_count;
+                continue;
             }
+
+            let box_lines = comment_box_lines(comment_box.text, width, comment_box.is_draft);
+            let visible_start = row_start.saturating_sub(visual_row);
+            let visible_len = row_end
+                .saturating_sub(visual_row)
+                .min(box_lines.len())
+                .saturating_sub(visible_start);
+            lines.extend(box_lines.into_iter().skip(visible_start).take(visible_len));
+            visual_row += line_count;
         }
     }
 
     RenderedCodeView {
         lines,
         cursor_visual_row,
+        total_lines,
     }
+}
+
+fn code_view_comment_boxes<'a>(
+    app: &'a App,
+    file: &'a ReviewFile,
+) -> BTreeMap<usize, Vec<CommentBoxSpec<'a>>> {
+    let mut comment_boxes = BTreeMap::<usize, Vec<CommentBoxSpec<'a>>>::new();
+    let max_anchor_line = file.buffer.line_count().saturating_sub(1);
+
+    for comment in app
+        .comments
+        .iter()
+        .filter(|comment| comment.file_path == file.display_path())
+    {
+        comment_boxes
+            .entry(comment.target.end_line().min(max_anchor_line))
+            .or_default()
+            .push(CommentBoxSpec {
+                text: &comment.text,
+                is_draft: false,
+            });
+    }
+
+    if let Some((draft, anchor_line)) = app.comment_draft().zip(app.comment_box_anchor_line(file)) {
+        comment_boxes
+            .entry(anchor_line)
+            .or_default()
+            .push(CommentBoxSpec {
+                text: draft,
+                is_draft: true,
+            });
+    }
+
+    comment_boxes
+}
+
+fn code_view_comment_line_count(
+    width: usize,
+    comment_boxes: &BTreeMap<usize, Vec<CommentBoxSpec<'_>>>,
+) -> usize {
+    comment_boxes
+        .values()
+        .flatten()
+        .map(|comment_box| comment_box_line_count(comment_box.text, width, comment_box.is_draft))
+        .sum()
+}
+
+fn code_view_cursor_visual_row(
+    app: &App,
+    cache: &CodeRowsCache,
+    width: usize,
+    comment_boxes: &BTreeMap<usize, Vec<CommentBoxSpec<'_>>>,
+) -> usize {
+    let mut visual_row = code_cursor_visual_row(cache, app.code_cursor_line);
+
+    for (anchor_line, boxes) in comment_boxes {
+        if *anchor_line >= app.code_cursor_line {
+            break;
+        }
+
+        visual_row += boxes
+            .iter()
+            .map(|comment_box| {
+                comment_box_line_count(comment_box.text, width, comment_box.is_draft)
+            })
+            .sum::<usize>();
+    }
+
+    visual_row
+}
+
+fn rendered_code_row(
+    app: &App,
+    file: &ReviewFile,
+    selection_target: &Option<CommentTarget>,
+    file_comments: &[&ReviewComment],
+    row: &CodeRenderRow,
+    width: usize,
+) -> Line<'static> {
+    let is_selected = row.buffer_line == Some(app.code_cursor_line);
+    let in_selection = row
+        .buffer_line
+        .is_some_and(|line| line_in_selection(selection_target.as_ref(), line));
+    let has_comment = row
+        .buffer_line
+        .is_some_and(|line| line_has_comment(file_comments, line));
+    let row_buffer_line = row.buffer_line;
+    let highlighted_line = row_buffer_line.and_then(|line| file.highlighted_line(line));
+    let text_overlays = row_buffer_line.map_or_else(Vec::new, |line| {
+        code_text_overlays(selection_target.as_ref(), file_comments, file, line)
+    });
+
+    code_row_to_text(
+        is_selected,
+        in_selection,
+        has_comment,
+        highlighted_line,
+        &text_overlays,
+        row,
+        width,
+    )
 }
 
 fn comment_box_lines(text: &str, width: usize, is_draft: bool) -> Vec<Line<'static>> {
     let text_indent = 0usize;
-    let inner_width = width.saturating_sub(text_indent + 2).max(12);
+    let inner_width = comment_box_inner_width(width);
     let horizontal = "─".repeat(inner_width);
     let border_style = Style::default().fg(Color::DarkGray);
     let title = if is_draft {
@@ -3385,6 +3541,23 @@ fn comment_box_lines(text: &str, width: usize, is_draft: bool) -> Vec<Line<'stat
         border_style,
     ));
     lines
+}
+
+fn comment_box_inner_width(width: usize) -> usize {
+    width.saturating_sub(2).max(12)
+}
+
+fn comment_box_line_count(text: &str, width: usize, is_draft: bool) -> usize {
+    wrap_comment_text(
+        if is_draft && text.is_empty() {
+            "Type feedback for AI..."
+        } else {
+            text
+        },
+        comment_box_inner_width(width),
+    )
+    .len()
+        + 2
 }
 
 fn wrap_comment_text(text: &str, width: usize) -> Vec<String> {
@@ -3635,11 +3808,26 @@ fn nth_previous_target(targets: &[usize], current: usize, count: usize) -> Optio
     next
 }
 
-fn code_text_overlays(app: &App, file: &ReviewFile, line_index: usize) -> Vec<TextOverlay> {
+fn line_in_selection(selection_target: Option<&CommentTarget>, line_index: usize) -> bool {
+    selection_target.is_some_and(|target| target.intersects_line(line_index))
+}
+
+fn line_has_comment(file_comments: &[&ReviewComment], line_index: usize) -> bool {
+    file_comments
+        .iter()
+        .any(|comment| comment.target.intersects_line(line_index))
+}
+
+fn code_text_overlays(
+    selection_target: Option<&CommentTarget>,
+    file_comments: &[&ReviewComment],
+    file: &ReviewFile,
+    line_index: usize,
+) -> Vec<TextOverlay> {
     let mut overlays = Vec::new();
     let line_text = file.buffer.line(line_index).unwrap_or_default();
 
-    if let Some(target) = app.selection_target()
+    if let Some(target) = selection_target
         && let Some((start_byte, end_byte)) =
             target_segment_for_line(&target, line_index, line_text)
     {
@@ -3650,11 +3838,7 @@ fn code_text_overlays(app: &App, file: &ReviewFile, line_index: usize) -> Vec<Te
         });
     }
 
-    for comment in app
-        .comments
-        .iter()
-        .filter(|comment| comment.file_path == file.display_path())
-    {
+    for comment in file_comments {
         if let Some((start_byte, end_byte)) =
             target_segment_for_line(&comment.target, line_index, line_text)
         {
@@ -4041,10 +4225,11 @@ mod tests {
     use super::{
         App, AppEvent, CodeRowKind, CommentTarget, InputMode, InteractionMode, MotionMode,
         OverlayMode, RawRowKind, RefreshFilter, SidebarFileStats, SidebarNodePath, SidebarRow,
-        SidebarRowKind, ViewMode, build_sidebar_rows, code_rows, comment_box_lines,
-        filtered_keymap_bindings, raw_hunk_targets_in_rows, raw_row_for_buffer_line,
-        raw_row_to_text, raw_rows, relevant_raw_lineno, rendered_code_view, run_refresh_loop,
-        sidebar_areas, sidebar_directory_paths, sidebar_row_to_text,
+        SidebarRowKind, ViewMode, build_code_rows_cache, build_sidebar_rows, code_rows,
+        comment_box_lines, filtered_keymap_bindings, raw_hunk_targets_in_rows,
+        raw_row_for_buffer_line, raw_row_to_text, raw_rows, relevant_raw_lineno,
+        rendered_code_view, rendered_code_view_segment, run_refresh_loop, sidebar_areas,
+        sidebar_directory_paths, sidebar_row_to_text,
     };
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -5002,6 +5187,40 @@ mod tests {
                 .map(|span| span.content.as_ref())
                 .collect::<String>(),
             "fn main() {"
+        );
+    }
+
+    #[test]
+    fn rendered_code_view_segment_matches_full_render_slice() {
+        let mut app = App::new(sample_snapshot());
+        app.comments.push(super::ReviewComment {
+            file_path: "src/main.rs".to_owned(),
+            target: CommentTarget::LineRange {
+                start_line: 1,
+                end_line: 1,
+            },
+            text: "Keep this visible".to_owned(),
+        });
+
+        let file = &app.snapshot.files[0];
+        let cache = build_code_rows_cache(file);
+        let full = rendered_code_view(&app, file, 36);
+        let segment = rendered_code_view_segment(&app, file, &cache, 36, 1, 4);
+
+        assert_eq!(segment.cursor_visual_row, full.cursor_visual_row);
+        assert_eq!(segment.total_lines, full.total_lines);
+        assert_eq!(
+            segment
+                .lines
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            full.lines
+                .iter()
+                .skip(1)
+                .take(4)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
         );
     }
 
