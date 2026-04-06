@@ -2,7 +2,7 @@
 
 ## Vision (MVP Scope)
 
-`frame` is a **terminal-first AI review IDE**.
+`frame` is a **terminal-first AI review IDE with an integrated current-branch ship lane**.
 
 It replaces:
 
@@ -15,9 +15,10 @@ With:
 * inline change visualization (not raw diffs)
 * inline comments on real code
 * one-key feedback loop to AI CLI
+* review-adjacent Git actions for staging, committing, pushing, and PR status
 
-**frame does NOT edit code.**
-It supervises AI-generated changes.
+**frame does NOT replace the editor.**
+It supervises AI-generated changes and helps ship reviewed work.
 
 ---
 
@@ -28,7 +29,7 @@ It supervises AI-generated changes.
 Everything in `frame` is optimized for:
 
 ```id="philosophy"
-understanding code changes quickly and confidently
+understanding code changes quickly and confidently, then shipping them without leaving the review loop
 ```
 
 The user should feel like they are **reading code**, not inspecting patches.
@@ -179,13 +180,15 @@ Navigation:
    * reviews changes in context
    * adds comments
 
-5. User presses:
+5. User either presses:
 
-   ```
+   ```text
    A
    ```
 
-6. AI revises patch
+   or stages / commits / pushes the current branch from the review UI
+
+6. AI revises patch, or the user ships the reviewed branch
 
 7. frame reloads changes
 
@@ -314,12 +317,24 @@ src/matrix.cpp
 
 ---
 
-### 7. Minimal Git Actions
+### 7. Git Ship Lane (Current Branch Only)
 
 ```id="git_actions"
-s → stage (toggle)
-C → commit
+s            stage current change or selected Git panel item
+C            commit staged changes
+P            push current branch
+F            force-with-lease push
+R            create or refresh pull request
+Ctrl-g       open floating Git panel
 ```
+
+Requirements:
+
+* current branch only
+* Git panel is secondary; review view stays primary
+* staged and unstaged changes are visible without leaving the review surface
+* commit amend is supported because it is part of the AI-refine loop
+* PR status and checks are shown through `gh`
 
 ---
 
@@ -337,6 +352,10 @@ A            send to AI
 
 s            stage (toggle)
 C            commit
+P            push
+F            force-with-lease push
+R            create or refresh PR
+Ctrl-g       open Git panel
 
 q            quit
 ```
@@ -360,6 +379,7 @@ q            quit
 * no modes
 * no full repo explorer (only changed files)
 * no full git UI
+* no branch switching or broad repo administration in the ship lane
 
 ---
 

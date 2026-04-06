@@ -10,6 +10,8 @@ description = "Git-backed snapshot loading for Frame."
 
 [dependencies]
 frame-core = { version = "0.1.0", path = "../frame-core" }
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [lints]

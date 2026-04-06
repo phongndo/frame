@@ -14,6 +14,10 @@ use std::{
 use frame_core::{
     BufferSource, ChangeKind, HighlightStyleKey, HighlightedLine, ReviewFile, ReviewSnapshot,
 };
+use frame_git::{
+    CommitMode, CommitRequest, GitDiffSide, GitSelection, GitStatusSnapshot, PullRequestStatus,
+    PushMode,
+};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{
     Frame, Terminal,
@@ -27,7 +31,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 use thiserror::Error;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -49,6 +53,7 @@ enum InputMode {
     Normal,
     Command(String),
     Comment(String),
+    GitCommit { message: String, mode: CommitMode },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,6 +208,71 @@ impl SidebarRow {
         match self.kind {
             SidebarRowKind::Directory { expanded } => Some(expanded),
             SidebarRowKind::File { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct GitFileKey {
+    side: GitDiffSide,
+    path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct GitHunkKey {
+    side: GitDiffSide,
+    path: String,
+    hunk_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GitPanelAction {
+    Commit(CommitMode),
+    Push(PushMode),
+    EnsurePullRequest,
+    RefreshPullRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GitPanelNodeKind {
+    Group,
+    File(GitFileKey),
+    Hunk(GitHunkKey),
+    Line(GitSelection),
+    Action(GitPanelAction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitPanelRow {
+    depth: usize,
+    label: String,
+    kind: GitPanelNodeKind,
+    selectable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitPanelState {
+    open: bool,
+    cursor: usize,
+    viewport_top: usize,
+    expanded_files: BTreeSet<GitFileKey>,
+    expanded_hunks: BTreeSet<GitHunkKey>,
+    preferred_push_mode: PushMode,
+    pr_status: Option<PullRequestStatus>,
+    pr_error: Option<String>,
+}
+
+impl Default for GitPanelState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            cursor: 0,
+            viewport_top: 0,
+            expanded_files: BTreeSet::new(),
+            expanded_hunks: BTreeSet::new(),
+            preferred_push_mode: PushMode::Normal,
+            pr_status: None,
+            pr_error: None,
         }
     }
 }
@@ -370,6 +440,35 @@ impl Drop for TerminalCleanupGuard {
     }
 }
 
+fn describe_git_status_error(error: &frame_git::GitError) -> String {
+    match error {
+        frame_git::GitError::NotInRepo | frame_git::GitError::GitUnavailable => {
+            format!("Git panel unavailable: {error}")
+        }
+        _ => format!("Git status unavailable: {error}"),
+    }
+}
+
+fn git_file_change_count_map(status: &GitStatusSnapshot) -> BTreeMap<String, (usize, usize)> {
+    let mut counts = BTreeMap::new();
+
+    for file in &status.staged.files {
+        counts
+            .entry(file.display_path().to_owned())
+            .or_insert((0, 0))
+            .0 = patch_file_changed_line_count(file);
+    }
+
+    for file in &status.unstaged.files {
+        counts
+            .entry(file.display_path().to_owned())
+            .or_insert((0, 0))
+            .1 = patch_file_changed_line_count(file);
+    }
+
+    counts
+}
+
 #[derive(Debug)]
 struct App {
     snapshot: ReviewSnapshot,
@@ -395,6 +494,10 @@ struct App {
     motion_mode: MotionMode,
     visual_anchor: Option<CursorAnchor>,
     input_mode: InputMode,
+    git_status: Option<GitStatusSnapshot>,
+    git_file_change_count_cache: BTreeMap<String, (usize, usize)>,
+    git_status_error: Option<String>,
+    git_panel: GitPanelState,
     comments: Vec<ReviewComment>,
     status_message: String,
     auto_refresh_warning: Option<String>,
@@ -406,6 +509,18 @@ impl App {
         let raw_row_cache = snapshot.files.iter().map(raw_rows).collect();
         let sidebar_row_cache = build_sidebar_rows(&snapshot, &expanded_dirs);
         let sidebar_file_order_cache = sidebar_file_order(&snapshot);
+        let (git_status, git_file_change_count_cache, git_status_error) =
+            match frame_git::load_git_status_from_dir(&snapshot.repo_root) {
+                Ok(status) => {
+                    let counts = git_file_change_count_map(&status);
+                    (Some(status), counts, None)
+                }
+                Err(error) => (
+                    None,
+                    BTreeMap::new(),
+                    Some(describe_git_status_error(&error)),
+                ),
+            };
         let mut app = Self {
             expanded_dirs,
             sidebar_row_cache,
@@ -430,8 +545,13 @@ impl App {
             motion_mode: MotionMode::Normal,
             visual_anchor: None,
             input_mode: InputMode::Normal,
+            git_status,
+            git_file_change_count_cache,
+            git_status_error,
+            git_panel: GitPanelState::default(),
             comments: Vec::new(),
-            status_message: "Press : for commands, i to queue a comment for AI.".to_owned(),
+            status_message: "Press : for commands, i to queue a comment for AI, Ctrl-g for git."
+                .to_owned(),
             auto_refresh_warning: None,
         };
         app.reset_active_file_positions();
@@ -442,6 +562,45 @@ impl App {
     fn rebuild_sidebar_caches(&mut self) {
         self.sidebar_row_cache = build_sidebar_rows(&self.snapshot, &self.expanded_dirs);
         self.sidebar_file_order_cache = sidebar_file_order(&self.snapshot);
+    }
+
+    fn reload_git_status(&mut self) {
+        match frame_git::load_git_status_from_dir(&self.snapshot.repo_root) {
+            Ok(status) => {
+                self.git_file_change_count_cache = git_file_change_count_map(&status);
+                self.git_status = Some(status);
+                self.git_status_error = None;
+            }
+            Err(error) => {
+                self.git_file_change_count_cache.clear();
+                self.git_status = None;
+                self.git_status_error = Some(describe_git_status_error(&error));
+            }
+        }
+    }
+
+    fn refresh_pull_request_status(&mut self) {
+        match frame_git::load_pull_request_status_from_dir(&self.snapshot.repo_root) {
+            Ok(status) => {
+                self.git_panel.pr_status = status;
+                self.git_panel.pr_error = None;
+            }
+            Err(error) => {
+                self.git_panel.pr_status = None;
+                self.git_panel.pr_error = Some(error.to_string());
+            }
+        }
+    }
+
+    fn toggle_git_panel(&mut self) {
+        self.git_panel.open = !self.git_panel.open;
+        if self.git_panel.open {
+            self.refresh_pull_request_status();
+            self.ensure_git_panel_cursor();
+            self.set_status("Git panel opened.");
+        } else {
+            self.set_status("Git panel closed.");
+        }
     }
 
     fn apply_snapshot_refresh(&mut self, new_snapshot: ReviewSnapshot) {
@@ -482,7 +641,7 @@ impl App {
             })
             .or_else(|| {
                 (!self.snapshot.files.is_empty())
-                    .then_some(previous_file_index.min(self.snapshot.files.len() - 1))
+                    .then(|| previous_file_index.min(self.snapshot.files.len() - 1))
             })
             .unwrap_or(0);
 
@@ -505,12 +664,42 @@ impl App {
         } else {
             self.sync_sidebar_cursor_to_active_file();
         }
+        self.reload_git_status();
+        if self.git_panel.open {
+            self.refresh_pull_request_status();
+            self.ensure_git_panel_cursor();
+        }
         self.comments.clear();
         if cleared_comment_state {
             self.set_status("Auto-refreshed review snapshot. Cleared local comments.");
         } else {
             self.set_status("Auto-refreshed review snapshot.");
         }
+    }
+
+    fn reload_snapshot_after_git_action(&mut self) -> Result<(), String> {
+        let snapshot = frame_git::load_review_snapshot_from_dir(&self.snapshot.repo_root)
+            .map_err(|error| error.to_string())?;
+        self.apply_snapshot_refresh(snapshot);
+        Ok(())
+    }
+
+    fn reload_snapshot_preserving_comments(&mut self) -> Result<(), String> {
+        let saved_comments = self.comments.clone();
+        let snapshot = frame_git::load_review_snapshot_from_dir(&self.snapshot.repo_root)
+            .map_err(|error| error.to_string())?;
+        self.apply_snapshot_refresh(snapshot);
+        let valid_paths = self
+            .snapshot
+            .files
+            .iter()
+            .map(|file| file.display_path().to_owned())
+            .collect::<BTreeSet<_>>();
+        self.comments = saved_comments
+            .into_iter()
+            .filter(|comment| valid_paths.contains(&comment.file_path))
+            .collect();
+        Ok(())
     }
 
     fn active_file(&self) -> Option<&ReviewFile> {
@@ -839,7 +1028,7 @@ impl App {
     fn comment_draft(&self) -> Option<&str> {
         match &self.input_mode {
             InputMode::Comment(buffer) => Some(buffer.as_str()),
-            InputMode::Normal | InputMode::Command(_) => None,
+            InputMode::Normal | InputMode::Command(_) | InputMode::GitCommit { .. } => None,
         }
     }
 
@@ -890,8 +1079,21 @@ impl App {
             return true;
         }
 
+        if matches!(self.input_mode, InputMode::Normal)
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('g')
+        {
+            self.clear_prefixes();
+            self.toggle_git_panel();
+            return false;
+        }
+
         if !matches!(self.input_mode, InputMode::Normal) {
             return self.handle_input_key(key);
+        }
+
+        if self.git_panel.open {
+            return self.handle_git_panel_key(key);
         }
 
         if self.interaction_mode == InteractionMode::Explorer {
@@ -1019,6 +1221,26 @@ impl App {
                 self.clear_prefixes();
                 self.toggle_file_explorer();
             }
+            KeyCode::Char('s') => {
+                self.clear_prefixes();
+                self.toggle_stage_at_review_cursor();
+            }
+            KeyCode::Char('C') => {
+                self.clear_prefixes();
+                self.start_commit_input(CommitMode::Create);
+            }
+            KeyCode::Char('P') => {
+                self.clear_prefixes();
+                self.run_push(self.git_panel.preferred_push_mode);
+            }
+            KeyCode::Char('F') => {
+                self.clear_prefixes();
+                self.run_push(PushMode::ForceWithLease);
+            }
+            KeyCode::Char('R') => {
+                self.clear_prefixes();
+                self.ensure_pull_request_action();
+            }
             KeyCode::Tab => {
                 self.clear_prefixes();
                 self.toggle_mode();
@@ -1053,6 +1275,269 @@ impl App {
         }
 
         false
+    }
+
+    fn handle_git_panel_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.clear_prefixes();
+                self.toggle_git_panel();
+            }
+            KeyCode::Char('j') => self.move_git_panel_cursor(1),
+            KeyCode::Char('k') => self.move_git_panel_cursor(-1),
+            KeyCode::Char('h') => self.collapse_git_panel_cursor(),
+            KeyCode::Char('l') | KeyCode::Enter => self.activate_git_panel_cursor(),
+            KeyCode::Char('s') => self.toggle_stage_at_git_panel_cursor(),
+            KeyCode::Char('C') => self.start_commit_input(CommitMode::Create),
+            KeyCode::Char('P') => self.run_push(PushMode::Normal),
+            KeyCode::Char('F') => self.run_push(PushMode::ForceWithLease),
+            KeyCode::Char('R') => self.ensure_pull_request_action(),
+            _ => self.clear_prefixes(),
+        }
+
+        false
+    }
+
+    fn git_panel_rows(&self) -> Vec<GitPanelRow> {
+        build_git_panel_rows(
+            self.git_status.as_ref(),
+            self.git_status_error.as_deref(),
+            &self.git_panel,
+        )
+    }
+
+    fn ensure_git_panel_cursor(&mut self) {
+        let rows = self.git_panel_rows();
+        let Some(index) = rows.iter().position(|row| row.selectable) else {
+            self.git_panel.cursor = 0;
+            self.git_panel.viewport_top = 0;
+            return;
+        };
+        if self.git_panel.cursor >= rows.len() || !rows[self.git_panel.cursor].selectable {
+            self.git_panel.cursor = index;
+        }
+    }
+
+    fn move_git_panel_cursor(&mut self, delta: isize) {
+        let rows = self.git_panel_rows();
+        let selectable = rows
+            .iter()
+            .enumerate()
+            .filter_map(|(index, row)| row.selectable.then_some(index))
+            .collect::<Vec<_>>();
+        if selectable.is_empty() {
+            self.git_panel.cursor = 0;
+            return;
+        }
+
+        let current_position = selectable
+            .iter()
+            .position(|&index| index == self.git_panel.cursor)
+            .unwrap_or(0);
+        let next_position = if delta.is_negative() {
+            current_position.saturating_sub(delta.unsigned_abs())
+        } else {
+            (current_position + delta.cast_unsigned()).min(selectable.len().saturating_sub(1))
+        };
+        self.git_panel.cursor = selectable[next_position];
+    }
+
+    fn activate_git_panel_cursor(&mut self) {
+        let rows = self.git_panel_rows();
+        let Some(row) = rows.get(self.git_panel.cursor) else {
+            return;
+        };
+        match &row.kind {
+            GitPanelNodeKind::File(key) => {
+                if !self.git_panel.expanded_files.insert(key.clone()) {
+                    self.git_panel.expanded_files.remove(key);
+                }
+            }
+            GitPanelNodeKind::Hunk(key) => {
+                if !self.git_panel.expanded_hunks.insert(key.clone()) {
+                    self.git_panel.expanded_hunks.remove(key);
+                }
+            }
+            GitPanelNodeKind::Line(selection) => self.toggle_stage_selection(selection),
+            GitPanelNodeKind::Action(action) => self.run_git_panel_action(action),
+            GitPanelNodeKind::Group => {}
+        }
+    }
+
+    fn collapse_git_panel_cursor(&mut self) {
+        let rows = self.git_panel_rows();
+        let Some(row) = rows.get(self.git_panel.cursor) else {
+            return;
+        };
+        match &row.kind {
+            GitPanelNodeKind::Hunk(key) => {
+                self.git_panel.expanded_hunks.remove(key);
+            }
+            GitPanelNodeKind::File(key) => {
+                self.git_panel.expanded_files.remove(key);
+            }
+            GitPanelNodeKind::Line(selection) => {
+                if let GitSelection::Line {
+                    side,
+                    path,
+                    hunk_index,
+                    ..
+                } = selection
+                {
+                    self.git_panel.expanded_hunks.remove(&GitHunkKey {
+                        side: *side,
+                        path: path.clone(),
+                        hunk_index: *hunk_index,
+                    });
+                }
+            }
+            GitPanelNodeKind::Action(_) | GitPanelNodeKind::Group => {}
+        }
+    }
+
+    fn toggle_stage_at_git_panel_cursor(&mut self) {
+        let rows = self.git_panel_rows();
+        let Some(row) = rows.get(self.git_panel.cursor) else {
+            return;
+        };
+        match &row.kind {
+            GitPanelNodeKind::File(key) => self.toggle_stage_selection(&GitSelection::File {
+                side: key.side,
+                path: key.path.clone(),
+            }),
+            GitPanelNodeKind::Hunk(key) => self.toggle_stage_selection(&GitSelection::Hunk {
+                side: key.side,
+                path: key.path.clone(),
+                hunk_index: key.hunk_index,
+            }),
+            GitPanelNodeKind::Line(selection) => self.toggle_stage_selection(selection),
+            GitPanelNodeKind::Action(_) | GitPanelNodeKind::Group => {}
+        }
+    }
+
+    fn run_git_panel_action(&mut self, action: &GitPanelAction) {
+        match action {
+            GitPanelAction::Commit(mode) => self.start_commit_input(*mode),
+            GitPanelAction::Push(mode) => self.run_push(*mode),
+            GitPanelAction::EnsurePullRequest => self.ensure_pull_request_action(),
+            GitPanelAction::RefreshPullRequest => self.refresh_pull_request_status(),
+        }
+    }
+
+    fn toggle_stage_selection(&mut self, selection: &GitSelection) {
+        match frame_git::toggle_stage_from_dir(&self.snapshot.repo_root, selection) {
+            Ok(()) => {
+                if let Err(error) = self.reload_snapshot_preserving_comments() {
+                    self.set_status(&format!("Staged change, but refresh failed: {error}"));
+                    return;
+                }
+                self.ensure_git_panel_cursor();
+                self.set_status("Updated staged changes.");
+            }
+            Err(error) => self.set_status(&format!("Stage toggle failed: {error}")),
+        }
+    }
+
+    fn toggle_stage_at_review_cursor(&mut self) {
+        let Some(selection) = self.current_review_selection() else {
+            self.set_status("No changed line or hunk at the cursor to stage.");
+            return;
+        };
+
+        self.toggle_stage_selection(&selection);
+    }
+
+    fn current_review_selection(&self) -> Option<GitSelection> {
+        let file = self.active_file()?;
+        [GitDiffSide::Unstaged, GitDiffSide::Staged]
+            .into_iter()
+            .find_map(|side| {
+                let patch_set = self.patch_set_for_side(side)?;
+                match self.view_mode {
+                    ViewMode::Code => {
+                        git_selection_for_code_cursor(patch_set, file, side, self.code_cursor_line)
+                    }
+                    ViewMode::RawDiff => git_selection_for_raw_cursor(
+                        patch_set,
+                        file.display_path(),
+                        side,
+                        self.raw_cursor_line,
+                    ),
+                }
+            })
+    }
+
+    fn patch_set_for_side(&self, side: GitDiffSide) -> Option<&frame_core::PatchSet> {
+        self.git_status.as_ref().map(|status| match side {
+            GitDiffSide::Staged => &status.staged,
+            GitDiffSide::Unstaged => &status.unstaged,
+        })
+    }
+
+    fn start_commit_input(&mut self, mode: CommitMode) {
+        let message = if matches!(mode, CommitMode::Amend) {
+            frame_git::head_commit_message_from_dir(&self.snapshot.repo_root).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        self.input_mode = InputMode::GitCommit { message, mode };
+        self.git_panel.open = true;
+        self.set_status(match mode {
+            CommitMode::Create => "Enter commit message and press Enter to commit.",
+            CommitMode::Amend => "Edit commit message and press Enter to amend.",
+        });
+    }
+
+    fn run_commit_request(&mut self, request: &CommitRequest) {
+        match frame_git::commit_from_dir(&self.snapshot.repo_root, request) {
+            Ok(()) => {
+                if let Err(error) = self.reload_snapshot_after_git_action() {
+                    self.set_status(&format!("Commit succeeded, but refresh failed: {error}"));
+                    return;
+                }
+                self.git_panel.preferred_push_mode = if matches!(request.mode, CommitMode::Amend) {
+                    PushMode::ForceWithLease
+                } else {
+                    PushMode::Normal
+                };
+                self.refresh_pull_request_status();
+                self.ensure_git_panel_cursor();
+                self.set_status(match request.mode {
+                    CommitMode::Create => "Committed staged changes.",
+                    CommitMode::Amend => "Amended HEAD. Next push defaults to force-with-lease.",
+                });
+            }
+            Err(error) => self.set_status(&format!("Commit failed: {error}")),
+        }
+    }
+
+    fn run_push(&mut self, mode: PushMode) {
+        match frame_git::push_from_dir(&self.snapshot.repo_root, mode) {
+            Ok(()) => {
+                self.git_panel.preferred_push_mode = PushMode::Normal;
+                self.reload_git_status();
+                self.refresh_pull_request_status();
+                self.set_status(match mode {
+                    PushMode::Normal => "Pushed current branch.",
+                    PushMode::ForceWithLease => "Pushed current branch with force-with-lease.",
+                });
+            }
+            Err(error) => self.set_status(&format!("Push failed: {error}")),
+        }
+    }
+
+    fn ensure_pull_request_action(&mut self) {
+        match frame_git::ensure_pull_request_from_dir(&self.snapshot.repo_root) {
+            Ok(status) => {
+                self.git_panel.pr_status = Some(status.clone());
+                self.git_panel.pr_error = None;
+                self.set_status(&format!("Pull request ready: {}", status.url));
+            }
+            Err(error) => {
+                self.git_panel.pr_error = Some(error.to_string());
+                self.set_status(&format!("Pull request failed: {error}"));
+            }
+        }
     }
 
     fn handle_sidebar_g_sequence(&mut self) {
@@ -1161,6 +1646,33 @@ impl App {
                 }
                 _ => false,
             },
+            InputMode::GitCommit { message, mode } => match key.code {
+                KeyCode::Esc => {
+                    self.input_mode = InputMode::Normal;
+                    self.set_status("Commit canceled.");
+                    false
+                }
+                KeyCode::Enter => {
+                    let request = CommitRequest {
+                        message: message.trim().to_owned(),
+                        mode: *mode,
+                    };
+                    self.input_mode = InputMode::Normal;
+                    self.run_commit_request(&request);
+                    false
+                }
+                KeyCode::Backspace => {
+                    message.pop();
+                    false
+                }
+                KeyCode::Char(ch)
+                    if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+                {
+                    message.push(ch);
+                    false
+                }
+                _ => false,
+            },
         }
     }
 
@@ -1172,6 +1684,11 @@ impl App {
 
         match command {
             "q" | "quit" => return true,
+            "git" => {
+                if !self.git_panel.open {
+                    self.toggle_git_panel();
+                }
+            }
             "code" => {
                 self.view_mode = ViewMode::Code;
                 self.set_status("Switched to code view.");
@@ -1192,7 +1709,7 @@ impl App {
                 };
             }
             "help" => {
-                self.set_status("Commands: :q, :code, :diff, :comments, :help.");
+                self.set_status("Commands: :q, :git, :code, :diff, :comments, :help.");
             }
             _ => {
                 self.status_message = format!("Unknown command: {command}");
@@ -1609,6 +2126,13 @@ impl App {
             .count()
     }
 
+    fn git_file_change_counts(&self, file_path: &str) -> (usize, usize) {
+        self.git_file_change_count_cache
+            .get(file_path)
+            .copied()
+            .unwrap_or((0, 0))
+    }
+
     fn line_has_comment(&self, file_path: &str, line_index: usize) -> bool {
         self.comments.iter().any(|comment| {
             comment.file_path == file_path && comment.target.intersects_line(line_index)
@@ -1626,19 +2150,31 @@ impl App {
 
         match &self.input_mode {
             InputMode::Normal => match self.interaction_mode {
-                InteractionMode::Content => format!(
-                    "{}{} | {} | {} queued | v visual | e explorer | : commands | i comment | gd/tab toggle | [c/]c change | [f/]f file",
-                    count_prefix,
-                    self.mode_label(),
-                    normal_status,
-                    self.comments.len()
-                ),
+                InteractionMode::Content => {
+                    if self.git_panel.open {
+                        format!(
+                            "{count_prefix}GIT | {normal_status} | j/k move | h/l collapse/expand | s stage | C commit | P push | F lease | R PR | Esc close"
+                        )
+                    } else {
+                        format!(
+                            "{}{} | {} | {} queued | s stage | C commit | P/F push | R PR | v visual | e explorer | Ctrl-g git | : commands | i comment | gd/tab toggle | [c/]c change | [f/]f file",
+                            count_prefix,
+                            self.mode_label(),
+                            normal_status,
+                            self.comments.len()
+                        )
+                    }
+                }
                 InteractionMode::Explorer => format!(
                     "{count_prefix}EXPLORER | {normal_status} | enter confirm | esc content | h/l tree | j/k move | e close"
                 ),
             },
             InputMode::Command(buffer) => format!(":{buffer}"),
             InputMode::Comment(_) => "AI comment | Enter submit | Esc cancel".to_owned(),
+            InputMode::GitCommit { mode, .. } => match mode {
+                CommitMode::Create => "Commit | Enter submit | Esc cancel".to_owned(),
+                CommitMode::Amend => "Amend commit | Enter submit | Esc cancel".to_owned(),
+            },
         }
     }
 }
@@ -1980,8 +2516,455 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
     let content_view = Paragraph::new(content);
     frame.render_widget(content_view, content_area);
 
+    if app.git_panel.open {
+        let panel_area = centered_rect(content_area, 85, 85);
+        render_git_panel(frame, app, panel_area);
+        if matches!(app.input_mode, InputMode::GitCommit { .. }) {
+            let dialog_area = centered_rect(panel_area, 80, 28);
+            render_commit_dialog(frame, app, dialog_area);
+        }
+    }
+
     let footer = Paragraph::new(app.footer_text()).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, vertical[1]);
+}
+
+fn render_git_panel(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    frame.render_widget(Clear, area);
+    let block = Block::default().borders(Borders::ALL).title("Git");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let rows = app.git_panel_rows();
+    app.git_panel.viewport_top = sync_viewport_top(
+        app.git_panel.viewport_top,
+        app.git_panel.cursor,
+        rows.len().max(1),
+        inner.height as usize,
+    );
+
+    let lines = if rows.is_empty() {
+        vec![Line::styled(
+            pad_display_text("No git status available.", inner.width as usize),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )]
+    } else {
+        rows.iter()
+            .enumerate()
+            .skip(app.git_panel.viewport_top)
+            .take(inner.height as usize)
+            .map(|(index, row)| {
+                git_panel_row_to_text(row, index == app.git_panel.cursor, inner.width as usize)
+            })
+            .collect::<Vec<_>>()
+    };
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn render_commit_dialog(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    frame.render_widget(Clear, area);
+    let title = match &app.input_mode {
+        InputMode::GitCommit {
+            mode: CommitMode::Amend,
+            ..
+        } => "Amend Commit",
+        _ => "Commit",
+    };
+    let block = Block::default().borders(Borders::ALL).title(title);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let message = match &app.input_mode {
+        InputMode::GitCommit { message, .. } => message.as_str(),
+        _ => "",
+    };
+    let lines = vec![
+        Line::styled(
+            "Enter submit | Esc cancel",
+            Style::default().fg(Color::DarkGray),
+        ),
+        Line::raw(""),
+        Line::raw(message),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn centered_rect(area: Rect, width_percent: u16, height_percent: u16) -> Rect {
+    let vertical = Layout::vertical([
+        Constraint::Percentage((100 - height_percent) / 2),
+        Constraint::Percentage(height_percent),
+        Constraint::Percentage((100 - height_percent) / 2),
+    ])
+    .split(area);
+    Layout::horizontal([
+        Constraint::Percentage((100 - width_percent) / 2),
+        Constraint::Percentage(width_percent),
+        Constraint::Percentage((100 - width_percent) / 2),
+    ])
+    .split(vertical[1])[1]
+}
+
+fn build_git_panel_rows(
+    git_status: Option<&GitStatusSnapshot>,
+    git_status_error: Option<&str>,
+    git_panel: &GitPanelState,
+) -> Vec<GitPanelRow> {
+    let mut rows = Vec::new();
+    if let Some(status) = git_status {
+        append_git_status_rows(&mut rows, status, git_panel);
+    } else if let Some(error) = git_status_error {
+        rows.push(GitPanelRow {
+            depth: 0,
+            label: error.to_owned(),
+            kind: GitPanelNodeKind::Group,
+            selectable: false,
+        });
+    }
+
+    append_git_commit_rows(&mut rows);
+    append_git_remote_rows(&mut rows, git_panel);
+    append_git_pull_request_rows(&mut rows, git_panel);
+
+    rows
+}
+
+fn append_git_status_rows(
+    rows: &mut Vec<GitPanelRow>,
+    status: &GitStatusSnapshot,
+    git_panel: &GitPanelState,
+) {
+    rows.push(GitPanelRow {
+        depth: 0,
+        label: format!(
+            "Branch {}{}  ↑{} ↓{}",
+            status.branch.head,
+            status
+                .branch
+                .upstream
+                .as_deref()
+                .map(|upstream| format!(" -> {upstream}"))
+                .unwrap_or_default(),
+            status.branch.ahead,
+            status.branch.behind
+        ),
+        kind: GitPanelNodeKind::Group,
+        selectable: false,
+    });
+    rows.push(GitPanelRow {
+        depth: 0,
+        label: "Changes".to_owned(),
+        kind: GitPanelNodeKind::Group,
+        selectable: false,
+    });
+    append_git_diff_rows(
+        rows,
+        GitDiffSide::Staged,
+        "Staged",
+        &status.staged,
+        git_panel,
+    );
+    append_git_diff_rows(
+        rows,
+        GitDiffSide::Unstaged,
+        "Unstaged",
+        &status.unstaged,
+        git_panel,
+    );
+}
+
+fn append_git_commit_rows(rows: &mut Vec<GitPanelRow>) {
+    rows.push(GitPanelRow {
+        depth: 0,
+        label: "Commit".to_owned(),
+        kind: GitPanelNodeKind::Group,
+        selectable: false,
+    });
+    rows.push(GitPanelRow {
+        depth: 1,
+        label: "New commit".to_owned(),
+        kind: GitPanelNodeKind::Action(GitPanelAction::Commit(CommitMode::Create)),
+        selectable: true,
+    });
+    rows.push(GitPanelRow {
+        depth: 1,
+        label: "Amend HEAD".to_owned(),
+        kind: GitPanelNodeKind::Action(GitPanelAction::Commit(CommitMode::Amend)),
+        selectable: true,
+    });
+}
+
+fn append_git_remote_rows(rows: &mut Vec<GitPanelRow>, git_panel: &GitPanelState) {
+    rows.push(GitPanelRow {
+        depth: 0,
+        label: "Remote".to_owned(),
+        kind: GitPanelNodeKind::Group,
+        selectable: false,
+    });
+    rows.push(GitPanelRow {
+        depth: 1,
+        label: match git_panel.preferred_push_mode {
+            PushMode::Normal => "Push current branch".to_owned(),
+            PushMode::ForceWithLease => {
+                "Push current branch (force-with-lease recommended)".to_owned()
+            }
+        },
+        kind: GitPanelNodeKind::Action(GitPanelAction::Push(PushMode::Normal)),
+        selectable: true,
+    });
+    rows.push(GitPanelRow {
+        depth: 1,
+        label: "Push with force-with-lease".to_owned(),
+        kind: GitPanelNodeKind::Action(GitPanelAction::Push(PushMode::ForceWithLease)),
+        selectable: true,
+    });
+}
+
+fn append_git_pull_request_rows(rows: &mut Vec<GitPanelRow>, git_panel: &GitPanelState) {
+    rows.push(GitPanelRow {
+        depth: 0,
+        label: "Pull Request".to_owned(),
+        kind: GitPanelNodeKind::Group,
+        selectable: false,
+    });
+    rows.push(GitPanelRow {
+        depth: 1,
+        label: "Create or refresh PR".to_owned(),
+        kind: GitPanelNodeKind::Action(GitPanelAction::EnsurePullRequest),
+        selectable: true,
+    });
+    rows.push(GitPanelRow {
+        depth: 1,
+        label: "Refresh PR status".to_owned(),
+        kind: GitPanelNodeKind::Action(GitPanelAction::RefreshPullRequest),
+        selectable: true,
+    });
+    if let Some(pr) = &git_panel.pr_status {
+        rows.push(GitPanelRow {
+            depth: 1,
+            label: format!("#{} {} [{}]", pr.number, pr.title, pr.state),
+            kind: GitPanelNodeKind::Group,
+            selectable: false,
+        });
+        rows.push(GitPanelRow {
+            depth: 2,
+            label: pr.url.clone(),
+            kind: GitPanelNodeKind::Group,
+            selectable: false,
+        });
+        for check in &pr.checks {
+            let conclusion = check
+                .conclusion
+                .as_deref()
+                .map(|value| format!(" ({value})"))
+                .unwrap_or_default();
+            rows.push(GitPanelRow {
+                depth: 2,
+                label: format!("{}: {}{}", check.name, check.status, conclusion),
+                kind: GitPanelNodeKind::Group,
+                selectable: false,
+            });
+        }
+    } else if let Some(error) = &git_panel.pr_error {
+        rows.push(GitPanelRow {
+            depth: 1,
+            label: error.clone(),
+            kind: GitPanelNodeKind::Group,
+            selectable: false,
+        });
+    }
+}
+
+fn append_git_diff_rows(
+    rows: &mut Vec<GitPanelRow>,
+    side: GitDiffSide,
+    title: &str,
+    patch_set: &frame_core::PatchSet,
+    git_panel: &GitPanelState,
+) {
+    rows.push(GitPanelRow {
+        depth: 1,
+        label: if patch_set.files.is_empty() {
+            format!("{title}: none")
+        } else {
+            title.to_owned()
+        },
+        kind: GitPanelNodeKind::Group,
+        selectable: false,
+    });
+
+    for file in &patch_set.files {
+        let file_key = GitFileKey {
+            side,
+            path: file.display_path().to_owned(),
+        };
+        let expanded = git_panel.expanded_files.contains(&file_key);
+        rows.push(GitPanelRow {
+            depth: 2,
+            label: format!(
+                "{} [{}] {}",
+                if expanded { "▾" } else { "▸" },
+                file.change,
+                file.display_path()
+            ),
+            kind: GitPanelNodeKind::File(file_key.clone()),
+            selectable: true,
+        });
+
+        if !expanded {
+            continue;
+        }
+
+        for (hunk_index, hunk) in file.hunks.iter().enumerate() {
+            let hunk_key = GitHunkKey {
+                side,
+                path: file.display_path().to_owned(),
+                hunk_index,
+            };
+            let hunk_expanded = git_panel.expanded_hunks.contains(&hunk_key);
+            rows.push(GitPanelRow {
+                depth: 3,
+                label: format!("{} {}", if hunk_expanded { "▾" } else { "▸" }, hunk.header),
+                kind: GitPanelNodeKind::Hunk(hunk_key.clone()),
+                selectable: true,
+            });
+
+            if !hunk_expanded {
+                continue;
+            }
+
+            for (line_index, line) in hunk.lines.iter().enumerate() {
+                if !matches!(
+                    line.kind,
+                    frame_core::LineKind::Added | frame_core::LineKind::Removed
+                ) {
+                    continue;
+                }
+                let prefix = match line.kind {
+                    frame_core::LineKind::Added => '+',
+                    frame_core::LineKind::Removed => '-',
+                    frame_core::LineKind::Context => ' ',
+                };
+                rows.push(GitPanelRow {
+                    depth: 4,
+                    label: format!("{prefix} {}", line.text),
+                    kind: GitPanelNodeKind::Line(GitSelection::Line {
+                        side,
+                        path: file.display_path().to_owned(),
+                        hunk_index,
+                        line_index,
+                    }),
+                    selectable: true,
+                });
+            }
+        }
+    }
+}
+
+fn git_selection_for_code_cursor(
+    patch_set: &frame_core::PatchSet,
+    file: &ReviewFile,
+    side: GitDiffSide,
+    cursor_line: usize,
+) -> Option<GitSelection> {
+    let patch_file = patch_set
+        .files
+        .iter()
+        .find(|patch_file| patch_file.display_path() == file.display_path())?;
+    let target_lineno = cursor_line + 1;
+
+    for (hunk_index, hunk) in patch_file.hunks.iter().enumerate() {
+        for (line_index, line) in hunk.lines.iter().enumerate() {
+            if !matches!(
+                line.kind,
+                frame_core::LineKind::Added | frame_core::LineKind::Removed
+            ) {
+                continue;
+            }
+
+            let relevant_lineno = match file.source {
+                BufferSource::PostImage | BufferSource::Placeholder => line.new_lineno,
+                BufferSource::PreImage => line.old_lineno,
+            };
+            if relevant_lineno == Some(target_lineno) {
+                return Some(GitSelection::Line {
+                    side,
+                    path: file.display_path().to_owned(),
+                    hunk_index,
+                    line_index,
+                });
+            }
+        }
+    }
+
+    None
+}
+
+fn git_selection_for_raw_cursor(
+    patch_set: &frame_core::PatchSet,
+    file_path: &str,
+    side: GitDiffSide,
+    raw_cursor_line: usize,
+) -> Option<GitSelection> {
+    let patch_file = patch_set
+        .files
+        .iter()
+        .find(|patch_file| patch_file.display_path() == file_path)?;
+    let mut row_index = 0usize;
+
+    for (hunk_index, hunk) in patch_file.hunks.iter().enumerate() {
+        if row_index == raw_cursor_line {
+            return Some(GitSelection::Hunk {
+                side,
+                path: file_path.to_owned(),
+                hunk_index,
+            });
+        }
+        row_index += 1;
+
+        for (line_index, line) in hunk.lines.iter().enumerate() {
+            if row_index == raw_cursor_line {
+                return match line.kind {
+                    frame_core::LineKind::Added | frame_core::LineKind::Removed => {
+                        Some(GitSelection::Line {
+                            side,
+                            path: file_path.to_owned(),
+                            hunk_index,
+                            line_index,
+                        })
+                    }
+                    frame_core::LineKind::Context => Some(GitSelection::Hunk {
+                        side,
+                        path: file_path.to_owned(),
+                        hunk_index,
+                    }),
+                };
+            }
+            row_index += 1;
+        }
+    }
+
+    None
+}
+
+fn git_panel_row_to_text(row: &GitPanelRow, is_cursor: bool, width: usize) -> Line<'static> {
+    let style = if is_cursor {
+        Style::default()
+            .bg(Color::Rgb(58, 58, 74))
+            .add_modifier(Modifier::BOLD)
+    } else if row.selectable {
+        Style::default().fg(Color::Gray)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let text = format!("{}{}", "  ".repeat(row.depth), row.label);
+    Line::styled(pad_display_text(&text, width), style)
 }
 
 impl SidebarTreeNode {
@@ -2296,6 +3279,7 @@ fn sidebar_metadata_spans(
         return Vec::new();
     };
     let comment_count = app.comment_count_for_file(file.display_path());
+    let (staged_count, unstaged_count) = app.git_file_change_counts(file.display_path());
     let mut spans = vec![
         Span::styled(
             format!("[{}]", file.patch.change),
@@ -2314,6 +3298,24 @@ fn sidebar_metadata_spans(
             apply_sidebar_emphasis(Style::default().fg(Color::Red), is_active_file, is_cursor),
         ),
     ];
+
+    if staged_count > 0 {
+        spans.push(Span::styled(
+            format!(" S{staged_count}"),
+            apply_sidebar_emphasis(Style::default().fg(Color::Cyan), is_active_file, is_cursor),
+        ));
+    }
+
+    if unstaged_count > 0 {
+        spans.push(Span::styled(
+            format!(" U{unstaged_count}"),
+            apply_sidebar_emphasis(
+                Style::default().fg(Color::Magenta),
+                is_active_file,
+                is_cursor,
+            ),
+        ));
+    }
 
     if comment_count > 0 {
         spans.push(Span::styled(
@@ -2337,6 +3339,19 @@ fn sidebar_status_color(change: frame_core::FileChangeKind) -> Color {
         frame_core::FileChangeKind::Modified => Color::Yellow,
         frame_core::FileChangeKind::Renamed => Color::Magenta,
     }
+}
+
+fn patch_file_changed_line_count(file: &frame_core::PatchFile) -> usize {
+    file.hunks
+        .iter()
+        .flat_map(|hunk| hunk.lines.iter())
+        .filter(|line| {
+            matches!(
+                line.kind,
+                frame_core::LineKind::Added | frame_core::LineKind::Removed
+            )
+        })
+        .count()
 }
 
 fn sidebar_fill_style(is_active_file: bool, is_cursor: bool) -> Style {
@@ -3273,8 +4288,12 @@ mod tests {
     };
 
     use frame_core::{
-        BufferSource, FileChangeKind, LineKind, PatchFile, PatchHunk, PatchLine, ReviewFile,
-        ReviewFileInput, ReviewSnapshot,
+        BufferSource, FileChangeKind, LineKind, PatchFile, PatchHunk, PatchLine, PatchSet,
+        ReviewFile, ReviewFileInput, ReviewSnapshot,
+    };
+    use frame_git::{
+        BranchStatus, CommitMode, GitDiffSide, GitError, GitStatusSnapshot, PullRequestCheck,
+        PullRequestStatus, PushMode,
     };
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::style::Color;
@@ -3282,13 +4301,18 @@ mod tests {
     use super::{
         App, AppEvent, CodeRowKind, CommentTarget, InputMode, InteractionMode, MotionMode,
         RawRowKind, RefreshFilter, SidebarFileStats, SidebarNodePath, SidebarRow, SidebarRowKind,
-        ViewMode, build_sidebar_rows, code_rows, comment_box_lines, raw_hunk_targets_in_rows,
+        ViewMode, build_git_panel_rows, build_sidebar_rows, code_rows, comment_box_lines,
+        describe_git_status_error, git_file_change_count_map, raw_hunk_targets_in_rows,
         raw_row_for_buffer_line, raw_row_to_text, raw_rows, relevant_raw_lineno,
         rendered_code_view, run_refresh_loop, sidebar_directory_paths, sidebar_row_to_text,
     };
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl_key(ch: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL)
     }
 
     static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -3334,6 +4358,16 @@ mod tests {
         assert!(status.success(), "git command should succeed");
     }
 
+    fn git_output(cwd: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .expect("git command should start");
+        assert!(output.status.success(), "git command should succeed");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
     fn write(path: &Path, contents: &str) {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).expect("parent directories should be created");
@@ -3349,6 +4383,27 @@ mod tests {
             &["config", "user.email", "frame-tests@example.com"],
         );
         git(temp.path(), &["config", "user.name", "Frame Tests"]);
+        temp
+    }
+
+    fn init_committed_git_repo() -> TempGitDir {
+        let temp = init_git_repo();
+        write(
+            &temp.path().join("tracked.txt"),
+            "line one\nline two\nline three\n",
+        );
+        git(temp.path(), &["add", "tracked.txt"]);
+        git(
+            temp.path(),
+            &[
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "-m",
+                "init",
+            ],
+        );
         temp
     }
 
@@ -3557,6 +4612,59 @@ mod tests {
         })
     }
 
+    fn sample_pull_request_status() -> PullRequestStatus {
+        PullRequestStatus {
+            number: 42,
+            title: "Ship lane".to_owned(),
+            url: "https://example.com/pr/42".to_owned(),
+            head_ref_name: "feat/git-ship-lane".to_owned(),
+            base_ref_name: "main".to_owned(),
+            state: "OPEN".to_owned(),
+            checks: vec![PullRequestCheck {
+                name: "ci".to_owned(),
+                status: "COMPLETED".to_owned(),
+                conclusion: Some("SUCCESS".to_owned()),
+            }],
+        }
+    }
+
+    fn sample_git_status_snapshot() -> GitStatusSnapshot {
+        GitStatusSnapshot {
+            branch: BranchStatus {
+                head: "feat/git-ship-lane".to_owned(),
+                upstream: Some("origin/feat/git-ship-lane".to_owned()),
+                ahead: 2,
+                behind: 1,
+            },
+            staged: PatchSet {
+                files: vec![sample_main_file().patch],
+            },
+            unstaged: PatchSet {
+                files: vec![sample_added_file().patch],
+            },
+        }
+    }
+
+    #[test]
+    fn git_status_errors_distinguish_panel_from_status_failures() {
+        assert_eq!(
+            describe_git_status_error(&GitError::NotInRepo),
+            "Git panel unavailable: current directory is not inside a git repository"
+        );
+        assert_eq!(
+            describe_git_status_error(&GitError::MalformedStatus("bad".to_owned())),
+            "Git status unavailable: git status output was malformed: bad"
+        );
+    }
+
+    #[test]
+    fn precomputes_git_file_change_counts() {
+        let counts = git_file_change_count_map(&sample_git_status_snapshot());
+
+        assert_eq!(counts.get("src/main.rs"), Some(&(5, 0)));
+        assert_eq!(counts.get("src/lib.rs"), Some(&(0, 1)));
+    }
+
     #[test]
     fn code_rows_insert_virtual_deleted_lines() {
         let snapshot = sample_snapshot();
@@ -3605,6 +4713,76 @@ mod tests {
         assert!(!app.handle_key(key(KeyCode::Char('t'))));
         assert!(!app.handle_key(key(KeyCode::Enter)));
         assert_eq!(app.comments.len(), 1);
+    }
+
+    #[test]
+    fn app_opens_git_panel_with_ctrl_g_and_git_command() {
+        let mut app = App::new(sample_snapshot());
+
+        assert!(!app.git_panel.open);
+        assert!(!app.handle_key(ctrl_key('g')));
+        assert!(app.git_panel.open);
+        assert!(app.footer_text().contains("GIT |"));
+
+        assert!(!app.handle_key(key(KeyCode::Esc)));
+        assert!(!app.git_panel.open);
+
+        assert!(!app.execute_command("git"));
+        assert!(app.git_panel.open);
+    }
+
+    #[test]
+    fn git_panel_rows_render_branch_changes_and_pr_status() {
+        let mut git_panel = super::GitPanelState {
+            preferred_push_mode: PushMode::ForceWithLease,
+            pr_status: Some(sample_pull_request_status()),
+            ..Default::default()
+        };
+        git_panel.expanded_files.insert(super::GitFileKey {
+            side: GitDiffSide::Staged,
+            path: "src/main.rs".to_owned(),
+        });
+        git_panel.expanded_hunks.insert(super::GitHunkKey {
+            side: GitDiffSide::Staged,
+            path: "src/main.rs".to_owned(),
+            hunk_index: 0,
+        });
+
+        let rows = build_git_panel_rows(Some(&sample_git_status_snapshot()), None, &git_panel);
+        let labels = rows
+            .iter()
+            .map(|row| row.label.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            labels
+                .iter()
+                .any(|label| label
+                    .contains("Branch feat/git-ship-lane -> origin/feat/git-ship-lane"))
+        );
+        assert!(labels.iter().any(|label| label.contains("Staged")));
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains("▾ [M] src/main.rs"))
+        );
+        assert!(labels.iter().any(|label| label.contains("@@ -1,3 +1,4 @@")));
+        assert!(labels.iter().any(|label| label.contains("+     new();")));
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains("force-with-lease recommended"))
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains("#42 Ship lane [OPEN]"))
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains("ci: COMPLETED (SUCCESS)"))
+        );
     }
 
     #[test]
@@ -3670,6 +4848,70 @@ mod tests {
             }
         );
         assert_eq!(app.motion_mode, MotionMode::Normal);
+    }
+
+    #[test]
+    fn content_s_stages_the_current_changed_line() {
+        let repo = init_committed_git_repo();
+        write(
+            &repo.path().join("tracked.txt"),
+            "line one\nline two changed\nline three\n",
+        );
+        let snapshot =
+            frame_git::load_review_snapshot_from_dir(repo.path()).expect("snapshot should load");
+        let mut app = App::new(snapshot);
+
+        assert_eq!(
+            app.active_file().map(ReviewFile::display_path),
+            Some("tracked.txt")
+        );
+        app.set_code_cursor_line(1);
+
+        assert!(!app.handle_key(key(KeyCode::Char('s'))));
+
+        let cached = git_output(repo.path(), &["diff", "--cached"]);
+        let unstaged = git_output(repo.path(), &["diff"]);
+        assert!(cached.contains("+line two changed"));
+        assert!(unstaged.contains("-line two"));
+    }
+
+    #[test]
+    fn raw_diff_s_stages_the_current_hunk_from_the_header() {
+        let repo = init_committed_git_repo();
+        write(
+            &repo.path().join("tracked.txt"),
+            "line one changed\nline two\nline three\n",
+        );
+        let snapshot =
+            frame_git::load_review_snapshot_from_dir(repo.path()).expect("snapshot should load");
+        let mut app = App::new(snapshot);
+
+        app.toggle_mode();
+        app.raw_cursor_line = 0;
+
+        assert!(!app.handle_key(key(KeyCode::Char('s'))));
+
+        let cached = git_output(repo.path(), &["diff", "--cached"]);
+        let unstaged = git_output(repo.path(), &["diff"]);
+        assert!(cached.contains("-line one"));
+        assert!(cached.contains("+line one changed"));
+        assert!(unstaged.is_empty());
+    }
+
+    #[test]
+    fn content_c_opens_the_commit_prompt() {
+        let mut app = App::new(sample_snapshot());
+
+        assert!(!app.handle_key(key(KeyCode::Char('C'))));
+
+        assert!(matches!(
+            app.input_mode,
+            InputMode::GitCommit {
+                mode: CommitMode::Create,
+                ..
+            }
+        ));
+        assert!(app.footer_text().contains("Commit | Enter submit"));
     }
 
     #[test]

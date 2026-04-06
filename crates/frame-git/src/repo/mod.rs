@@ -11,8 +11,18 @@ use frame_core::{
 use thiserror::Error;
 
 mod shell;
+mod ship;
 
 use shell::{run_git, run_git_allowing_status, run_git_with_input_allowing_status};
+pub use ship::{
+    BranchStatus, CommitMode, CommitRequest, GitDiffSide, GitSelection, GitStatusSnapshot,
+    PullRequestCheck, PullRequestStatus, PushMode, commit_from_current_dir, commit_from_dir,
+    current_branch_name_from_dir, ensure_pull_request_from_current_dir,
+    ensure_pull_request_from_dir, head_commit_message_from_current_dir,
+    head_commit_message_from_dir, load_git_status_from_current_dir, load_git_status_from_dir,
+    load_pull_request_status_from_current_dir, load_pull_request_status_from_dir,
+    push_from_current_dir, push_from_dir, toggle_stage_from_current_dir, toggle_stage_from_dir,
+};
 
 #[derive(Debug, Error)]
 pub enum GitError {
@@ -20,14 +30,24 @@ pub enum GitError {
     NotInRepo,
     #[error("git executable is not available on PATH")]
     GitUnavailable,
+    #[error("GitHub CLI is not available on PATH")]
+    GhUnavailable,
     #[error("failed to determine current directory: {0}")]
     CurrentDir(#[source] std::io::Error),
     #[error("git command failed: {0}")]
     CommandFailed(String),
+    #[error("gh command failed: {0}")]
+    GhCommandFailed(String),
+    #[error("git status output was malformed: {0}")]
+    MalformedStatus(String),
+    #[error("this selection cannot be staged independently: {0}")]
+    UnsupportedSelection(String),
     #[error("failed to run git: {0}")]
     Io(#[from] std::io::Error),
     #[error("failed to parse git diff: {0}")]
     Parse(#[from] frame_core::PatchParseError),
+    #[error("failed to parse GitHub response: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 /// Loads a review snapshot for the current process working directory.
