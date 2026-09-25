@@ -106,6 +106,14 @@ def wait_until(
     raise MuxTimeout(detail)
 
 
+def _session_revision(output: str) -> int | None:
+    try:
+        document = json.loads(output)["results"][0]["result"]
+        return int(document["session_state"]["revision"])
+    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
 def wait_for_process_exit(
     process: int, *, timeout: float = 5.0, diagnostics: Callable[[], str] | None = None
 ) -> None:
@@ -346,10 +354,25 @@ class LemmaServer:
             if client.running:
                 client.drain(0.002)
 
-        inspected = self.command("proc", "session", "inspect", "--session", name)
-        if inspected.status != 0:
-            return None
-        listed = self.command("proc", "pane", "list", "--session", name)
+        # Session inspection and Pane listing are separate Procs. A structural change between
+        # them (for example a Pane closing) is not an inconsistency: retry until the Session
+        # revision is unchanged across the listing, and only then trust the pair.
+        for _ in range(50):
+            inspected = self.command("proc", "session", "inspect", "--session", name)
+            if inspected.status != 0:
+                return None
+            listed = self.command("proc", "pane", "list", "--session", name)
+            confirmed = self.command("proc", "session", "inspect", "--session", name)
+            if confirmed.status != 0:
+                return None
+            if _session_revision(inspected.output) == _session_revision(
+                confirmed.output
+            ):
+                break
+        else:
+            raise RuntimeError(
+                f"session {name!r} kept changing while observing its state"
+            )
         if listed.status != 0:
             raise RuntimeError(
                 f"structured pane listing failed for {name!r}:\n{listed.output}"
