@@ -127,6 +127,19 @@ enum class SessionInvariantError : std::uint8_t {
 [[nodiscard]] auto session_state_hash(const Session& session) noexcept -> std::uint64_t;
 [[nodiscard]] auto session_lifecycle_command(CommandKind kind) noexcept -> bool;
 
+enum class PaneDirection : std::uint8_t {
+  left,
+  right,
+  up,
+  down,
+};
+
+// The nearest Pane of `tab` in `direction` from `source`, scored over the unzoomed tiled layout in
+// the Tab's viewport. Directional focus and directional swap share this rule so a modifier never
+// retargets a different Pane; zoom and Runtime geometry never participate.
+[[nodiscard]] auto pane_in_direction(const Session& session, const Tab& tab, PaneId source,
+                                     PaneDirection direction) noexcept -> std::optional<PaneId>;
+
 // The authoritative, deterministic Session -> Tab -> Pane state machine. The reactor and the
 // simulator supply different Runtime effect implementations while sharing these exact transitions.
 class SessionMachine final {

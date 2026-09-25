@@ -992,18 +992,8 @@ refresh_process_name_if_due(PaneRuntime& runtime,
 }
 
 void note_compression_activity(PaneRuntime& runtime) noexcept;
-[[nodiscard]] auto update_copy_viewport_offset(SessionRecord& session,
-                                               PaneRuntime& runtime) noexcept -> bool;
-void leave_copy_mode(SessionRecord& session, PaneRuntimeStore& runtimes) noexcept;
-
-enum class LayoutResolutionStatus : std::uint8_t {
-  applied,
-  rejected,
-  consistency_lost,
-};
 
 struct PaneResizePlanEntry final {
-  Pane* pane{nullptr};
   PaneRuntime* runtime{nullptr};
   render::PaneRectangle previous;
   render::PaneRectangle target;
@@ -1067,7 +1057,7 @@ void finish_resize_mutation(PaneResizePlanEntry& entry) noexcept {
 }
 
 [[nodiscard]] auto rollback_layout_resize(PaneResizePlan& plan, const std::size_t count) noexcept
-    -> LayoutResolutionStatus {
+    -> RuntimeEffectStatus {
   bool consistency_lost = false;
   for (std::size_t remaining = count; remaining > 0; --remaining) {
     auto& entry = std::span(plan).subspan(remaining - 1U, 1).front();
@@ -1084,12 +1074,11 @@ void finish_resize_mutation(PaneResizePlanEntry& entry) noexcept {
     }
     finish_resize_mutation(entry);
   }
-  return consistency_lost ? LayoutResolutionStatus::consistency_lost
-                          : LayoutResolutionStatus::rejected;
+  return consistency_lost ? RuntimeEffectStatus::consistency_lost : RuntimeEffectStatus::rejected;
 }
 
 [[nodiscard]] auto apply_layout_resize_plan(PaneResizePlan& plan, const std::size_t count) noexcept
-    -> LayoutResolutionStatus {
+    -> RuntimeEffectStatus {
   for (std::size_t index = 0; index < count; ++index) {
     auto& entry = std::span(plan).subspan(index, 1).front();
     LEMMA_ASSERT(entry.runtime != nullptr);
@@ -1108,127 +1097,10 @@ void finish_resize_mutation(PaneResizePlanEntry& entry) noexcept {
     if (status == TerminalResizeStatus::consistency_lost) {
       static_cast<void>(rollback_layout_resize(plan, index));
       finish_resize_mutation(entry);
-      return LayoutResolutionStatus::consistency_lost;
+      return RuntimeEffectStatus::consistency_lost;
     }
   }
-  return LayoutResolutionStatus::applied;
-}
-
-void commit_layout_resize_plan(PaneResizePlan& plan, const std::size_t count) noexcept {
-  for (auto& entry : std::span(plan).first(count)) {
-    LEMMA_ASSERT(entry.pane != nullptr);
-    entry.pane->rectangle = entry.target;
-    finish_resize_mutation(entry);
-  }
-}
-
-// Building and applying the fixed transaction handles zoomed and tiled plans explicitly.
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] auto resolve_layout(SessionRecord& session, Tab& tab, PaneRuntimeStore& runtimes,
-                                  const PaneLayout* const proposed_layout = nullptr) noexcept
-    -> LayoutResolutionStatus {
-  LEMMA_ASSERT(proposed_layout == nullptr || !tab.zoomed);
-  const render::PaneRectangle viewport{
-      .column = tab.layout_column,
-      .row = tab.layout_row,
-      .columns = tab.layout_columns,
-      .rows = tab.layout_rows,
-  };
-  LayoutProjection projection;
-  if (tab.zoomed) {
-    auto* const focused = find_pane(session, tab, tab.focused_pane);
-    if (focused == nullptr) {
-      return LayoutResolutionStatus::consistency_lost;
-    }
-    std::span(projection.rectangles).subspan(focused->id.slot(), 1).front() = viewport;
-    std::span(projection.panes).subspan(focused->id.slot(), 1).front() = focused->id;
-    std::span(projection.included).subspan(focused->id.slot(), 1).front() = true;
-    projection.pane_count = 1;
-  } else {
-    const auto& layout = proposed_layout == nullptr ? tab.layout : *proposed_layout;
-    const auto projected = layout.project(viewport);
-    if (!projected.has_value()) {
-      return LayoutResolutionStatus::consistency_lost;
-    }
-    projection = *projected;
-    for (std::size_t index = 0; index < session.panes.size(); ++index) {
-      const auto& pane_slot = std::span(session.panes).subspan(index, 1).front();
-      const bool belongs = pane_slot.pane != nullptr && pane_slot.pane->tab == tab.id;
-      const bool included = std::span(projection.included).subspan(index, 1).front();
-      if (belongs != included ||
-          (included &&
-           std::span(projection.panes).subspan(index, 1).front() != pane_slot.pane->id)) {
-        return LayoutResolutionStatus::consistency_lost;
-      }
-    }
-  }
-
-  PaneResizePlan plan{};
-  std::size_t count = 0;
-  for (std::size_t index = 0; index < session.panes.size(); ++index) {
-    auto& pane_slot = std::span(session.panes).subspan(index, 1).front();
-    if (pane_slot.pane == nullptr || pane_slot.pane->tab != tab.id ||
-        !std::span(projection.included).subspan(index, 1).front()) {
-      continue;
-    }
-    auto* const runtime = find_pane_runtime(runtimes, session, *pane_slot.pane);
-    LEMMA_ASSERT(runtime != nullptr);
-    std::span(plan).subspan(count, 1).front() = {
-        .pane = pane_slot.pane.get(),
-        .runtime = runtime,
-        .previous = pane_slot.pane->rectangle,
-        .target = std::span(projection.rectangles).subspan(index, 1).front(),
-    };
-    ++count;
-  }
-
-  const auto status = apply_layout_resize_plan(plan, count);
-  if (status != LayoutResolutionStatus::applied) {
-    return status;
-  }
-  if (proposed_layout != nullptr) {
-    LEMMA_ASSERT(proposed_layout->valid());
-    tab.layout = *proposed_layout;
-  }
-  commit_layout_resize_plan(plan, count);
-  return LayoutResolutionStatus::applied;
-}
-
-void refresh_copy_selection_after_layout(SessionRecord& session, Tab& tab,
-                                         PaneRuntimeStore& runtimes) noexcept {
-  const auto target = session.attachment.selection_target;
-  if (!session.attachment.copy_mode.active() || !target.has_value() || target->tab != tab.id) {
-    return;
-  }
-  auto* const pane = find_pane(session, tab, target->pane);
-  if (pane == nullptr) {
-    leave_copy_mode(session, runtimes);
-    return;
-  }
-  auto* const runtime = find_pane_runtime(runtimes, session, tab, *pane);
-  LEMMA_ASSERT(runtime != nullptr);
-  const auto refreshed = runtime->terminal.refresh_selection();
-  // Reflow updates Ghostty's tracked endpoints, but the renderer requires a freshly installed
-  // selection snapshot. Re-anchor Ghostty's canonical viewport to that endpoint.
-  const auto scrolled =
-      refreshed.has_value() && *refreshed
-          ? runtime->terminal.scroll_selection_into_view()
-          : std::expected<bool, vt::Error>{std::unexpected(vt::Error::invalid_state)};
-  if (!scrolled.has_value() || !update_copy_viewport_offset(session, *runtime)) {
-    leave_copy_mode(session, runtimes);
-  }
-}
-
-[[nodiscard]] auto
-resolve_session_layout(SessionRecord& session, Tab& tab, PaneRuntimeStore& runtimes,
-                       const PaneLayout* const proposed_layout = nullptr) noexcept -> bool {
-  const auto status = resolve_layout(session, tab, runtimes, proposed_layout);
-  if (status == LayoutResolutionStatus::consistency_lost) {
-    session.active = false;
-    return false;
-  }
-  refresh_copy_selection_after_layout(session, tab, runtimes);
-  return status == LayoutResolutionStatus::applied;
+  return RuntimeEffectStatus::applied;
 }
 
 [[nodiscard]] auto frame_sink_state(const SessionRecord& session) noexcept -> FrameSinkState {
@@ -1292,7 +1164,6 @@ struct ProductionSessionRuntimeContext final {
       return RuntimeEffectStatus::consistency_lost;
     }
     std::span(plan).subspan(count, 1).front() = {
-        .pane = nullptr,
         .runtime = runtime,
         .previous = effect.previous,
         .target = effect.target,
@@ -1300,14 +1171,12 @@ struct ProductionSessionRuntimeContext final {
     ++count;
   }
   const auto status = apply_layout_resize_plan(plan, count);
-  if (status == LayoutResolutionStatus::applied) {
+  if (status == RuntimeEffectStatus::applied) {
     for (auto& entry : std::span(plan).first(count)) {
       finish_resize_mutation(entry);
     }
-    return RuntimeEffectStatus::applied;
   }
-  return status == LayoutResolutionStatus::rejected ? RuntimeEffectStatus::rejected
-                                                    : RuntimeEffectStatus::consistency_lost;
+  return status;
 }
 
 void production_retire_pane(void* const context, const SessionId session,
@@ -2712,144 +2581,6 @@ void service_copy_input_timeout(SessionRecord& session, PaneRuntimeStore& runtim
   }
 }
 
-[[nodiscard]] auto fit_tab_to_viewport(SessionRecord& session, Tab& tab,
-                                       PaneRuntimeStore& runtimes) noexcept -> bool {
-  const render::PaneRectangle viewport{
-      .columns = session.attachment.columns,
-      .rows = pane_rows(session.attachment.rows),
-  };
-  if (!tab.layout.project(viewport).has_value()) {
-    tab.layout_suspended = true;
-    return true;
-  }
-  const auto previous_suspended = tab.layout_suspended;
-  const auto previous_column = tab.layout_column;
-  const auto previous_row = tab.layout_row;
-  const auto previous_columns = tab.layout_columns;
-  const auto previous_rows = tab.layout_rows;
-  tab.layout_suspended = false;
-  tab.layout_column = viewport.column;
-  tab.layout_row = viewport.row;
-  tab.layout_columns = viewport.columns;
-  tab.layout_rows = viewport.rows;
-  if (resolve_session_layout(session, tab, runtimes)) {
-    return true;
-  }
-  if (session.active) {
-    tab.layout_suspended = previous_suspended;
-    tab.layout_column = previous_column;
-    tab.layout_row = previous_row;
-    tab.layout_columns = previous_columns;
-    tab.layout_rows = previous_rows;
-  }
-  return false;
-}
-
-[[nodiscard]] auto select_tab(SessionRecord& session, PaneRuntimeStore& runtimes,
-                              const TabId id) noexcept -> bool {
-  auto* const selected = find_tab(session, id);
-  if (selected == nullptr) {
-    return false;
-  }
-  if (session.active_tab == id) {
-    return true;
-  }
-  const auto previous_active = session.active_tab;
-  const auto previous_previous = session.previous_tab;
-  session.previous_tab = session.active_tab;
-  session.active_tab = id;
-  if (!fit_tab_to_viewport(session, *selected, runtimes)) {
-    if (session.active) {
-      session.active_tab = previous_active;
-      session.previous_tab = previous_previous;
-    }
-    return false;
-  }
-  schedule_frame(session, FrameUrgency::state_change, true);
-  return true;
-}
-
-void cycle_tab(SessionRecord& session, PaneRuntimeStore& runtimes, const bool forward) noexcept {
-  const auto current = session.tab_order.position_of(session.active_tab);
-  if (!current.has_value() || session.tab_order.size() <= 1U) {
-    return;
-  }
-  const auto count = session.tab_order.size();
-  const auto candidate = forward ? (*current + 1U) % count : (*current + count - 1U) % count;
-  const auto id = session.tab_order.at(candidate);
-  LEMMA_ASSERT(id.has_value());
-  static_cast<void>(select_tab(session, runtimes, *id));
-}
-
-void erase_tab_panes(SessionRecord& session, const Tab& tab, PaneRuntimeStore& runtimes) noexcept {
-  for (auto& pane_slot : session.panes) {
-    if (pane_slot.pane == nullptr || pane_slot.pane->tab != tab.id) {
-      continue;
-    }
-    const bool erased = runtimes.erase(pane_address(session, *pane_slot.pane));
-    LEMMA_ASSERT(erased);
-    pane_slot.pane.reset();
-  }
-}
-
-void reset_removed_tab_attachment_state(SessionRecord& session, PaneRuntimeStore& runtimes,
-                                        const TabId id) noexcept {
-  if (session.attachment.selection_target.has_value() &&
-      session.attachment.selection_target->tab == id) {
-    leave_copy_mode(session, runtimes);
-  }
-  if (session.attachment.rename_prompt.kind == RenamePromptKind::tab &&
-      session.attachment.rename_prompt.tab == id) {
-    reset_rename_prompt(session, false);
-  }
-  if (session.attachment.mouse_capture.has_value() &&
-      session.attachment.mouse_capture->owner == MouseCaptureOwner::status_tab &&
-      (session.attachment.mouse_capture->target.tab == id ||
-       session.attachment.mouse_capture->status_tab_before == id)) {
-    session.attachment.mouse_capture.reset();
-  }
-}
-
-void remove_tab(SessionRecord& session, PaneRuntimeStore& runtimes, const TabId id) noexcept {
-  auto* const tab = find_tab(session, id);
-  const auto removed_position = session.tab_order.position_of(id);
-  if (tab == nullptr || !removed_position.has_value()) {
-    return;
-  }
-  reset_removed_tab_attachment_state(session, runtimes, id);
-  erase_tab_panes(session, *tab, runtimes);
-  std::span(session.tabs).subspan(id.slot(), 1).front().tab.reset();
-  const bool order_erased = session.tab_order.erase(id);
-  LEMMA_ASSERT(order_erased);
-  record_session_mutation(session);
-  if (tab_count(session) == 0) {
-    session.active = false;
-    return;
-  }
-  if (session.active_tab != id) {
-    if (session.previous_tab == id) {
-      session.previous_tab = session.active_tab;
-    }
-    schedule_frame(session, FrameUrgency::state_change, false);
-    return;
-  }
-  const auto next_position = std::min(*removed_position, session.tab_order.size() - 1U);
-  const auto selected_id = session.tab_order.at(next_position);
-  LEMMA_ASSERT(selected_id.has_value());
-  auto* const selected = find_tab(session, *selected_id);
-  LEMMA_ASSERT(selected != nullptr);
-  session.active_tab = *selected_id;
-  session.previous_tab = session.active_tab;
-  if (!fit_tab_to_viewport(session, *selected, runtimes)) {
-    if (session.active) {
-      selected->layout_suspended = true;
-      schedule_frame(session, FrameUrgency::state_change, true);
-    }
-    return;
-  }
-  schedule_frame(session, FrameUrgency::state_change, true);
-}
-
 [[nodiscard]] auto create_tab(SessionRecord& session, PaneRuntimeStore& runtimes,
                               const std::span<const std::byte> launch_command = {},
                               const std::string_view working_directory = {},
@@ -2891,273 +2622,11 @@ void remove_tab(SessionRecord& session, PaneRuntimeStore& runtimes, const TabId 
              : nullptr;
 }
 
-[[nodiscard]] auto close_pane(SessionRecord& session, Tab& tab, PaneRuntimeStore& runtimes,
-                              const PaneId pane_id) noexcept -> bool {
-  auto* const pane = find_pane(session, tab, pane_id);
-  if (pane == nullptr) {
-    return false;
-  }
-  if (session.attachment.selection_target ==
-      std::optional{AttachmentPaneTarget{.tab = tab.id, .pane = pane_id}}) {
-    leave_copy_mode(session, runtimes);
-  }
-  const auto pane_index = static_cast<std::size_t>(pane_id.slot());
-  const bool was_focused = pane_id == tab.focused_pane;
-  if (pane_count(tab) == 1) {
-    remove_tab(session, runtimes, tab.id);
-    return true;
-  }
-  auto proposed_layout = tab.layout;
-  const auto focus_candidate = proposed_layout.remove(pane_id);
-  if (!focus_candidate.has_value()) {
-    return false;
-  }
-  // Process teardown is irreversible, so publish the already-valid reduced topology before
-  // removing its runtime counterpart. Any later external resize rejection suspends this layout.
-  tab.layout = proposed_layout;
-  const bool runtime_erased = runtimes.erase(pane_address(session, *pane));
-  LEMMA_ASSERT(runtime_erased);
-  std::span(session.panes).subspan(pane_index, 1).front().pane.reset();
-  record_session_mutation(session);
-  if (was_focused) {
-    tab.focused_pane = *focus_candidate;
-  }
-  if (tab.previous_pane == pane_id || find_pane(session, tab, tab.previous_pane) == nullptr) {
-    tab.previous_pane = tab.focused_pane;
-  }
-  tab.zoomed = false;
-  if (!resolve_session_layout(session, tab, runtimes)) {
-    if (session.active) {
-      tab.layout_suspended = true;
-      schedule_frame(session, FrameUrgency::state_change, true);
-      return true;
-    }
-    return false;
-  }
-  schedule_frame(session, FrameUrgency::state_change, true);
-  return true;
-}
-
-void focus_pane(SessionRecord& session, Tab& tab, PaneRuntimeStore& runtimes,
-                const PaneId pane_id) noexcept {
-  if (pane_id == tab.focused_pane || find_pane(session, tab, pane_id) == nullptr) {
-    return;
-  }
-  const auto previous_focused = tab.focused_pane;
-  const auto previous_previous = tab.previous_pane;
-  tab.previous_pane = tab.focused_pane;
-  tab.focused_pane = pane_id;
-  if (tab.zoomed && !resolve_session_layout(session, tab, runtimes)) {
-    if (session.active) {
-      tab.focused_pane = previous_focused;
-      tab.previous_pane = previous_previous;
-    }
-    return;
-  }
-  auto* const focused = find_pane(session, tab, tab.focused_pane);
-  LEMMA_ASSERT(focused != nullptr);
-  auto* const focused_runtime = find_pane_runtime(runtimes, session, tab, *focused);
-  LEMMA_ASSERT(focused_runtime != nullptr);
-  focused_runtime->terminal.invalidate_ansi_render_state();
-  schedule_frame(session, FrameUrgency::state_change, tab.zoomed);
-}
-
-void focus_next(SessionRecord& session, Tab& tab, PaneRuntimeStore& runtimes,
-                const PaneId source_pane) noexcept {
-  for (std::size_t offset = 1; offset <= session.panes.size(); ++offset) {
-    const auto candidate =
-        (static_cast<std::size_t>(source_pane.slot()) + offset) % session.panes.size();
-    // candidate is reduced modulo the fixed Session pane capacity.
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
-    const auto& pane = session.panes[candidate].pane;
-    if (pane != nullptr && pane->tab == tab.id) {
-      focus_pane(session, tab, runtimes, pane->id);
-      return;
-    }
-  }
-}
-
-enum class FocusDirection : std::uint8_t {
-  left,
-  right,
-  up,
-  down,
-};
-
-// Focus and swap share one spatial-neighbor rule so modifier changes never retarget a different
-// pane. Directional scoring handles each axis explicitly and remains bounded by pane capacity.
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] auto pane_in_direction(const SessionRecord& session, const Tab& tab,
-                                     const PaneId source_pane,
-                                     const FocusDirection direction) noexcept
-    -> std::optional<PaneId> {
-  // Zoom resizes focused panes to the viewport, so derive stable tiled geometry from the tree.
-  const render::PaneRectangle viewport{
-      .column = tab.layout_column,
-      .row = tab.layout_row,
-      .columns = tab.layout_columns,
-      .rows = tab.layout_rows,
-  };
-  const auto projection = tab.layout.project(viewport);
-  const auto current_rectangle =
-      projection.has_value() ? projection->rectangle(source_pane) : std::nullopt;
-  if (!projection.has_value() || !current_rectangle.has_value()) {
-    return std::nullopt;
-  }
-  const auto& rectangles = projection->rectangles;
-  const auto current = *current_rectangle;
-  const auto current_right = static_cast<std::uint32_t>(current.column) + current.columns;
-  const auto current_bottom = static_cast<std::uint32_t>(current.row) + current.rows;
-  const auto current_x = (static_cast<std::uint32_t>(current.column) * 2U) + current.columns;
-  const auto current_y = (static_cast<std::uint32_t>(current.row) * 2U) + current.rows;
-  std::uint64_t best_score = std::numeric_limits<std::uint64_t>::max();
-  std::optional<PaneId> best;
-  for (std::size_t index = 0; index < session.panes.size(); ++index) {
-    // index is bounded by the fixed Session pane capacity.
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
-    const auto& candidate = session.panes[index].pane;
-    if (candidate == nullptr || candidate->tab != tab.id || candidate->id == source_pane) {
-      continue;
-    }
-    const auto& candidate_rectangle = std::span(rectangles).subspan(index, 1).front();
-    const auto right =
-        static_cast<std::uint32_t>(candidate_rectangle.column) + candidate_rectangle.columns;
-    const auto bottom =
-        static_cast<std::uint32_t>(candidate_rectangle.row) + candidate_rectangle.rows;
-    const auto x =
-        (static_cast<std::uint32_t>(candidate_rectangle.column) * 2U) + candidate_rectangle.columns;
-    const auto y =
-        (static_cast<std::uint32_t>(candidate_rectangle.row) * 2U) + candidate_rectangle.rows;
-    bool eligible = false;
-    std::uint32_t primary = 0;
-    std::uint32_t secondary = 0;
-    switch (direction) {
-    case FocusDirection::left:
-      eligible = right <= current.column;
-      primary = eligible ? current.column - right : 0;
-      secondary = y > current_y ? y - current_y : current_y - y;
-      break;
-    case FocusDirection::right:
-      eligible = candidate_rectangle.column >= current_right;
-      primary = eligible ? candidate_rectangle.column - current_right : 0;
-      secondary = y > current_y ? y - current_y : current_y - y;
-      break;
-    case FocusDirection::up:
-      eligible = bottom <= current.row;
-      primary = eligible ? current.row - bottom : 0;
-      secondary = x > current_x ? x - current_x : current_x - x;
-      break;
-    case FocusDirection::down:
-      eligible = candidate_rectangle.row >= current_bottom;
-      primary = eligible ? candidate_rectangle.row - current_bottom : 0;
-      secondary = x > current_x ? x - current_x : current_x - x;
-      break;
-    }
-    const auto score = (static_cast<std::uint64_t>(primary) * 4'096U) + secondary;
-    if (eligible && score < best_score) {
-      best_score = score;
-      best = candidate->id;
-    }
-  }
-  return best;
-}
-
-void focus_direction(SessionRecord& session, Tab& tab, PaneRuntimeStore& runtimes,
-                     const PaneId source_pane, const FocusDirection direction) noexcept {
-  if (const auto target = pane_in_direction(session, tab, source_pane, direction);
-      target.has_value()) {
-    focus_pane(session, tab, runtimes, *target);
-  }
-}
-
-[[nodiscard]] auto commit_layout_resize(SessionRecord& session, Tab& tab,
-                                        PaneRuntimeStore& runtimes,
-                                        const PaneLayout& proposed_layout) noexcept
-    -> CommandResult {
-  if (!resolve_session_layout(session, tab, runtimes, &proposed_layout)) {
-    if (session.active) {
-      // A rejected compensating transaction may still have reflowed terminals out and back.
-      // Repair presentation without publishing the proposed ratio.
-      schedule_frame(session, FrameUrgency::state_change, true);
-      return {.status = CommandStatus::unavailable};
-    }
-    return {.status = CommandStatus::failed};
-  }
-  schedule_frame(session, FrameUrgency::state_change, true);
-  return {.status = CommandStatus::applied};
-}
-
-[[nodiscard]] auto resize_split(SessionRecord& session, Tab& tab, PaneRuntimeStore& runtimes,
-                                const PaneId pane, const ResizeDirection direction,
-                                const std::uint16_t amount = 1) noexcept -> CommandResult {
-  if (tab.zoomed || tab.layout_suspended) {
-    return {.status = CommandStatus::unavailable};
-  }
-  auto proposed_layout = tab.layout;
-  const render::PaneRectangle viewport{
-      .column = tab.layout_column,
-      .row = tab.layout_row,
-      .columns = tab.layout_columns,
-      .rows = tab.layout_rows,
-  };
-  const auto edit = proposed_layout.resize(pane, direction, viewport, amount);
-  switch (edit) {
-  case LayoutResizeStatus::no_effect:
-    return {.status = CommandStatus::no_effect};
-  case LayoutResizeStatus::unavailable:
-    return {.status = CommandStatus::unavailable};
-  case LayoutResizeStatus::invalid:
-    LEMMA_ASSERT(false && "PaneLayout rejected an authoritative pane target");
-  case LayoutResizeStatus::applied:
-    break;
-  }
-  return commit_layout_resize(session, tab, runtimes, proposed_layout);
-}
-
-[[nodiscard]] auto resize_split_divider(SessionRecord& session, Tab& tab,
-                                        PaneRuntimeStore& runtimes, const LayoutDivider divider,
-                                        const std::uint16_t coordinate) noexcept -> CommandResult {
-  if (tab.zoomed || tab.layout_suspended) {
-    return {.status = CommandStatus::unavailable};
-  }
-  auto proposed_layout = tab.layout;
-  const render::PaneRectangle viewport{
-      .column = tab.layout_column,
-      .row = tab.layout_row,
-      .columns = tab.layout_columns,
-      .rows = tab.layout_rows,
-  };
-  const auto edit = proposed_layout.resize_divider(divider, coordinate, viewport);
-  switch (edit) {
-  case LayoutResizeStatus::no_effect:
-    return {.status = CommandStatus::no_effect};
-  case LayoutResizeStatus::unavailable:
-    return {.status = CommandStatus::unavailable};
-  case LayoutResizeStatus::invalid:
-    return {.status = CommandStatus::stale_target};
-  case LayoutResizeStatus::applied:
-    break;
-  }
-  return commit_layout_resize(session, tab, runtimes, proposed_layout);
-}
-
 template <typename Value>
 [[nodiscard]] auto command_payload_value(const CommandPayload& payload) noexcept -> const Value& {
   const auto* const value = std::get_if<Value>(&payload);
   LEMMA_ASSERT(value != nullptr);
   return *value;
-}
-
-[[nodiscard]] auto swap_panes(SessionRecord& session, Tab& tab, PaneRuntimeStore& runtimes,
-                              const PaneId first, const PaneId second) noexcept -> CommandResult {
-  if (tab.zoomed || tab.layout_suspended) {
-    return {.status = CommandStatus::unavailable};
-  }
-  auto proposed = tab.layout;
-  if (!proposed.swap(first, second)) {
-    return {.status = CommandStatus::stale_target};
-  }
-  return commit_layout_resize(session, tab, runtimes, proposed);
 }
 
 [[nodiscard]] constexpr auto command_status(const bool changed) noexcept -> CommandResult {
@@ -3285,13 +2754,13 @@ template <typename Value>
   case input::InputCommand::swap_pane_right:
   case input::InputCommand::swap_pane_up:
   case input::InputCommand::swap_pane_down: {
-    auto direction = FocusDirection::left;
+    auto direction = PaneDirection::left;
     if (input_command == input::InputCommand::swap_pane_right) {
-      direction = FocusDirection::right;
+      direction = PaneDirection::right;
     } else if (input_command == input::InputCommand::swap_pane_up) {
-      direction = FocusDirection::up;
+      direction = PaneDirection::up;
     } else if (input_command == input::InputCommand::swap_pane_down) {
-      direction = FocusDirection::down;
+      direction = PaneDirection::down;
     }
     const auto* const tab = active_tab(session);
     const auto other = tab == nullptr
@@ -3507,6 +2976,8 @@ struct SessionCommandContext final {
 };
 
 // This is the only function that translates validated commands into authoritative mux mutations.
+// SessionMachine owns every lifecycle, layout, and focus transition; this executor adds only the
+// attachment interaction state (copy mode, prompts) that surrounds them.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] auto execute_session_command(void* const context, const Command& command) noexcept
     -> CommandResult {
@@ -3546,11 +3017,6 @@ struct SessionCommandContext final {
                ? CommandResult{.status = CommandStatus::detach_requested}
                : CommandResult{.status = CommandStatus::unavailable};
   }
-  if (command.kind == CommandKind::stop_session) {
-    const bool changed = session.active;
-    session.active = false;
-    return command_status(changed);
-  }
   if (command.kind == CommandKind::cancel_attachment_interaction) {
     const bool changed =
         session.attachment.copy_mode.active() || session.attachment.rename_prompt.active() ||
@@ -3569,26 +3035,6 @@ struct SessionCommandContext final {
                ? CommandResult{.status = CommandStatus::applied}
                : CommandResult{.status = CommandStatus::unavailable};
   }
-  if (command.kind == CommandKind::rename_session) {
-    const auto& name = command_payload_value<SessionNameValue>(command.payload);
-    if (session.session_name() == name.view()) {
-      return {.status = CommandStatus::no_effect};
-    }
-    if (command_context.name_conflict == nullptr) {
-      return {.status = CommandStatus::unavailable};
-    }
-    if (command_context.name_conflict(command_context.name_conflict_context, session.id,
-                                      name.view())) {
-      return {.status = CommandStatus::conflict};
-    }
-    const bool renamed = session.rename(name.view());
-    LEMMA_ASSERT(renamed);
-    reset_rename_prompt(session, false);
-    session.attachment_runtime.status_valid = false;
-    schedule_frame(session, FrameUrgency::state_change, false);
-    return {.status = CommandStatus::applied};
-  }
-
   auto* const tab =
       command.target.tab.is_valid() ? find_tab(session, command.target.tab) : active_tab(session);
   if (tab == nullptr) {
@@ -3611,149 +3057,43 @@ struct SessionCommandContext final {
     return {.status = command.target.pane.is_valid() ? CommandStatus::stale_target
                                                      : CommandStatus::failed};
   }
-  const bool divider_resize = command.kind == CommandKind::resize_left_right_divider ||
-                              command.kind == CommandKind::resize_top_bottom_divider;
-  auto* const peer_pane =
-      divider_resize ? find_pane(session, *tab, command.target.peer_pane) : nullptr;
-  if (divider_resize && peer_pane == nullptr) {
-    return {.status = CommandStatus::stale_target};
-  }
-
-  const auto focus_result = [&](const PaneId previous) {
-    return session.active ? command_status(tab->focused_pane != previous)
-                          : CommandResult{.status = CommandStatus::failed};
-  };
-  const bool copy_command = command.kind == CommandKind::enter_copy_mode ||
-                            command.kind == CommandKind::enter_copy_search_forward ||
-                            command.kind == CommandKind::enter_copy_search_backward ||
-                            command.kind == CommandKind::copy_selection;
-  if (session.attachment.copy_mode.active() && !copy_command) {
-    leave_copy_mode(session, runtimes);
-  }
   switch (command.kind) {
+  // Only copy commands reach this switch: the dispatcher rejects `none`, attachment-level
+  // commands return above, and every lifecycle command returns through SessionMachine.
   case CommandKind::none:
   case CommandKind::detach_client:
   case CommandKind::cancel_attachment_interaction:
   case CommandKind::begin_rename_session:
   case CommandKind::begin_rename_tab:
-  case CommandKind::rename_session:
-  case CommandKind::stop_session:
-    return {.status = CommandStatus::invalid_command};
   case CommandKind::split_left_right:
-    if (pane_count(session) >= panes_per_session_max) {
-      return {.status = CommandStatus::capacity};
-    }
-    if (split_pane(session, *tab, runtimes, targeted_pane->id, SplitAxis::left_right) != nullptr) {
-      return {.status = CommandStatus::applied};
-    }
-    return {.status = session.active ? CommandStatus::unavailable : CommandStatus::failed};
   case CommandKind::split_top_bottom:
-    if (pane_count(session) >= panes_per_session_max) {
-      return {.status = CommandStatus::capacity};
-    }
-    if (split_pane(session, *tab, runtimes, targeted_pane->id, SplitAxis::top_bottom) != nullptr) {
-      return {.status = CommandStatus::applied};
-    }
-    return {.status = session.active ? CommandStatus::unavailable : CommandStatus::failed};
   case CommandKind::resize_left_right_divider:
-    LEMMA_ASSERT(peer_pane != nullptr);
-    return resize_split_divider(
-        session, *tab, runtimes,
-        {.first = targeted_pane->id, .second = peer_pane->id, .axis = SplitAxis::left_right},
-        command_payload_value<CommandCoordinate>(command.payload).value);
   case CommandKind::resize_top_bottom_divider:
-    LEMMA_ASSERT(peer_pane != nullptr);
-    return resize_split_divider(
-        session, *tab, runtimes,
-        {.first = targeted_pane->id, .second = peer_pane->id, .axis = SplitAxis::top_bottom},
-        command_payload_value<CommandCoordinate>(command.payload).value);
   case CommandKind::resize_left:
   case CommandKind::resize_right:
   case CommandKind::resize_up:
-  case CommandKind::resize_down: {
-    const auto* const requested = std::get_if<CommandCoordinate>(&command.payload);
-    const auto amount = requested == nullptr ? std::uint16_t{1} : requested->value;
-    if (amount == 0) {
-      return {.status = CommandStatus::invalid_command};
-    }
-    auto direction = ResizeDirection::left;
-    if (command.kind == CommandKind::resize_right) {
-      direction = ResizeDirection::right;
-    } else if (command.kind == CommandKind::resize_up) {
-      direction = ResizeDirection::up;
-    } else if (command.kind == CommandKind::resize_down) {
-      direction = ResizeDirection::down;
-    }
-    return resize_split(session, *tab, runtimes, targeted_pane->id, direction, amount);
-  }
-  case CommandKind::focus_left: {
-    const auto previous = tab->focused_pane;
-    focus_direction(session, *tab, runtimes, targeted_pane->id, FocusDirection::left);
-    return focus_result(previous);
-  }
-  case CommandKind::focus_right: {
-    const auto previous = tab->focused_pane;
-    focus_direction(session, *tab, runtimes, targeted_pane->id, FocusDirection::right);
-    return focus_result(previous);
-  }
-  case CommandKind::focus_up: {
-    const auto previous = tab->focused_pane;
-    focus_direction(session, *tab, runtimes, targeted_pane->id, FocusDirection::up);
-    return focus_result(previous);
-  }
-  case CommandKind::focus_down: {
-    const auto previous = tab->focused_pane;
-    focus_direction(session, *tab, runtimes, targeted_pane->id, FocusDirection::down);
-    return focus_result(previous);
-  }
-  case CommandKind::focus_next: {
-    const auto previous = tab->focused_pane;
-    focus_next(session, *tab, runtimes, targeted_pane->id);
-    return focus_result(previous);
-  }
-  case CommandKind::focus_previous: {
-    const auto previous = tab->focused_pane;
-    focus_pane(session, *tab, runtimes, tab->previous_pane);
-    return focus_result(previous);
-  }
-  case CommandKind::focus_pane: {
-    const auto previous = tab->focused_pane;
-    focus_pane(session, *tab, runtimes, targeted_pane->id);
-    return focus_result(previous);
-  }
+  case CommandKind::resize_down:
+  case CommandKind::focus_left:
+  case CommandKind::focus_right:
+  case CommandKind::focus_up:
+  case CommandKind::focus_down:
+  case CommandKind::focus_next:
+  case CommandKind::focus_previous:
+  case CommandKind::focus_pane:
   case CommandKind::close_pane:
-    if (close_pane(session, *tab, runtimes, targeted_pane->id)) {
-      return {.status = CommandStatus::applied};
-    }
-    return {.status = session.active ? CommandStatus::unavailable : CommandStatus::failed};
   case CommandKind::toggle_zoom:
-  case CommandKind::set_zoom: {
-    const auto previous_focused = tab->focused_pane;
-    const auto previous_previous = tab->previous_pane;
-    const auto previous_zoomed = tab->zoomed;
-    const auto* const requested = std::get_if<PaneZoomCommand>(&command.payload);
-    const bool desired = requested == nullptr ? !tab->zoomed : requested->enabled;
-    if (requested != nullptr && tab->zoomed == desired &&
-        (!desired || tab->focused_pane == targeted_pane->id)) {
-      return {.status = CommandStatus::no_effect};
-    }
-    if (desired && targeted_pane->id != tab->focused_pane) {
-      tab->previous_pane = tab->focused_pane;
-      tab->focused_pane = targeted_pane->id;
-    }
-    tab->zoomed = desired;
-    if (!resolve_session_layout(session, *tab, runtimes)) {
-      if (session.active) {
-        tab->focused_pane = previous_focused;
-        tab->previous_pane = previous_previous;
-        tab->zoomed = previous_zoomed;
-        return {.status = CommandStatus::unavailable};
-      }
-      return {.status = CommandStatus::failed};
-    }
-    schedule_frame(session, FrameUrgency::state_change, true);
-    return {.status = CommandStatus::applied};
-  }
+  case CommandKind::set_zoom:
+  case CommandKind::create_tab:
+  case CommandKind::next_tab:
+  case CommandKind::previous_tab:
+  case CommandKind::close_tab:
+  case CommandKind::select_tab:
+  case CommandKind::rename_session:
+  case CommandKind::rename_tab:
+  case CommandKind::place_tab:
+  case CommandKind::swap_panes:
+  case CommandKind::stop_session:
+    return {.status = CommandStatus::invalid_command};
   case CommandKind::enter_copy_mode:
     if (session.attachment.copy_mode.active()) {
       leave_copy_mode(session, runtimes);
@@ -3804,80 +3144,6 @@ struct SessionCommandContext final {
     }
     return {.status = command_status_for_copy_selection(
                 copy_selection_to_outer_clipboard(session, *runtime, runtimes))};
-  }
-  case CommandKind::rename_tab: {
-    const auto& title = command_payload_value<TabTitleValue>(command.payload);
-    if (tab->title_override() == title.view()) {
-      return {.status = CommandStatus::no_effect};
-    }
-    const bool renamed = tab->set_title_override(title.view());
-    LEMMA_ASSERT(renamed);
-    if (session.attachment.rename_prompt.kind == RenamePromptKind::tab &&
-        session.attachment.rename_prompt.tab == tab->id) {
-      reset_rename_prompt(session, false);
-    }
-    session.attachment_runtime.status_valid = false;
-    schedule_frame(session, FrameUrgency::state_change, false);
-    return {.status = CommandStatus::applied};
-  }
-  case CommandKind::place_tab: {
-    const auto before = command_payload_value<TabPlacementCommand>(command.payload).before;
-    if (before.is_valid() && find_tab(session, before) == nullptr) {
-      return {.status = CommandStatus::stale_target};
-    }
-    const bool changed = session.tab_order.place_before(
-        tab->id, before.is_valid() ? std::optional<TabId>{before} : std::nullopt);
-    if (changed) {
-      session.attachment_runtime.status_valid = false;
-      schedule_frame(session, FrameUrgency::state_change, false);
-    }
-    return command_status(changed);
-  }
-  case CommandKind::swap_panes: {
-    const auto other_id = command_payload_value<PaneSwapCommand>(command.payload).other;
-    auto* const other = find_pane(session, *tab, other_id);
-    if (other == nullptr) {
-      return {.status = CommandStatus::stale_target};
-    }
-    finish_live_divider_resize(session);
-    return swap_panes(session, *tab, runtimes, targeted_pane->id, other->id);
-  }
-  case CommandKind::create_tab: {
-    if (tab_count(session) >= session.tabs.size() || pane_count(session) >= panes_per_session_max) {
-      return {.status = CommandStatus::capacity};
-    }
-    const auto previous = tab_count(session);
-    static_cast<void>(create_tab(session, runtimes));
-    if (!session.active) {
-      return {.status = CommandStatus::failed};
-    }
-    return previous == tab_count(session) ? CommandResult{.status = CommandStatus::unavailable}
-                                          : CommandResult{.status = CommandStatus::applied};
-  }
-  case CommandKind::next_tab: {
-    const auto previous = session.active_tab;
-    cycle_tab(session, runtimes, true);
-    return session.active ? command_status(previous != session.active_tab)
-                          : CommandResult{.status = CommandStatus::failed};
-  }
-  case CommandKind::previous_tab: {
-    const auto previous = session.active_tab;
-    cycle_tab(session, runtimes, false);
-    return session.active ? command_status(previous != session.active_tab)
-                          : CommandResult{.status = CommandStatus::failed};
-  }
-  case CommandKind::close_tab:
-    remove_tab(session, runtimes, tab->id);
-    return {.status = CommandStatus::applied};
-  case CommandKind::select_tab: {
-    if (!command.target.tab.is_valid()) {
-      return {.status = CommandStatus::unavailable};
-    }
-    const auto previous = session.active_tab;
-    if (!select_tab(session, runtimes, command.target.tab)) {
-      return {.status = session.active ? CommandStatus::stale_target : CommandStatus::failed};
-    }
-    return command_status(previous != session.active_tab);
   }
   }
   return {.status = CommandStatus::invalid_command};
@@ -6595,7 +5861,6 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
       result.status = CommandStatus::failed;
       return result;
     }
-    inserted->previous_tab = inserted->active_tab;
     result.status = CommandStatus::applied;
     result.session_name = std::string(inserted->session_name());
     result.session = inserted->id;
@@ -9037,7 +8302,6 @@ void prepare_named_command(PendingConnection& pending, Sessions& sessions,
       finish_pending_byte(pending, response_failed);
       return;
     }
-    inserted->previous_tab = inserted->active_tab;
     finish_pending_create(pending, *inserted);
     return;
   }
