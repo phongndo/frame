@@ -197,7 +197,9 @@ characters become `?`. A command completes only when OSC 133;D follows OSC 133;C
 D increments `commands` and sets `exit_code`, which is null when the report omitted it. Shell
 integrations also send D to close a prompt: fish sends a bare D after `D;$status`, bash repeats the
 previous status after an empty Enter, and zsh sends a bare D. A D in any other state changes
-nothing. Counters saturate. `generation` increases whenever a field changes, including each
+nothing. Each Pane tracks one command state, not nesting: markers from the innermost shell
+integration drive it. A nested shell started as a command (for example fish from bash) can end or
+hide the outer command, since its first prompt's bare D arrives while the outer command is running. Counters saturate. `generation` increases whenever a field changes, including each
 counted occurrence; an identical repeated progress report or prompt marker leaves it unchanged. It
 is zero for a Pane that never reported a signal.
 

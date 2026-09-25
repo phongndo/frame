@@ -315,6 +315,77 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             self.assertEqual(signal["bells"], 1)
             self.assertGreater(streamed, 0)
 
+    def test_signal_turns_do_not_withhold_other_selected_pane_changes(self) -> None:
+        # The first selected Pane changes and rings BEL on every drain; the second has a pending
+        # change. Alternating with signals must not skip the second Pane's terminal Events.
+        session = self.server.create_session(
+            "signal-lockstep",
+            attach=False,
+            hold=True,
+            command=("/bin/sh", "-c", r"read go; exec yes \"$(printf '\007')signal\""),
+        )
+        session_id = session.state().id
+        with Client(
+            str(self.server.socket_path), name="lockstep-control", session=session_id
+        ) as control:
+            quiet = control.command(
+                "pane.split",
+                session={"id": session_id},
+                pane={"id": "0:1"},
+                direction="right",
+                focus="preserve",
+                hold=True,
+                argv=[
+                    "/bin/sh",
+                    "-c",
+                    "read go; while :; do echo stream; sleep 0.1; done",
+                ],
+            )["pane"]
+        with Client(
+            str(self.server.socket_path),
+            name="lockstep-observer",
+            session=session_id,
+            panes=("0:1", quiet),
+            signals=True,
+        ) as observer:
+            self.assertEqual(observer.event()["event"], "snapshot")
+            observer.send(
+                PROC_REQUEST,
+                {
+                    "schema": "lemma.proc/v1",
+                    "commands": [
+                        {
+                            "command": "pane.input",
+                            "session": {"id": session_id},
+                            "pane": {"id": pane},
+                            "events": [{"kind": "key", "key": "enter"}],
+                        }
+                        for pane in (quiet, "0:1")
+                    ],
+                },
+            )
+            required = {
+                ("pane.terminal", "0:1"),
+                ("pane.terminal", quiet),
+                ("pane.signal", "0:1"),
+            }
+            counts: dict[tuple[str, str], int] = {}
+            # Delivery is slow while a Pane floods, so allow a generous bounded deadline.
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline and not all(
+                counts.get(key, 0) >= 2 for key in required
+            ):
+                try:
+                    record = observer.receive(deadline)
+                except TimeoutError:
+                    break
+                if record.kind == CLIENT_EVENT and "pane" in record.document:
+                    key = (record.document["event"], record.document["pane"])
+                    counts[key] = counts.get(key, 0) + 1
+            self.assertTrue(
+                all(counts.get(key, 0) >= 2 for key in required), f"delivered: {counts}"
+            )
+
     def test_python_client_negotiates_explicit_session_scoped_surfaces(self) -> None:
         session = self.server.create_session("python-surface", command=("cat",))
         with Client(

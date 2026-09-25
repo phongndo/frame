@@ -2207,13 +2207,19 @@ void service_extension_observers(extension::Runtime& extensions, Sessions& sessi
         return;
       }
     }
-    const auto changed =
-        next_changed_pane(*subscription, observed.panes, sessions, runtimes, observed.pane_cursor);
-    const auto signal =
-        !changed.has_value() || observed.signal_turn
-            ? next_signal_pane(*subscription, sessions, runtimes, observed.signal_stamp)
-            : ObservedPane{};
+    // A signal turn looks for a signal before advancing the Pane cursor, so a skipped Pane change
+    // stays next in rotation instead of being dropped.
+    auto signal = observed.signal_turn
+                      ? next_signal_pane(*subscription, sessions, runtimes, observed.signal_stamp)
+                      : ObservedPane{};
     observed.signal_turn = false;
+    const auto changed = signal.pane == nullptr
+                             ? next_changed_pane(*subscription, observed.panes, sessions, runtimes,
+                                                 observed.pane_cursor)
+                             : std::nullopt;
+    if (signal.pane == nullptr && !changed.has_value()) {
+      signal = next_signal_pane(*subscription, sessions, runtimes, observed.signal_stamp);
+    }
     if (signal.pane != nullptr) {
       try {
         std::string event;
