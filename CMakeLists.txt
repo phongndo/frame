@@ -580,6 +580,9 @@ if(LEMMA_BUILD_TESTS)
   # This suite includes real 30-second transport and 10-second worker deadlines, plus process tests.
   # Its outer budget must cover their sum; the individual protocol deadlines remain unchanged.
   set_tests_properties(mux.terminal_boundary PROPERTIES TIMEOUT 90)
+  lemma_add_python_mux_test(outer_terminal tests.mux.test_outer_terminal)
+  # Rate-limit and fairness tests wait for real 5-second notification refills.
+  set_tests_properties(mux.outer_terminal PROPERTIES TIMEOUT 90)
   lemma_add_python_mux_test(agent tests.mux.test_agent)
   lemma_add_python_mux_test(cli tests.mux.test_cli)
   lemma_add_python_mux_test(process_boundary tests.mux.test_process_boundary)

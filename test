@@ -29,6 +29,7 @@ MUX_DOMAINS: dict[str, tuple[str, bool]] = {
     ),
     "resize": ("tests.mux.test_resize", True),
     "terminal-boundary": ("tests.mux.test_terminal_boundary", True),
+    "outer-terminal": ("tests.mux.test_outer_terminal", True),
     "agent": ("tests.mux.test_agent", True),
     "cli": ("tests.mux.test_cli", True),
     "process-boundary": ("tests.mux.test_process_boundary", True),
