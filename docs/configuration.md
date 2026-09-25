@@ -51,7 +51,7 @@ and output. The native loader admits one bounded read quantum per reactor turn a
 complete bounded registration before replacing the generation.
 
 Reload replaces keybindings, context policy, custom command declarations and their host,
-outer-title presentation, and launch/scrollback defaults for future panes. It does not restart pane processes, change existing
+outer-terminal presentation, and launch/scrollback defaults for future panes. It does not restart pane processes, change existing
 scrollback limits, or alter stable IDs. Active native editors, copy/search, resize/prefix contexts,
 and deferred prefix triggers are cancelled on publication; press-time key-release ownership is
 preserved. Old hosted invocations and their remaining Procs are cancelled, and their process group
@@ -123,8 +123,12 @@ All `lemma.setup()` groups and fields are optional:
   [managed extensions](extensions.md#managed-programs) to retain those native editors with custom UI.
 - `ui.outer_title` is Boolean and defaults to `true`. It enables the outer
   [window title](usage.md#window-title).
+- `ui.outer_notifications`, `ui.outer_progress`, and `ui.outer_cwd` are Boolean and default to
+  `true`. They forward desktop notifications, progress, and the working directory to the outer
+  terminal as described in [Attention and directory](usage.md#attention-and-directory).
 - `launch.default_cwd` is empty or an absolute path. It applies when creation does not specify
-  `--cwd`.
+  `--cwd` and, for a split or new Tab, the source Pane has no usable
+  [OSC 7 directory](usage.md#sessions-tabs-and-panes).
 - `launch.default_program` is an exact argv array, not a shell command. It is bounded to 64
   arguments and 4 KiB including terminators. An empty array selects the account login shell.
   Explicit creation arguments after `--` take precedence.

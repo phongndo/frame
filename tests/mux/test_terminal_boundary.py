@@ -687,6 +687,339 @@ class OuterTitleMuxTest(unittest.TestCase):
         session.detach()
 
 
+# Each input line holds space-separated HEX or HEX*COUNT segments, so a long sequence fits within
+# the tty's canonical line limit.
+EMITTER = """
+import os, sys
+os.write(1, b'__EMIT_READY__\\r\\n')
+for index, line in enumerate(sys.stdin):
+    data = b''
+    for segment in line.split():
+        text, _, count = segment.partition('*')
+        data += bytes.fromhex(text) * int(count or 1)
+    os.write(1, data + b'__EMITTED_%d__\\r\\n' % index)
+"""
+BELL_FLOOD = """
+import os, sys, time
+sys.stdin.readline()
+for _ in range(20):
+    os.write(1, b'\\x07')
+    time.sleep(0.01)
+time.sleep(60)
+"""
+PROGRESS_REMOVED = b"\x1b]9;4;0\x1b\\"
+
+
+class OuterAttentionMuxTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.server = LemmaServer.from_environment(
+            config_text='require("lemma").setup({})\n'
+        )
+        self.addCleanup(self.server.close)
+        self.emitted: dict[str, int] = {}
+
+    def emit(
+        self, session: Session, pane: str, data: bytes, *, hex_text: str = ""
+    ) -> str:
+        """Makes the Pane's emitter write data; returns the marker that follows it."""
+        index = self.emitted.get(pane, 0)
+        self.emitted[pane] = index + 1
+        hex_text = hex_text or data.hex()
+        text = ("--text", hex_text) if hex_text else ()
+        self.server.require_command(
+            "send", "--session", session.name, "--pane", pane, *text, "--key", "enter"
+        )
+        return f"__EMITTED_{index}__"
+
+    def emit_visible(
+        self, session: Session, pane: str, data: bytes, *, hex_text: str = ""
+    ) -> None:
+        # The marker follows the sequence in the same write, so the frame that shows it has
+        # already processed the attention.
+        marker = self.emit(session, pane, data, hex_text=hex_text)
+        session.require_client().expect_output(marker)
+
+    def start(self, name: str) -> Session:
+        session = self.server.create_session(
+            name, command=(sys.executable, "-c", EMITTER)
+        )
+        session.require_client().expect_output("__EMIT_READY__")
+        return session
+
+    def new_tab(self, session: Session, title: str, *command: str) -> str:
+        document = json.loads(
+            self.server.require_command(
+                "proc",
+                "tab",
+                "new",
+                "--session",
+                session.name,
+                "--title",
+                title,
+                "--focus",
+                "preserve",
+                "--",
+                *(command or (sys.executable, "-c", EMITTER)),
+            ).output
+        )
+        return document["results"][0]["result"]["pane"]
+
+    def reload(self, ui: str) -> None:
+        config = Path(self.server.environment["XDG_CONFIG_HOME"]) / "lemma/init.lua"
+        config.write_text(f'require("lemma").setup({{ ui = {{ {ui} }} }})\n')
+        self.server.require_command("config", "reload")
+
+    @staticmethod
+    def expect_notification(
+        client: Client, title: bytes, body: bytes, *, timeout: float = 5.0
+    ) -> None:
+        # The title starts with the Session and Tab labels; the process-name Tab label varies.
+        pattern = re.compile(
+            re.escape(b"\x1b]777;notify;" + title)
+            + rb"[^;\x1b]*;"
+            + re.escape(body + b"\x1b\\")
+        )
+        wait_until(
+            f"outer notification {body!r}",
+            lambda: (
+                True
+                if client.drain(0.01) >= 0
+                and pattern.search(client.process.output_tail) is not None
+                else None
+            ),
+            timeout=timeout,
+            diagnostics=client.diagnostics,
+        )
+
+    @staticmethod
+    def latest_after(client: Client, later: bytes, earlier: bytes) -> bool | None:
+        client.drain(0.01)
+        tail = client.process.output_tail
+        return True if tail.rfind(later) > tail.rfind(earlier) else None
+
+    def test_notifications_from_any_pane_are_labelled_sanitized_and_coalesced(
+        self,
+    ) -> None:
+        session = self.start("notify")
+        client = session.require_client()
+        background = self.new_tab(session, "jobs;x")
+        time.sleep(0.2)
+
+        # A background Tab's notification reaches the outer terminal immediately, titled with its
+        # Session and Tab; the separator in the Tab name cannot split the OSC 777 fields.
+        self.emit(session, background, b"\x1b]777;notify;Build;done\x1b\\")
+        client.expect_raw(b"\x1b]777;notify;notify: jobs x - Build;done\x1b\\")
+        self.emit(session, background, b"\x1b]9;plain body\x07")
+        client.expect_raw(b"\x1b]777;notify;notify: jobs x;plain body\x1b\\")
+
+        # Notifications before forwarding coalesce into the Pane's latest. The body is bounded,
+        # and control characters never reach the outer terminal.
+        body = b"\xc2\x9d" + b"x" * 2000
+        burst = b"".join(b"\x1b]9;first %d\x07" % index for index in range(3))
+        self.emit(session, background, burst + b"\x1b]9;" + body + b"\x07")
+        client.expect_raw(b"notify: jobs x;??" + b"x" * 1022 + b"\x1b\\")
+        client.drain(0.2)
+        self.assertNotIn(b"first 0", client.process.output_tail)
+        self.assertNotIn(b"\xc2\x9d", client.process.output_tail)
+
+        # Without forwarding, a notification rings the outer bell instead.
+        self.reload("outer_notifications = false")
+        client.drain(0.2)
+        bells = client.process.output_tail.count(b"\x07")
+        self.emit(session, background, b"\x1b]9;quiet\x07")
+        wait_until(
+            "a notification to ring the bell",
+            lambda: (
+                True
+                if client.drain(0.01) >= 0
+                and client.process.output_tail.count(b"\x07") > bells
+                else None
+            ),
+            diagnostics=client.diagnostics,
+        )
+        self.assertNotIn(b"quiet", client.process.output_tail)
+
+    def test_notifications_and_bells_are_rate_limited(self) -> None:
+        session = self.start("limits")
+        client = session.require_client()
+        pane = session.state().focused_pane
+        for index in range(3):
+            self.emit_visible(session, pane, b"\x1b]9;note %d\x07" % index)
+            self.expect_notification(client, b"limits: ", b"note %d" % index)
+        # The burst is spent: the fourth waits for a refill instead of being dropped.
+        self.emit_visible(session, pane, b"\x1b]9;note 3\x07")
+        self.assertNotIn(b";note 3\x1b\\", client.process.output_tail)
+        self.expect_notification(client, b"limits: ", b"note 3", timeout=8.0)
+
+        # Twenty separate bells from a background Tab within 200 ms forward a burst of four,
+        # then one coalesced bell after the next refill.
+        bells = self.new_tab(session, "bells", sys.executable, "-c", BELL_FLOOD)
+        time.sleep(0.2)
+        client.drain(0.1)
+        before = client.process.output_tail.count(b"\x07")
+        self.emit(session, bells, b"")
+        client.drain(0.8)
+        rung = client.process.output_tail.count(b"\x07") - before
+        self.assertGreaterEqual(rung, 2, client.diagnostics())
+        self.assertLessEqual(rung, 5, client.diagnostics())
+
+    def test_attention_is_not_replayed_across_session_switch(self) -> None:
+        early = b"\x1b]9;before attach\x07\x07"
+        script = f"import os\nos.write(1, {early!r})\n" + EMITTER
+        target = self.server.create_session(
+            "target", attach=False, command=(sys.executable, "-c", script)
+        )
+        time.sleep(0.5)
+        source = self.start("source")
+        client = source.require_client()
+        client.drain(0.1)
+        bells = client.process.output_tail.count(b"\x07")
+        client.prefix(":")
+        client.send("switch target\r")
+        self.server.wait_for_state(
+            "target", lambda state: state.attached, "attachment to switch"
+        )
+        client.expect_output("__EMIT_READY__")
+        client.drain(0.3)
+        self.assertNotIn(b"before attach", client.process.output_tail)
+        self.assertEqual(client.process.output_tail.count(b"\x07"), bells)
+        target.client = client
+        self.emit_visible(target, target.state().focused_pane, b"\x1b]9;switched\x07")
+        self.expect_notification(client, b"target: ", b"switched")
+
+    def test_progress_follows_the_focused_pane_and_is_removed(self) -> None:
+        session = self.start("progress")
+        client = session.require_client()
+        left = session.state().focused_pane
+        right = self.server.require_command(
+            "split",
+            "--session",
+            session.name,
+            "--pane",
+            left,
+            "--right",
+            "--",
+            sys.executable,
+            "-c",
+            EMITTER,
+        ).output.strip()
+        client.expect_output("__EMIT_READY__")
+        # Progress from an unfocused Pane is not forwarded until that Pane is focused.
+        self.emit_visible(session, left, b"\x1b]9;4;1;40\x1b\\")
+        self.assertNotIn(b"\x1b]9;4;1;40", client.process.output_tail)
+        self.server.require_command("focus", "--session", session.name, "--pane", left)
+        client.expect_raw(b"\x1b]9;4;1;40\x1b\\")
+        self.emit(session, left, b"\x1b]9;4;2\x1b\\")
+        client.expect_raw(b"\x1b]9;4;2\x1b\\")
+
+        # Focusing a Pane without progress removes the indicator; returning restores it.
+        self.server.require_command("focus", "--session", session.name, "--pane", right)
+        client.expect_raw(PROGRESS_REMOVED)
+        self.server.require_command("focus", "--session", session.name, "--pane", left)
+        wait_until(
+            "progress to follow focus back",
+            lambda: self.latest_after(client, b"\x1b]9;4;2\x1b\\", PROGRESS_REMOVED),
+            diagnostics=client.diagnostics,
+        )
+
+        # Disabling it by reload removes the indicator; enabling presents it again.
+        self.reload("outer_progress = false")
+        wait_until(
+            "progress removal after reload",
+            lambda: self.latest_after(client, PROGRESS_REMOVED, b"\x1b]9;4;2\x1b\\"),
+            diagnostics=client.diagnostics,
+        )
+        self.reload("outer_progress = true")
+        wait_until(
+            "progress to return after reload",
+            lambda: self.latest_after(client, b"\x1b]9;4;2\x1b\\", PROGRESS_REMOVED),
+            diagnostics=client.diagnostics,
+        )
+
+        # A requested detach removes the indicator before the client restores the terminal.
+        session.detach()
+        tail = client.process.output_tail
+        self.assertGreater(
+            tail.rfind(PROGRESS_REMOVED), tail.rfind(b"\x1b]9;4;2\x1b\\"), tail[-512:]
+        )
+
+    def test_focused_pane_directory_is_forwarded_and_inherited(self) -> None:
+        session = self.start("cwd")
+        client = session.require_client()
+        pane = session.state().focused_pane
+
+        def launch_cwd(pane_id: str) -> str:
+            document = json.loads(
+                self.server.require_command(
+                    "proc",
+                    "pane",
+                    "inspect",
+                    "--session",
+                    session.name,
+                    "--pane",
+                    pane_id,
+                ).output
+            )
+            state = document["results"][0]["result"]["pane_state"]
+            return state["process"]["launch"]["cwd"]
+
+        def split(*arguments: str) -> str:
+            return self.server.require_command(
+                "split", "--session", session.name, "--pane", pane, *arguments
+            ).output.strip()
+
+        def close(pane_id: str) -> None:
+            self.server.require_command(
+                "proc", "pane", "kill", "--session", session.name, "--pane", pane_id
+            )
+
+        # Without a report, a new Pane uses the launch default.
+        created = split("--down")
+        fallback = launch_cwd(created)
+        close(created)
+
+        project = self.server.root / "project dir"
+        project.mkdir()
+        host = socket.gethostname().encode()
+        uri = b"file://" + host + str(project).replace(" ", "%20").encode()
+        self.emit_visible(session, pane, b"\x1b]7;" + uri + b"\x1b\\")
+        client.expect_raw(b"\x1b]7;" + uri + b"\x1b\\")
+
+        # Splits and Tabs without an explicit directory start in the reported directory.
+        created = split("--right")
+        self.assertEqual(launch_cwd(created), str(project))
+        close(created)
+        self.assertEqual(
+            launch_cwd(self.new_tab(session, "t", "/bin/sh")), str(project)
+        )
+        created = split("--down", "--cwd", "/")
+        self.assertEqual(launch_cwd(created), "/")
+        close(created)
+
+        # Remote and stale reports are forwarded as reported but not inherited.
+        for report in (
+            b"file://elsewhere.invalid/tmp",
+            b"file://" + host + str(project / "missing").encode(),
+        ):
+            self.emit_visible(session, pane, b"\x1b]7;" + report + b"\x1b\\")
+            client.expect_raw(b"\x1b]7;" + report + b"\x1b\\")
+            created = split("--down")
+            self.assertEqual(launch_cwd(created), fallback)
+            close(created)
+
+        # A report too long to forward whole is not truncated into another path.
+        long_report = " ".join((b"\x1b]7;file:///".hex(), "61*2100", b"\x1b\\".hex()))
+        self.emit_visible(session, pane, b"", hex_text=long_report)
+        client.drain(0.2)
+        self.assertNotIn(b"a" * 2100, client.process.output_tail)
+
+        # Disabling forwarding leaves the outer directory alone.
+        self.reload("outer_cwd = false")
+        self.emit_visible(session, pane, b"\x1b]7;file:///srv\x1b\\")
+        client.drain(0.2)
+        self.assertNotIn(b"\x1b]7;file:///srv", client.process.output_tail)
+
+
 class GraphicsMuxTest(unittest.TestCase):
     def setUp(self) -> None:
         self.server = LemmaServer.from_environment()

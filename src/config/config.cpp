@@ -637,7 +637,13 @@ auto encode(const Configuration& configuration) -> std::optional<std::string> {
     output += R"(,"status_line":)";
     output += configuration.ui.status_line ? "true" : "false";
     output += R"(,"outer_title":)";
-    output += configuration.ui.outer_title ? "true" : "false";
+    output += configuration.ui.outer.title ? "true" : "false";
+    output += R"(,"outer_notifications":)";
+    output += configuration.ui.outer.notifications ? "true" : "false";
+    output += R"(,"outer_progress":)";
+    output += configuration.ui.outer.progress ? "true" : "false";
+    output += R"(,"outer_cwd":)";
+    output += configuration.ui.outer.cwd ? "true" : "false";
     output += R"(,"default_cwd":)";
     if (!api::append_json_string(output, configuration.launch.default_cwd,
                                  configuration_document_bytes_max)) {
@@ -694,8 +700,9 @@ auto decode(const api::JsonValue& document) noexcept -> DecodeResult {
   if (!known_members(document,
                      {"schema", "preset", "prefix", "contexts", "bindings", "scrollback_lines",
                       "status_line", "default_cwd", "history_file", "default_program", "extensions",
-                      "clipboard_read", "clipboard_write", "outer_title"}) ||
-      (document.object.size() < 10U || document.object.size() > 14U)) {
+                      "clipboard_read", "clipboard_write", "outer_title", "outer_notifications",
+                      "outer_progress", "outer_cwd"}) ||
+      (document.object.size() < 10U || document.object.size() > 17U)) {
     return {.configuration = std::nullopt,
             .failure = {.error = Error::invalid_document, .field = {}}};
   }
@@ -808,7 +815,8 @@ auto decode(const api::JsonValue& document) noexcept -> DecodeResult {
     result.terminal.scrollback_lines = static_cast<std::size_t>(*lines);
   }
   for (const auto name : {std::string_view{"clipboard_read"}, std::string_view{"clipboard_write"},
-                          std::string_view{"outer_title"}}) {
+                          std::string_view{"outer_title"}, std::string_view{"outer_notifications"},
+                          std::string_view{"outer_progress"}, std::string_view{"outer_cwd"}}) {
     if (api::json_member(document, name) == nullptr) {
       continue;
     }
@@ -821,8 +829,14 @@ auto decode(const api::JsonValue& document) noexcept -> DecodeResult {
       result.terminal.clipboard_read = *allowed;
     } else if (name == "clipboard_write") {
       result.terminal.clipboard_write = *allowed;
+    } else if (name == "outer_title") {
+      result.ui.outer.title = *allowed;
+    } else if (name == "outer_notifications") {
+      result.ui.outer.notifications = *allowed;
+    } else if (name == "outer_progress") {
+      result.ui.outer.progress = *allowed;
     } else {
-      result.ui.outer_title = *allowed;
+      result.ui.outer.cwd = *allowed;
     }
   }
   const auto status_line = api::json_boolean(document, "status_line");
@@ -924,7 +938,7 @@ auto compile(const Configuration& configuration) noexcept -> std::expected<Gener
                       configuration.ui.status_line, std::move(default_cwd),
                       std::move(default_program), std::move(history_file), configuration.extensions,
                       configuration.terminal.clipboard_read, configuration.terminal.clipboard_write,
-                      configuration.ui.outer_title);
+                      configuration.ui.outer);
   } catch (...) {
     return std::unexpected(Error::capacity);
   }

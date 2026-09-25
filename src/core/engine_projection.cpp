@@ -11,6 +11,7 @@
 #include "core/client_frame_output.hpp"
 #include "core/connection_output.hpp"
 #include "core/layout.hpp"
+#include "core/outer_attention.hpp"
 #include "core/presentation_gate.hpp"
 #include "core/session.hpp"
 #include "diagnostic/latency_trace.hpp"
@@ -458,72 +459,7 @@ struct StatusPromptProjection final {
   return true;
 }
 
-// Child-controlled titles are sanitized before entering the outer-terminal stream. C0, DEL, UTF-8
-// encoded C1 controls, and malformed UTF-8 bytes are dropped; the bounded result is truncated at a
-// code point boundary, so no escape, BEL, or string terminator can end the OSC early.
-class OuterTitle final {
-public:
-  void append(const std::string_view text) noexcept {
-    std::size_t index = 0;
-    while (!truncated_ && index < text.size()) {
-      const auto length = sequence_length(text.substr(index));
-      if (length == 0) {
-        ++index;
-        continue;
-      }
-      const auto sequence = text.substr(index, length);
-      index += length;
-      if (control(sequence)) {
-        continue;
-      }
-      if (length > bytes_.size() - size_) {
-        truncated_ = true;
-        return;
-      }
-      std::ranges::copy(sequence, std::span(bytes_).subspan(size_).begin());
-      size_ += length;
-    }
-  }
-
-  [[nodiscard]] auto view() const noexcept -> std::string_view { return {bytes_.data(), size_}; }
-
-private:
-  // Returns the length of one well-formed UTF-8 sequence at the start of text, or zero.
-  [[nodiscard]] static auto sequence_length(const std::string_view text) noexcept -> std::size_t {
-    const auto lead = static_cast<std::uint8_t>(text.front());
-    std::size_t length = 0;
-    if (lead < 0x80U) {
-      return 1;
-    }
-    if (lead >= 0xC2U && lead <= 0xDFU) {
-      length = 2;
-    } else if (lead >= 0xE0U && lead <= 0xEFU) {
-      length = 3;
-    } else if (lead >= 0xF0U && lead <= 0xF4U) {
-      length = 4;
-    }
-    if (length == 0 || length > text.size()) {
-      return 0;
-    }
-    const auto continuation = text.substr(1, length - 1U);
-    return std::ranges::all_of(continuation,
-                               [](const char byte) noexcept {
-                                 return (static_cast<std::uint8_t>(byte) & 0xC0U) == 0x80U;
-                               })
-               ? length
-               : 0;
-  }
-
-  [[nodiscard]] static auto control(const std::string_view sequence) noexcept -> bool {
-    const auto lead = static_cast<std::uint8_t>(sequence.front());
-    return lead < 0x20U || lead == 0x7FU ||
-           (lead == 0xC2U && static_cast<std::uint8_t>(sequence.at(1)) < 0xA0U);
-  }
-
-  std::array<char, limits::outer_title_bytes_max> bytes_{};
-  std::size_t size_{0};
-  bool truncated_{false};
-};
+using OuterTitle = OuterText<limits::outer_title_bytes_max>;
 
 // The active Tab's explicit name wins; otherwise the focused Pane's terminal title, then its
 // process name, identifies what the user is looking at.
@@ -547,17 +483,6 @@ private:
   return title.has_value() && !title->empty() ? *title : tab_title(session, *tab, runtimes);
 }
 
-[[nodiscard]] auto append_frame_text(const std::span<std::byte> output, std::size_t& used,
-                                     const std::string_view text) noexcept -> bool {
-  if (text.size() > output.size() - used) {
-    return false;
-  }
-  std::ranges::copy(std::as_bytes(std::span(text.data(), text.size())),
-                    output.subspan(used).begin());
-  used += text.size();
-  return true;
-}
-
 // Only title changes reach the outer terminal. Disabling presentation restores the title the client
 // pushed on attach and pushes it again so detach still restores it. Frame capacity reserves
 // limits::outer_title_frame_bytes_max; if composition nevertheless leaves no room, the title is
@@ -567,7 +492,7 @@ void append_outer_title(SessionRecord& session, const PaneRuntimeStore& runtimes
   auto& attachment = session.attachment_runtime;
   if (!reactor_outer_title()) {
     if (attachment.outer_title_presented &&
-        append_frame_text(output, used, "\x1B[23;2t\x1B[22;2t")) {
+        append_outer_bytes(output, used, "\x1B[23;2t\x1B[22;2t")) {
       attachment.outer_title_presented = false;
     }
     return;
@@ -588,12 +513,146 @@ void append_outer_title(SessionRecord& session, const PaneRuntimeStore& runtimes
   if (begin.size() + title.view().size() + end.size() > output.size() - used) {
     return;
   }
-  static_cast<void>(append_frame_text(output, used, begin) &&
-                    append_frame_text(output, used, title.view()) &&
-                    append_frame_text(output, used, end));
+  static_cast<void>(append_outer_bytes(output, used, begin) &&
+                    append_outer_bytes(output, used, title.view()) &&
+                    append_outer_bytes(output, used, end));
   std::ranges::copy(title.view(), attachment.outer_title.begin());
   attachment.outer_title_size = title.view().size();
   attachment.outer_title_presented = true;
+}
+
+void request_outer_attention_retry(OuterAttention& attention,
+                                   const AttentionRateLimit::TimePoint at) noexcept {
+  attention.retry_at = attention.retry_at.has_value() ? std::min(*attention.retry_at, at) : at;
+}
+
+// Forwards the latest notification of the Pane whose unforwarded notification changed earliest,
+// at most one per frame. Several notifications from one Pane before forwarding coalesce into its
+// latest. With forwarding disabled, notifications ring the bell instead.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+void present_outer_notification(SessionRecord& session, PaneRuntimeStore& runtimes,
+                                const std::span<std::byte> output, std::size_t& used,
+                                const AttentionRateLimit::TimePoint now) noexcept {
+  auto& attention = session.attachment_runtime.outer_attention;
+  if (!attention.notification_pending) {
+    return;
+  }
+  const Pane* chosen_pane = nullptr;
+  PaneRuntime* chosen = nullptr;
+  std::size_t waiting = 0;
+  for (const auto& slot : session.panes) {
+    if (slot.pane == nullptr) {
+      continue;
+    }
+    auto* const runtime = find_pane_runtime(runtimes, session, *slot.pane);
+    if (runtime == nullptr ||
+        runtime->outer_notifications == runtime->terminal.signals().notifications) {
+      continue;
+    }
+    if (!reactor_outer_notifications()) {
+      runtime->outer_notifications = runtime->terminal.signals().notifications;
+      session.attachment_runtime.bell_pending = true;
+      continue;
+    }
+    ++waiting;
+    if (chosen == nullptr || runtime->signal_stamp < chosen->signal_stamp) {
+      chosen = runtime;
+      chosen_pane = slot.pane.get();
+    }
+  }
+  if (chosen == nullptr) {
+    attention.notification_pending = false;
+    return;
+  }
+  if (output.size() - used < limits::outer_notification_frame_bytes_max) {
+    request_outer_attention_retry(attention, now);
+    return;
+  }
+  if (!attention.notifications.take(now)) {
+    request_outer_attention_retry(attention, attention.notifications.next_token());
+    return;
+  }
+  const auto& signals = chosen->terminal.signals();
+  OuterNotificationTitle title(';');
+  title.append(session.session_name());
+  if (const auto* const tab = find_tab(session, chosen_pane->tab); tab != nullptr) {
+    title.append(": ");
+    title.append(tab_title(session, *tab, runtimes));
+  }
+  if (!signals.notification_title().empty()) {
+    title.append(" - ");
+    title.append(signals.notification_title());
+  }
+  OuterNotificationBody body;
+  body.append(signals.notification_body());
+  const bool appended = append_outer_notification(output, used, title.view(), body.view());
+  LEMMA_ASSERT(appended);
+  chosen->outer_notifications = signals.notifications;
+  if (waiting > 1U) {
+    request_outer_attention_retry(attention, now);
+  } else {
+    attention.notification_pending = false;
+  }
+}
+
+struct FocusedPaneRuntime final {
+  const Pane* pane{nullptr};
+  const PaneRuntime* runtime{nullptr};
+};
+
+[[nodiscard]] auto focused_pane_runtime(const SessionRecord& session,
+                                        const PaneRuntimeStore& runtimes) noexcept
+    -> FocusedPaneRuntime {
+  const auto* const tab = active_tab(session);
+  const auto* const pane = tab == nullptr ? nullptr : find_pane(session, *tab, tab->focused_pane);
+  return pane == nullptr
+             ? FocusedPaneRuntime{}
+             : FocusedPaneRuntime{.pane = pane,
+                                  .runtime = find_pane_runtime(runtimes, session, *tab, *pane)};
+}
+
+// Bells from any Pane ring once per frame, paced by the attachment's bell budget. Progress and
+// working directory follow the focused Pane of the active Tab and are sent only on change.
+void append_outer_attention(SessionRecord& session, PaneRuntimeStore& runtimes,
+                            const std::span<std::byte> output, std::size_t& used,
+                            const AttentionRateLimit::TimePoint now) noexcept {
+  auto& attachment = session.attachment_runtime;
+  auto& attention = attachment.outer_attention;
+  present_outer_notification(session, runtimes, output, used, now);
+  if (attachment.bell_pending) {
+    if (!attention.bells.take(now)) {
+      request_outer_attention_retry(attention, attention.bells.next_token());
+    } else if (append_outer_bytes(output, used, "\x07")) {
+      attachment.bell_pending = false;
+    }
+  }
+  const auto focused = focused_pane_runtime(session, runtimes);
+  auto progress = vt::ProgressState::none;
+  std::optional<std::uint8_t> percent;
+  if (reactor_outer_progress() && focused.runtime != nullptr) {
+    progress = focused.runtime->terminal.signals().progress;
+    percent = focused.runtime->terminal.signals().progress_percent;
+  }
+  if ((progress != attention.progress || percent != attention.progress_percent) &&
+      append_outer_progress(output, used, progress, percent)) {
+    attention.progress = progress;
+    attention.progress_percent = percent;
+  }
+  if (!reactor_outer_cwd() || focused.runtime == nullptr) {
+    return;
+  }
+  const auto cwd_changes = focused.runtime->terminal.signals().cwd_changes;
+  if (attention.cwd_session == session.id && attention.cwd_pane == focused.pane->id &&
+      attention.cwd_changes == cwd_changes) {
+    return;
+  }
+  const auto uri = focused.runtime->terminal.pwd();
+  if (uri.has_value() && outer_cwd_forwardable(*uri) && !append_outer_cwd(output, used, *uri)) {
+    return;
+  }
+  attention.cwd_session = session.id;
+  attention.cwd_pane = focused.pane->id;
+  attention.cwd_changes = cwd_changes;
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -646,14 +705,8 @@ void append_outer_title(SessionRecord& session, const PaneRuntimeStore& runtimes
     return false;
   }
   auto frame_bytes = rendered->bytes;
-  if (session.attachment_runtime.bell_pending) {
-    auto output = session.attachment_runtime.frame.writable();
-    if (frame_bytes >= output.size()) {
-      return false;
-    }
-    output.subspan(frame_bytes, 1).front() = std::byte{0x07};
-    ++frame_bytes;
-  }
+  append_outer_attention(session, runtimes, session.attachment_runtime.frame.writable(),
+                         frame_bytes, now);
   append_outer_title(session, runtimes, session.attachment_runtime.frame.writable(), frame_bytes);
   const auto frame_messages = ClientFrameOutput::frame_message_count(frame_bytes);
   if (frame_messages == 0 || frame_messages > std::numeric_limits<std::uint32_t>::max() -
@@ -675,7 +728,6 @@ void append_outer_title(SessionRecord& session, const PaneRuntimeStore& runtimes
   session.attachment_runtime.server_sequence += static_cast<std::uint32_t>(frame_messages);
   session.attachment_runtime.full_redraw_generation = generation;
   session.attachment_runtime.outer_modes = rendered->outer_modes;
-  session.attachment_runtime.bell_pending = false;
   if (rendered->full) {
     release_unpresented_render_caches(session, runtimes);
   }

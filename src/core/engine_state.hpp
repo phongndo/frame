@@ -6,6 +6,7 @@
 #include "core/client_frame_output.hpp"
 #include "core/frame_scheduler.hpp"
 #include "core/input.hpp"
+#include "core/outer_attention.hpp"
 #include "core/presentation_gate.hpp"
 #include "core/session.hpp"
 #include "extension/commands.hpp"
@@ -106,6 +107,9 @@ struct PaneRuntime final {
   // PaneRuntimeStore::issue_signal_stamp() value of the latest terminal signal change; zero until
   // the application reports one. The signal values themselves remain owned by the terminal.
   std::uint64_t signal_stamp{0};
+  // Terminal notification count already forwarded to (or deliberately skipped for) the attached
+  // client's outer terminal.
+  std::uint64_t outer_notifications{0};
   std::size_t scrollback_bytes_reserved{0};
   std::chrono::steady_clock::time_point compression_deadline;
   bool compression_scheduled{false};
@@ -284,6 +288,7 @@ struct AttachmentRuntime final {
   std::array<char, limits::outer_title_bytes_max> outer_title{};
   std::size_t outer_title_size{0};
   bool outer_title_presented{false};
+  OuterAttention outer_attention;
   int client{-1};
   bool status_valid{false};
   // Outer-terminal focus from mode 1004 reports. A new connection assumes the user is typing into
@@ -380,6 +385,9 @@ static_assert(sizeof(SessionRecord) <= std::size_t{96} * 1'024U);
 [[nodiscard]] auto reactor_input_map() noexcept -> const input::CompiledInputMap&;
 [[nodiscard]] auto reactor_status_line() noexcept -> bool;
 [[nodiscard]] auto reactor_outer_title() noexcept -> bool;
+[[nodiscard]] auto reactor_outer_notifications() noexcept -> bool;
+[[nodiscard]] auto reactor_outer_progress() noexcept -> bool;
+[[nodiscard]] auto reactor_outer_cwd() noexcept -> bool;
 
 [[nodiscard]] inline auto pane_rows(const std::uint16_t viewport_rows) noexcept -> std::uint16_t {
   return viewport_rows;

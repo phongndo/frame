@@ -164,6 +164,7 @@ void AttachmentRuntime::reset_connection() noexcept {
   outer_modes.reset();
   outer_title_size = 0;
   outer_title_presented = false;
+  outer_attention = {};
   status_valid = false;
   outer_focused = true;
   bell_pending = false;

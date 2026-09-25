@@ -81,8 +81,11 @@ lemma new report --hold -- ./produce-report
 
 Arguments after `--` execute directly without shell interpretation. When `--cwd` or an exact
 command is omitted, the configured launch default applies; without configuration Lemma uses the
-account home and login shell. Pane processes normally keep running without `--hold`; `--hold`
-retains the Pane and its terminal after the process exits.
+account home and login shell. A split or new Tab without `--cwd`, from any frontend, instead starts
+in the directory its source Pane (the split Pane, or the active Tab's focused Pane) last reported
+with OSC 7, when that report names an existing directory on the daemon's host. Pane processes
+normally keep running without `--hold`; `--hold` retains the Pane and its terminal after the
+process exits.
 
 `lemma --help` groups commands under **Basic**, **Resources**, **Automation**, and **Other**.
 Use `lemma COMMAND --help` (or `lemma help COMMAND`) for behavior, options, and examples.
@@ -339,6 +342,38 @@ bytes at a character boundary. Lemma saves the user's title with XTWINOPS `CSI 2
 and restores it with `CSI 23;2 t` on detach or exit; outer terminals without a title stack keep
 Lemma's last title. Set [`ui.outer_title`](configuration.md#api) to `false` to leave the title
 unchanged; disabling it by reload restores the saved title.
+
+### Attention and directory
+
+While attached, applications in the Session reach the outer terminal much as they would if run
+there directly:
+
+- **Bells.** A BEL from any Pane rings the outer terminal. Bells handled in one frame ring once.
+  After a burst of four, at most one bell per 250 ms is sent; a paced bell rings when the budget
+  refills rather than being lost.
+- **Notifications.** An OSC 9 or OSC 777 desktop notification from any Pane is sent as OSC 777
+  `notify`, which Ghostty and foot, among others, support; terminals without it ignore it. OSC 9
+  cannot carry a title and its body is ambiguous with ConEmu's numbered OSC 9 commands. The title is
+  `SESSION: TAB`, the Tab's status-row label, followed by ` - TITLE` when the application supplied
+  one. Control characters and malformed UTF-8 are removed, `;` in the title becomes a space, and
+  the title and body are truncated at character boundaries to 256 bytes and 1 KiB. After a burst of
+  three, at most one is sent per five seconds; a Pane's notifications waiting for that budget
+  coalesce into its latest.
+- **Progress.** The active Tab's focused Pane's OSC 9;4 progress is forwarded and follows focus as
+  the window title does. Focusing a Pane without progress, or that Pane ending, removes the outer
+  indicator. A requested detach removes it before the client exits; a Session ending while attached
+  does not.
+- **Directory.** The focused Pane's OSC 7 report is forwarded unchanged when it changes or focus
+  moves, so an outer "new tab here" action starts there. A report longer than 2 KiB or containing
+  control characters is not forwarded rather than altered, and focusing a Pane that has not reported
+  one leaves the outer directory as it was. Detach does not restore it; the outer shell's next report
+  replaces it.
+
+Only attention arriving while a client is attached is forwarded; attaching or switching Sessions
+does not replay earlier bells or notifications, which remain available as
+[Pane signals](api.md#pane-signals). Set [`ui.outer_notifications`, `ui.outer_progress`, or
+`ui.outer_cwd`](configuration.md#api) to `false` to stop that forwarding; without notification
+forwarding, a notification rings the bell instead.
 
 ### Kitty graphics
 

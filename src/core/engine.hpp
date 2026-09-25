@@ -102,6 +102,9 @@ struct ReactorEnvironment final {
   std::string_view command_history_file;
   bool status_line{true};
   bool outer_title{true};
+  bool outer_notifications{true};
+  bool outer_progress{true};
+  bool outer_cwd{true};
   bool clipboard_read{false};
   bool clipboard_write{false};
   int extension_descriptor{-1};

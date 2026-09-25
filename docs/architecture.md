@@ -184,7 +184,9 @@ PTY -> Ghostty parse
 Application attention effects (BEL, OSC 9/777 notifications, OSC 9;4 progress, OSC 133 command
 state, and title/directory changes) update a fixed per-terminal latest-value record with O(1)
 stores; the drain only stamps the Pane and Session as changed. Observers read that record through
-[Pane signals](api.md#pane-signals).
+[Pane signals](api.md#pane-signals). Frame composition forwards it to the attached client's outer
+terminal, retaining only the connection's presented values and pacing
+([Usage](usage.md#attention-and-directory)).
 
 Terminal responses enter the ordered write queue before later accepted application input.
 Mode-dependent keyboard, paste, focus, and mouse encoding comes from the target Pane's Ghostty

@@ -290,6 +290,7 @@ add_library(
   src/core/engine_state.cpp
   src/core/frame_scheduler.cpp
   src/core/input.cpp
+  src/core/outer_attention.cpp
   src/core/pty_writer.cpp
   src/core/presentation_gate.cpp
   src/core/terminal_resize.cpp
@@ -413,6 +414,7 @@ if(LEMMA_BUILD_TESTS)
     tests/input_router_test.cpp
     tests/latency_trace_test.cpp
     tests/layout_test.cpp
+    tests/outer_attention_test.cpp
     tests/outer_resize_schedule_test.cpp
     tests/protocol_test.cpp
     tests/reactor_environment_test.cpp

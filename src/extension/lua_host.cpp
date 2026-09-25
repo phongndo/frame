@@ -212,20 +212,47 @@ struct LuaConfiguration final {
 
 [[nodiscard]] auto read_ui_options(lua_State* const state, const int table,
                                    config::UiConfiguration& target) -> int {
+  struct Option final {
+    std::string_view name;
+    bool config::UiConfiguration::* flag{nullptr};
+    bool config::OuterPresentation::* outer{nullptr};
+    const char* error{nullptr};
+  };
+  static constexpr std::array options{
+      Option{.name = "status_line",
+             .flag = &config::UiConfiguration::status_line,
+             .error = "ui.status_line must be a boolean"},
+      Option{.name = "outer_title",
+             .outer = &config::OuterPresentation::title,
+             .error = "ui.outer_title must be a boolean"},
+      Option{.name = "outer_notifications",
+             .outer = &config::OuterPresentation::notifications,
+             .error = "ui.outer_notifications must be a boolean"},
+      Option{.name = "outer_progress",
+             .outer = &config::OuterPresentation::progress,
+             .error = "ui.outer_progress must be a boolean"},
+      Option{.name = "outer_cwd",
+             .outer = &config::OuterPresentation::cwd,
+             .error = "ui.outer_cwd must be a boolean"},
+  };
   const auto absolute = lua_absindex(state, table);
   lua_pushnil(state);
   while (lua_next(state, absolute) != 0) {
     const auto key = lua_table_key(state);
-    if (key != std::optional<std::string_view>{"status_line"} &&
-        key != std::optional<std::string_view>{"outer_title"}) {
+    const auto* const option = std::ranges::find_if(
+        options, [&key](const Option& candidate) { return key == candidate.name; });
+    if (option == options.end()) {
       return raise_lua_error(state, "unknown lemma.setup.ui option");
     }
     if (lua_type(state, -1) != LUA_TBOOLEAN) {
-      return raise_lua_error(state, *key == "status_line" ? "ui.status_line must be a boolean"
-                                                          : "ui.outer_title must be a boolean");
+      return raise_lua_error(state, option->error);
     }
-    (*key == "status_line" ? target.status_line : target.outer_title) =
-        lua_toboolean(state, -1) != 0;
+    const bool value = lua_toboolean(state, -1) != 0;
+    if (option->flag != nullptr) {
+      target.*(option->flag) = value;
+    } else {
+      target.outer.*(option->outer) = value;
+    }
     lua_pop(state, 1);
   }
   return 0;
