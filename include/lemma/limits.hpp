@@ -66,6 +66,9 @@ inline constexpr auto status_message_display_time = std::chrono::milliseconds{1'
 inline constexpr std::size_t frame_chunk_bytes_max = std::size_t{4} * 1'024U * 1'024U;
 inline constexpr std::size_t frame_transaction_bytes_max = std::size_t{64} * 1'024U * 1'024U;
 inline constexpr std::size_t frame_output_queue_bytes_max = std::size_t{8} * 1'024U * 1'024U;
+// Sanitized outer window title, and its OSC 2 framing (`ESC ] 2 ;` ... `ESC \`) within a frame.
+inline constexpr std::size_t outer_title_bytes_max = 256;
+inline constexpr std::size_t outer_title_frame_bytes_max = outer_title_bytes_max + 6U;
 // Retained frame storage is shared across all attached and pending-attached sessions. This bound
 // admits several protocol-maximum viewports while preventing the session limit from multiplying
 // the per-frame transaction ceiling into multi-gigabyte daemon retention.

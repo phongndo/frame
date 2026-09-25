@@ -121,9 +121,8 @@ All `lemma.setup()` groups and fields are optional:
 - `ui.status_line` enables or disables the shipped statusline extension. Disabling it releases its
   docked row and makes command-line and copy-search bindings inert. Replace the statusline through
   [managed extensions](extensions.md#managed-programs) to retain those native editors with custom UI.
-- `ui.outer_title` is Boolean and defaults to `true`. It sets the outer terminal's window title to
-  `SESSION: LABEL`, where `LABEL` is the active Tab's explicit name, else the focused Pane's
-  terminal title, else its process name. See [Window title](usage.md#window-title).
+- `ui.outer_title` is Boolean and defaults to `true`. It enables the outer
+  [window title](usage.md#window-title).
 - `launch.default_cwd` is empty or an absolute path. It applies when creation does not specify
   `--cwd`.
 - `launch.default_program` is an exact argv array, not a shell command. It is bounded to 64

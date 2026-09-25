@@ -233,9 +233,6 @@ struct ClipboardPaste final {
   std::unique_ptr<clipboard::PngFile> file;
 };
 
-// Bounded OSC 2 payload presented as the outer terminal's window title.
-inline constexpr std::size_t outer_title_bytes_max = 256;
-
 struct AttachmentRuntime final {
   AttachmentRuntime() noexcept = default;
   AttachmentRuntime(const AttachmentRuntime&) = delete;
@@ -274,7 +271,7 @@ struct AttachmentRuntime final {
   std::uint64_t status_signature{0};
   std::optional<render::OuterModeProjection> outer_modes;
   // Last title presented through OSC 2; the client restores the user's title on exit.
-  std::array<char, outer_title_bytes_max> outer_title{};
+  std::array<char, limits::outer_title_bytes_max> outer_title{};
   std::size_t outer_title_size{0};
   bool outer_title_presented{false};
   int client{-1};

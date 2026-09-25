@@ -520,7 +520,7 @@ private:
            (lead == 0xC2U && static_cast<std::uint8_t>(sequence.at(1)) < 0xA0U);
   }
 
-  std::array<char, outer_title_bytes_max> bytes_{};
+  std::array<char, limits::outer_title_bytes_max> bytes_{};
   std::size_t size_{0};
   bool truncated_{false};
 };
@@ -559,8 +559,9 @@ private:
 }
 
 // Only title changes reach the outer terminal. Disabling presentation restores the title the client
-// pushed on attach and pushes it again so detach still restores it. Titles are presentation-only:
-// a frame without room retries on a later frame instead of failing the attachment.
+// pushed on attach and pushes it again so detach still restores it. Frame capacity reserves
+// limits::outer_title_frame_bytes_max; if composition nevertheless leaves no room, the title is
+// presentation-only and retries on a later frame instead of failing the attachment.
 void append_outer_title(SessionRecord& session, const PaneRuntimeStore& runtimes,
                         const std::span<std::byte> output, std::size_t& used) noexcept {
   auto& attachment = session.attachment_runtime;
@@ -582,6 +583,8 @@ void append_outer_title(SessionRecord& session, const PaneRuntimeStore& runtimes
   }
   constexpr std::string_view begin = "\x1B]2;";
   constexpr std::string_view end = "\x1B\\";
+  static_assert(begin.size() + limits::outer_title_bytes_max + end.size() ==
+                limits::outer_title_frame_bytes_max);
   if (begin.size() + title.view().size() + end.size() > output.size() - used) {
     return;
   }

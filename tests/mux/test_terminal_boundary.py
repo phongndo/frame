@@ -551,6 +551,97 @@ class OuterTitleMuxTest(unittest.TestCase):
         )
         self.addCleanup(self.server.close)
 
+    @staticmethod
+    def latest_title(client: Client) -> bytes | None:
+        client.drain(0.01)
+        titles = re.findall(rb"\x1b\]2;(.*?)\x1b\\", client.process.output_tail)
+        return titles[-1] if titles else None
+
+    def expect_title(self, client: Client, expected: str) -> None:
+        wait_until(
+            f"outer title {expected!r}",
+            lambda: True if self.latest_title(client) == expected.encode() else None,
+            diagnostics=lambda: (
+                f"latest={self.latest_title(client)!r}\n{self.server.diagnostics()}"
+            ),
+        )
+
+    def test_title_prefers_tab_name_then_pane_title_then_process_name(self) -> None:
+        # The ticking shell has no terminal title, so its label is the process name.
+        session = self.server.create_session(
+            "title_order",
+            command=("/bin/sh", "-c", "while :; do printf .; sleep 0.1; done"),
+        )
+        client = session.require_client()
+        state = session.state()
+        left_id = state.focused_pane
+        self.expect_title(client, "title_order: sh")
+
+        right_id = self.server.require_command(
+            "split",
+            "--session",
+            session.name,
+            "--pane",
+            left_id,
+            "--right",
+            "--",
+            sys.executable,
+            "-c",
+            TITLE_SETTER,
+        ).output.strip()
+        self.expect_title(client, "title_order: first\u2603 title")
+        self.server.require_command(
+            "focus", "--session", session.name, "--pane", left_id
+        )
+        self.expect_title(client, "title_order: sh")
+        self.server.require_command(
+            "focus", "--session", session.name, "--pane", right_id
+        )
+        self.expect_title(client, "title_order: first\u2603 title")
+
+        # An explicit Tab name wins over the focused Pane's title and follows Tab selection.
+        self.server.require_command(
+            "proc",
+            "tab",
+            "rename",
+            "--session",
+            session.name,
+            "--tab",
+            state.active_tab,
+            "named",
+        )
+        self.expect_title(client, "title_order: named")
+        client.prefix("c")
+        self.server.wait_for_state(
+            session.name, lambda current: current.tabs == 2, "second tab to open"
+        )
+        wait_until(
+            "title to follow the new tab",
+            lambda: (
+                True
+                if self.latest_title(client) not in (None, b"title_order: named")
+                else None
+            ),
+        )
+        client.prefix("p")
+        self.expect_title(client, "title_order: named")
+
+    def test_session_switch_presents_the_target_session_title(self) -> None:
+        source = self.server.create_session(
+            "title_source", command=(sys.executable, "-c", TITLE_SETTER)
+        )
+        self.server.create_session(
+            "title_target", attach=False, command=(sys.executable, "-c", TITLE_SETTER)
+        )
+        client = source.require_client()
+        self.expect_title(client, "title_source: first\u2603 title")
+        client.prefix(":")
+        client.send("switch title_target\r")
+        self.server.wait_for_state(
+            "title_target", lambda state: state.attached, "attachment to switch"
+        )
+        self.expect_title(client, "title_target: first\u2603 title")
+
     def test_focused_pane_title_is_sanitized_presented_on_change_and_restored(
         self,
     ) -> None:
