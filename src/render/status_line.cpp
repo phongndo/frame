@@ -339,7 +339,7 @@ struct InlineStatusPromptProjection final {
     return leading_columns < available ? available - leading_columns : std::size_t{0};
   };
   projection.message = prompt_message(status);
-  auto active_width = labels.subspan(projection.active, 1).front().size;
+  const auto active_width = labels.subspan(projection.active, 1).front().size;
   const auto minimum_left = status_leading_columns(projection.session.size) + active_width;
   projection.show_message =
       !projection.message.empty() && minimum_left + 2U + projection.message.size() <= columns;
@@ -352,16 +352,19 @@ struct InlineStatusPromptProjection final {
     projection.session = session_label(status.session_name, session_columns);
   }
 
+  // The active label alone still needs the overflow indicators beside it.
+  const auto active_span_width = [&] {
+    return status_width(labels, projection.active, projection.active);
+  };
   auto tab_columns = tab_columns_for(left_columns, projection.session.size);
-  if (status.prompt_target == StatusPromptTarget::active_tab && active_width > tab_columns) {
+  if (status.prompt_target == StatusPromptTarget::active_tab && active_span_width() > tab_columns) {
     auto capacity = status_title_columns_max;
-    while (capacity > 1U && projection.field.label.size > tab_columns) {
+    while (capacity > 1U && active_span_width() > tab_columns) {
       --capacity;
       projection.field = editable_tab_label(
           status, status.tabs.subspan(projection.active, 1).front().number, capacity);
+      labels.subspan(projection.active, 1).front() = projection.field.label;
     }
-    labels.subspan(projection.active, 1).front() = projection.field.label;
-    active_width = projection.field.label.size;
   }
 
   if (status.prompt_target == StatusPromptTarget::session &&
@@ -374,7 +377,7 @@ struct InlineStatusPromptProjection final {
     left_columns = columns;
   } else {
     tab_columns = tab_columns_for(left_columns, projection.session.size);
-    projection.show_tabs = active_width <= tab_columns &&
+    projection.show_tabs = active_span_width() <= tab_columns &&
                            (status.prompt_target != StatusPromptTarget::active_tab ||
                             status.prompt_value.empty() || projection.field.edit_size > 0);
   }
