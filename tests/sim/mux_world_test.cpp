@@ -29,6 +29,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace lemma::test::sim {
@@ -1845,6 +1846,104 @@ TEST(MuxSimulationTest, RejectedResizeSuspendsLayoutAfterClosingZoomedPane) {
                                   .resize_outcome = RuntimeEffectStatus::rejected}},
   };
   EXPECT_TRUE(run_mux_trace("rejected-zoomed-child-exit.trace", operations));
+}
+
+// Directional swap targets are resolved by the input bridge from the same Core rule that
+// directional focus executes, so both must agree for every source Pane, zoomed or not.
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(MuxSimulationTest, DirectionalFocusFollowsTheSharedTiledNeighborRule) {
+  using core::PaneDirection;
+  SimRuntime runtime;
+  Session session("directional", {}, {}, core::LaunchEnvironmentMode::inherit);
+  session.id = SessionId::from_parts(0, 1);
+  session.attachment.id = AttachmentId::from_parts(0, 1);
+  session.attachment.session = session.id;
+  session.attachment.columns = 120;
+  session.attachment.rows = 40;
+  SessionMachine machine(session, {.runtime = runtime.effects()});
+  const auto created = machine.create_tab();
+  ASSERT_EQ(created.result.status, CommandStatus::applied);
+  const auto tab_id = created.created_tab;
+  const auto left = created.created_pane;
+  const auto split_right = machine.split_pane(tab_id, left, SplitAxis::left_right);
+  ASSERT_EQ(split_right.result.status, CommandStatus::applied);
+  const auto top_right = split_right.created_pane;
+  const auto split_down = machine.split_pane(tab_id, top_right, SplitAxis::top_bottom);
+  ASSERT_EQ(split_down.result.status, CommandStatus::applied);
+  const auto bottom_right = split_down.created_pane;
+  const auto& tab_slot = std::span(session.tabs).subspan(tab_id.slot(), 1).front();
+  const auto* const tab_owner = tab_slot.tab.get();
+  ASSERT_NE(tab_owner, nullptr);
+  const auto& tab = *tab_owner;
+  const auto dispatch = [&](const CommandKind kind, const PaneId pane,
+                            const CommandPayload payload = {}) {
+    return machine.dispatch({.kind = kind,
+                             .origin = CommandOrigin::internal,
+                             .target = {.session = session.id, .tab = tab_id, .pane = pane},
+                             .payload = payload});
+  };
+
+  // left | top_right
+  //      | bottom_right
+  const auto neighbor = [&](const PaneId source, const PaneDirection direction) {
+    return core::pane_in_direction(session, tab, source, direction);
+  };
+  EXPECT_EQ(neighbor(left, PaneDirection::left), std::nullopt);
+  EXPECT_EQ(neighbor(left, PaneDirection::up), std::nullopt);
+  EXPECT_EQ(neighbor(left, PaneDirection::right), std::optional{top_right});
+  EXPECT_EQ(neighbor(top_right, PaneDirection::left), std::optional{left});
+  EXPECT_EQ(neighbor(top_right, PaneDirection::down), std::optional{bottom_right});
+  EXPECT_EQ(neighbor(bottom_right, PaneDirection::up), std::optional{top_right});
+  EXPECT_EQ(neighbor(bottom_right, PaneDirection::left), std::optional{left});
+  EXPECT_EQ(neighbor(bottom_right, PaneDirection::down), std::nullopt);
+
+  constexpr std::array directions{
+      std::pair{PaneDirection::left, CommandKind::focus_left},
+      std::pair{PaneDirection::right, CommandKind::focus_right},
+      std::pair{PaneDirection::up, CommandKind::focus_up},
+      std::pair{PaneDirection::down, CommandKind::focus_down},
+  };
+  const std::array panes{left, top_right, bottom_right};
+  std::array<std::array<std::optional<PaneId>, directions.size()>, panes.size()> tiled{};
+  for (std::size_t source = 0; source < panes.size(); ++source) {
+    for (std::size_t direction = 0; direction < directions.size(); ++direction) {
+      tiled.at(source).at(direction) = neighbor(panes.at(source), directions.at(direction).first);
+    }
+  }
+  for (const bool zoomed : {false, true}) {
+    for (std::size_t source_index = 0; source_index < panes.size(); ++source_index) {
+      for (std::size_t direction_index = 0; direction_index < directions.size();
+           ++direction_index) {
+        const auto source = panes.at(source_index);
+        const auto [direction, kind] = directions.at(direction_index);
+        SCOPED_TRACE(testing::Message() << "zoomed=" << zoomed << " source=" << source.slot()
+                                        << " direction=" << static_cast<int>(direction));
+        if (tab.focused_pane != source) {
+          ASSERT_EQ(dispatch(CommandKind::focus_pane, source).result.status,
+                    CommandStatus::applied);
+        }
+        if (tab.zoomed != zoomed) {
+          ASSERT_EQ(dispatch(CommandKind::set_zoom, source, PaneZoomCommand{.enabled = zoomed})
+                        .result.status,
+                    CommandStatus::applied);
+        }
+        const auto expected = neighbor(source, direction);
+        EXPECT_EQ(expected, tiled.at(source_index).at(direction_index));
+        const auto focused = dispatch(kind, source);
+        if (expected.has_value()) {
+          EXPECT_EQ(focused.result.status, CommandStatus::applied);
+          EXPECT_EQ(tab.focused_pane, *expected);
+          EXPECT_EQ(tab.previous_pane, source);
+        } else {
+          EXPECT_EQ(focused.result.status, CommandStatus::no_effect);
+          EXPECT_EQ(tab.focused_pane, source);
+        }
+        EXPECT_EQ(tab.zoomed, zoomed);
+        EXPECT_FALSE(core::check_session_invariants(session).has_value());
+      }
+    }
+  }
 }
 
 // GoogleTest assertions inflate the measured branch count.

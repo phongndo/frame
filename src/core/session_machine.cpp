@@ -396,77 +396,6 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
           .mutated = true};
 }
 
-enum class FocusDirection : std::uint8_t {
-  left,
-  right,
-  up,
-  down,
-};
-
-// Directional scoring is semantic and deterministic; Runtime geometry never participates.
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] auto pane_in_direction(const Session& session, const Tab& tab, const PaneId source,
-                                     const FocusDirection direction) noexcept
-    -> std::optional<PaneId> {
-  const auto viewport = tab_viewport(tab);
-  const auto projection = tab.layout.project(viewport);
-  const auto current = projection.has_value() ? projection->rectangle(source) : std::nullopt;
-  if (!projection.has_value() || !current.has_value()) {
-    return std::nullopt;
-  }
-  const auto current_right = static_cast<std::uint32_t>(current->column) + current->columns;
-  const auto current_bottom = static_cast<std::uint32_t>(current->row) + current->rows;
-  const auto current_x = (static_cast<std::uint32_t>(current->column) * 2U) + current->columns;
-  const auto current_y = (static_cast<std::uint32_t>(current->row) * 2U) + current->rows;
-  std::uint64_t best_score = std::numeric_limits<std::uint64_t>::max();
-  std::optional<PaneId> best;
-  for (const auto& pane_slot : session.panes) {
-    if (pane_slot.pane == nullptr || pane_slot.pane->tab != tab.id ||
-        pane_slot.pane->id == source) {
-      continue;
-    }
-    const auto rectangle = projection->rectangle(pane_slot.pane->id);
-    if (!rectangle.has_value()) {
-      continue;
-    }
-    const auto right = static_cast<std::uint32_t>(rectangle->column) + rectangle->columns;
-    const auto bottom = static_cast<std::uint32_t>(rectangle->row) + rectangle->rows;
-    const auto x = (static_cast<std::uint32_t>(rectangle->column) * 2U) + rectangle->columns;
-    const auto y = (static_cast<std::uint32_t>(rectangle->row) * 2U) + rectangle->rows;
-    bool eligible = false;
-    std::uint32_t primary = 0;
-    std::uint32_t secondary = 0;
-    switch (direction) {
-    case FocusDirection::left:
-      eligible = right <= current->column;
-      primary = eligible ? current->column - right : 0;
-      secondary = y > current_y ? y - current_y : current_y - y;
-      break;
-    case FocusDirection::right:
-      eligible = rectangle->column >= current_right;
-      primary = eligible ? rectangle->column - current_right : 0;
-      secondary = y > current_y ? y - current_y : current_y - y;
-      break;
-    case FocusDirection::up:
-      eligible = bottom <= current->row;
-      primary = eligible ? current->row - bottom : 0;
-      secondary = x > current_x ? x - current_x : current_x - x;
-      break;
-    case FocusDirection::down:
-      eligible = rectangle->row >= current_bottom;
-      primary = eligible ? rectangle->row - current_bottom : 0;
-      secondary = x > current_x ? x - current_x : current_x - x;
-      break;
-    }
-    const auto score = (static_cast<std::uint64_t>(primary) * 4'096U) + secondary;
-    if (eligible && score < best_score) {
-      best_score = score;
-      best = pane_slot.pane->id;
-    }
-  }
-  return best;
-}
-
 [[nodiscard]] auto focus_transition(Session& session, const SessionRuntimeEffects& runtime,
                                     Tab& tab, const PaneId target) noexcept -> SessionTransition {
   if (find_pane(session, tab, target) == nullptr) {
@@ -615,6 +544,69 @@ auto session_lifecycle_command(const CommandKind kind) noexcept -> bool {
     return false;
   }
   return false;
+}
+
+// Directional scoring is semantic and deterministic; Runtime geometry never participates.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+auto pane_in_direction(const Session& session, const Tab& tab, const PaneId source,
+                       const PaneDirection direction) noexcept -> std::optional<PaneId> {
+  const auto viewport = tab_viewport(tab);
+  const auto projection = tab.layout.project(viewport);
+  const auto current = projection.has_value() ? projection->rectangle(source) : std::nullopt;
+  if (!projection.has_value() || !current.has_value()) {
+    return std::nullopt;
+  }
+  const auto current_right = static_cast<std::uint32_t>(current->column) + current->columns;
+  const auto current_bottom = static_cast<std::uint32_t>(current->row) + current->rows;
+  const auto current_x = (static_cast<std::uint32_t>(current->column) * 2U) + current->columns;
+  const auto current_y = (static_cast<std::uint32_t>(current->row) * 2U) + current->rows;
+  std::uint64_t best_score = std::numeric_limits<std::uint64_t>::max();
+  std::optional<PaneId> best;
+  for (const auto& pane_slot : session.panes) {
+    if (pane_slot.pane == nullptr || pane_slot.pane->tab != tab.id ||
+        pane_slot.pane->id == source) {
+      continue;
+    }
+    const auto rectangle = projection->rectangle(pane_slot.pane->id);
+    if (!rectangle.has_value()) {
+      continue;
+    }
+    const auto right = static_cast<std::uint32_t>(rectangle->column) + rectangle->columns;
+    const auto bottom = static_cast<std::uint32_t>(rectangle->row) + rectangle->rows;
+    const auto x = (static_cast<std::uint32_t>(rectangle->column) * 2U) + rectangle->columns;
+    const auto y = (static_cast<std::uint32_t>(rectangle->row) * 2U) + rectangle->rows;
+    bool eligible = false;
+    std::uint32_t primary = 0;
+    std::uint32_t secondary = 0;
+    switch (direction) {
+    case PaneDirection::left:
+      eligible = right <= current->column;
+      primary = eligible ? current->column - right : 0;
+      secondary = y > current_y ? y - current_y : current_y - y;
+      break;
+    case PaneDirection::right:
+      eligible = rectangle->column >= current_right;
+      primary = eligible ? rectangle->column - current_right : 0;
+      secondary = y > current_y ? y - current_y : current_y - y;
+      break;
+    case PaneDirection::up:
+      eligible = bottom <= current->row;
+      primary = eligible ? current->row - bottom : 0;
+      secondary = x > current_x ? x - current_x : current_x - x;
+      break;
+    case PaneDirection::down:
+      eligible = rectangle->row >= current_bottom;
+      primary = eligible ? rectangle->row - current_bottom : 0;
+      secondary = x > current_x ? x - current_x : current_x - x;
+      break;
+    }
+    const auto score = (static_cast<std::uint64_t>(primary) * 4'096U) + secondary;
+    if (eligible && score < best_score) {
+      best_score = score;
+      best = pane_slot.pane->id;
+    }
+  }
+  return best;
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -1007,13 +999,13 @@ auto SessionMachine::dispatch(const Command& command) noexcept -> SessionTransit
   }
   if (command.kind == CommandKind::focus_left || command.kind == CommandKind::focus_right ||
       command.kind == CommandKind::focus_up || command.kind == CommandKind::focus_down) {
-    auto direction = FocusDirection::left;
+    auto direction = PaneDirection::left;
     if (command.kind == CommandKind::focus_right) {
-      direction = FocusDirection::right;
+      direction = PaneDirection::right;
     } else if (command.kind == CommandKind::focus_up) {
-      direction = FocusDirection::up;
+      direction = PaneDirection::up;
     } else if (command.kind == CommandKind::focus_down) {
-      direction = FocusDirection::down;
+      direction = PaneDirection::down;
     }
     const auto target = pane_in_direction(session_, *tab, pane->id, direction);
     return target.has_value()

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import unittest
 
-from tests.support.mux_harness import LemmaServer, process_exists
+from tests.support.mux_harness import LemmaServer, process_exists, wait_until
 
 
 class PaneLifecycleTest(unittest.TestCase):
@@ -33,9 +34,36 @@ class PaneLifecycleTest(unittest.TestCase):
         left = session.pane()
         right = left.split_right()
         right.focus()
-        focused_before = session.state().focused_pane
+        state_before = session.state()
+        focused_before = state_before.focused_pane
 
+        def leaf_order() -> list[str]:
+            inspected = self.server.require_command(
+                "proc",
+                "tab",
+                "inspect",
+                "--session",
+                session.name,
+                "--tab",
+                state_before.active_tab,
+            )
+            layout = json.dumps(
+                json.loads(inspected.output)["results"][0]["result"]["tab_state"][
+                    "layout"
+                ]
+            )
+            return sorted(
+                (left.id, right.id), key=lambda pane: layout.index(f'"{pane}"')
+            )
+
+        self.assertEqual(leaf_order(), [left.id, right.id])
+        # The keyboard binding resolves its peer through the Core directional-neighbor rule.
         session.require_client().prefix("H")
+        wait_until(
+            "directional swap to move the focused Pane left",
+            lambda: True if leaf_order() == [right.id, left.id] else None,
+            diagnostics=self.server.logs,
+        )
         focused_after = self.server.wait_for_state(
             session.name,
             lambda state: state.focused_pane == focused_before,
