@@ -535,6 +535,158 @@ class FocusReportMuxTest(unittest.TestCase):
         self.expect_reports(second, b"\x1b[I\x1b[O")
 
 
+TITLE_SETTER = """
+import os, sys
+os.write(1, b'\\x1b]2;first\\xc2\\x9d\\xe2\\x98\\x83 title\\x1b\\\\__TITLE_READY__\\r\\n')
+for line in sys.stdin:
+    name = line.strip().encode()
+    os.write(1, b'\\x1b]2;' + name + b'\\x1b\\\\__SET_' + name + b'__\\r\\n')
+"""
+
+
+class OuterTitleMuxTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.server = LemmaServer.from_environment(
+            config_text='require("lemma").setup({})\\n'
+        )
+        self.addCleanup(self.server.close)
+
+    @staticmethod
+    def latest_title(client: Client) -> bytes | None:
+        client.drain(0.01)
+        titles = re.findall(rb"\x1b\]2;(.*?)\x1b\\", client.process.output_tail)
+        return titles[-1] if titles else None
+
+    def expect_title(self, client: Client, expected: str) -> None:
+        wait_until(
+            f"outer title {expected!r}",
+            lambda: True if self.latest_title(client) == expected.encode() else None,
+            diagnostics=lambda: (
+                f"latest={self.latest_title(client)!r}\n{self.server.diagnostics()}"
+            ),
+        )
+
+    def test_title_prefers_tab_name_then_pane_title_then_process_name(self) -> None:
+        # The ticking shell has no terminal title, so its label is the process name.
+        session = self.server.create_session(
+            "title_order",
+            command=("/bin/sh", "-c", "while :; do printf .; sleep 0.1; done"),
+        )
+        client = session.require_client()
+        state = session.state()
+        left_id = state.focused_pane
+        self.expect_title(client, "title_order: sh")
+
+        right_id = self.server.require_command(
+            "split",
+            "--session",
+            session.name,
+            "--pane",
+            left_id,
+            "--right",
+            "--",
+            sys.executable,
+            "-c",
+            TITLE_SETTER,
+        ).output.strip()
+        self.expect_title(client, "title_order: first\u2603 title")
+        self.server.require_command(
+            "focus", "--session", session.name, "--pane", left_id
+        )
+        self.expect_title(client, "title_order: sh")
+        self.server.require_command(
+            "focus", "--session", session.name, "--pane", right_id
+        )
+        self.expect_title(client, "title_order: first\u2603 title")
+
+        # An explicit Tab name wins over the focused Pane's title and follows Tab selection.
+        self.server.require_command(
+            "proc",
+            "tab",
+            "rename",
+            "--session",
+            session.name,
+            "--tab",
+            state.active_tab,
+            "named",
+        )
+        self.expect_title(client, "title_order: named")
+        client.prefix("c")
+        self.server.wait_for_state(
+            session.name, lambda current: current.tabs == 2, "second tab to open"
+        )
+        wait_until(
+            "title to follow the new tab",
+            lambda: (
+                True
+                if self.latest_title(client) not in (None, b"title_order: named")
+                else None
+            ),
+        )
+        client.prefix("p")
+        self.expect_title(client, "title_order: named")
+
+    def test_session_switch_presents_the_target_session_title(self) -> None:
+        source = self.server.create_session(
+            "title_source", command=(sys.executable, "-c", TITLE_SETTER)
+        )
+        self.server.create_session(
+            "title_target", attach=False, command=(sys.executable, "-c", TITLE_SETTER)
+        )
+        client = source.require_client()
+        self.expect_title(client, "title_source: first\u2603 title")
+        client.prefix(":")
+        client.send("switch title_target\r")
+        self.server.wait_for_state(
+            "title_target", lambda state: state.attached, "attachment to switch"
+        )
+        self.expect_title(client, "title_target: first\u2603 title")
+
+    def test_focused_pane_title_is_sanitized_presented_on_change_and_restored(
+        self,
+    ) -> None:
+        session = self.server.create_session(
+            "outer_title", command=(sys.executable, "-c", TITLE_SETTER)
+        )
+        client = session.require_client()
+        client.expect_raw(b"\x1b[22;2t")
+        client.expect_output("__TITLE_READY__")
+        # The C1 control is dropped; the session name identifies the attachment.
+        first = "outer_title: first☃ title".encode()
+        client.expect_raw(b"\x1b]2;" + first + b"\x1b\\")
+        self.assertNotIn(b"\xc2\x9d", client.process.output_tail)
+
+        # A full redraw without a title change does not repeat the title.
+        presented = client.process.output_tail.count(b"\x1b]2;")
+        client.resize(100, 30)
+        self.server.wait_for_state(
+            session.name, lambda state: state.columns == 100, "resize to apply"
+        )
+        client.drain(0.2)
+        self.assertEqual(client.process.output_tail.count(b"\x1b]2;"), presented)
+
+        client.send("second\r")
+        client.expect_output("__SET_second__")
+        client.expect_raw(b"\x1b]2;outer_title: second\x1b\\")
+
+        # Titles are bounded to 256 bytes, truncated at a code point boundary.
+        prefix = b"outer_title: "
+        client.send("é" * 200 + "\r")
+        visible = (256 - len(prefix)) // 2
+        client.expect_raw(b"\x1b]2;" + prefix + "é".encode() * visible + b"\x1b\\")
+
+        # Disabling the option restores the saved title and saves it again for detach.
+        config = Path(self.server.environment["XDG_CONFIG_HOME"]) / "lemma/init.lua"
+        config.write_text('require("lemma").setup({ ui = { outer_title = false } })\n')
+        self.server.require_command("config", "reload")
+        client.expect_raw(b"\x1b[23;2t\x1b[22;2t")
+        client.send("third\r")
+        client.expect_output("__SET_third__")
+        client.drain(0.2)
+        self.assertNotIn(b"outer_title: third", client.process.output_tail)
+        session.detach()
+
+
 class GraphicsMuxTest(unittest.TestCase):
     def setUp(self) -> None:
         self.server = LemmaServer.from_environment()

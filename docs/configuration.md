@@ -50,8 +50,8 @@ rejection. An independent `lemma-config-host` evaluates Lua while panes continue
 and output. The native loader admits one bounded read quantum per reactor turn and validates the
 complete bounded registration before replacing the generation.
 
-Reload replaces keybindings, context policy, custom command declarations and their host, and
-launch/scrollback defaults for future panes. It does not restart pane processes, change existing
+Reload replaces keybindings, context policy, custom command declarations and their host,
+outer-title presentation, and launch/scrollback defaults for future panes. It does not restart pane processes, change existing
 scrollback limits, or alter stable IDs. Active native editors, copy/search, resize/prefix contexts,
 and deferred prefix triggers are cancelled on publication; press-time key-release ownership is
 preserved. Old hosted invocations and their remaining Procs are cancelled, and their process group
@@ -121,6 +121,8 @@ All `lemma.setup()` groups and fields are optional:
 - `ui.status_line` enables or disables the shipped statusline extension. Disabling it releases its
   docked row and makes command-line and copy-search bindings inert. Replace the statusline through
   [managed extensions](extensions.md#managed-programs) to retain those native editors with custom UI.
+- `ui.outer_title` is Boolean and defaults to `true`. It enables the outer
+  [window title](usage.md#window-title).
 - `launch.default_cwd` is empty or an absolute path. It applies when creation does not specify
   `--cwd`.
 - `launch.default_program` is an exact argv array, not a shell command. It is bounded to 64

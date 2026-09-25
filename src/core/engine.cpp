@@ -249,6 +249,11 @@ private:
   return active_reactor_environment->status_line;
 }
 
+[[nodiscard]] auto reactor_outer_title() noexcept -> bool {
+  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  return active_reactor_environment->outer_title;
+}
+
 [[nodiscard]] auto reactor_poll(const std::span<pollfd> descriptors,
                                 const int timeout_milliseconds) noexcept -> int {
   LEMMA_ASSERT(active_reactor_environment != nullptr);
@@ -10414,6 +10419,10 @@ void finish_command_line_error(SessionRecord& session, const std::string_view me
   const auto server_sequence = source_runtime.server_sequence;
   const auto full_redraw_generation = source_runtime.full_redraw_generation;
   const auto previous_outer_modes = source_runtime.outer_modes;
+  // The outer title belongs to the connection: a pending disable must still restore it.
+  const auto outer_title = source_runtime.outer_title;
+  const auto outer_title_size = source_runtime.outer_title_size;
+  const bool outer_title_presented = source_runtime.outer_title_presented;
   // A retained Surface record must revalidate its old owner after the connection moves.
   const bool client_work_pending =
       source_runtime.client_work_pending || source_runtime.surface_paste.has_value();
@@ -10437,6 +10446,9 @@ void finish_command_line_error(SessionRecord& session, const std::string_view me
   target_runtime.server_sequence = server_sequence;
   target_runtime.full_redraw_generation = full_redraw_generation;
   target_runtime.outer_modes = previous_outer_modes;
+  target_runtime.outer_title = outer_title;
+  target_runtime.outer_title_size = outer_title_size;
+  target_runtime.outer_title_presented = outer_title_presented;
   target_runtime.client_work_pending = client_work_pending;
   target_runtime.surface_paste = surface_paste;
   target_runtime.kitty_clipboard_supported = kitty_clipboard_supported;
@@ -11171,6 +11183,7 @@ void service_configuration_reload(ReactorEnvironment& environment, ReloadState& 
     environment.scrollback_lines = generation.scrollback_lines();
     environment.clipboard_read = generation.clipboard_read();
     environment.clipboard_write = generation.clipboard_write();
+    environment.outer_title = generation.outer_title();
     environment.default_program = generation.default_program();
     environment.default_cwd = generation.default_cwd();
     environment.command_history_file = generation.history_file();

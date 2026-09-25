@@ -161,6 +161,8 @@ void AttachmentRuntime::reset_connection() noexcept {
   pending_attach_generation = 0;
   status_signature = 0;
   outer_modes.reset();
+  outer_title_size = 0;
+  outer_title_presented = false;
   status_valid = false;
   outer_focused = true;
   bell_pending = false;

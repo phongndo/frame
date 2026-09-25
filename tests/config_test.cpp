@@ -70,6 +70,7 @@ TEST(ConfigurationTest, RoundTripsAndCompilesOneCompleteGeneration) {
   ASSERT_TRUE(source.input.set_prefix(prefix_chord));
   source.terminal.scrollback_lines = 12'345;
   source.ui.status_line = false;
+  source.ui.outer_title = false;
   source.launch.default_cwd = "/tmp";
   source.launch.default_program = {"/bin/sh", "-l"};
   source.history.file = "/tmp/lemma-history";
@@ -91,6 +92,7 @@ TEST(ConfigurationTest, RoundTripsAndCompilesOneCompleteGeneration) {
   ASSERT_TRUE(compiled.has_value());
   EXPECT_EQ(compiled->scrollback_lines(), 12'345U);
   EXPECT_FALSE(compiled->status_line());
+  EXPECT_FALSE(compiled->outer_title());
   EXPECT_EQ(compiled->default_cwd(), "/tmp");
   EXPECT_FALSE(compiled->default_program().empty());
   EXPECT_EQ(compiled->history_file(), "/tmp/lemma-history");
@@ -134,7 +136,7 @@ end
 lemma.setup({
   input = { prefix = "C-a" },
   terminal = { scrollback_lines = 12345 },
-  ui = { status_line = false },
+  ui = { status_line = false, outer_title = false },
   launch = { default_cwd = "/tmp", default_program = { "/bin/sh", "-l" } },
   history = { file = "/tmp/lemma-history" },
 })
@@ -155,6 +157,7 @@ lemma.keymap.del("prefix", "%")
   EXPECT_TRUE(loaded.host.active());
   EXPECT_EQ(loaded.generation->scrollback_lines(), 12'345U);
   EXPECT_FALSE(loaded.generation->status_line());
+  EXPECT_FALSE(loaded.generation->outer_title());
   EXPECT_EQ(loaded.generation->default_cwd(), "/tmp");
   EXPECT_EQ(loaded.generation->history_file(), "/tmp/lemma-history");
   input::InputRouter router(loaded.generation->input_map());
@@ -263,6 +266,19 @@ lemma.setup({ unknown = {} })
   EXPECT_EQ(loaded.generation, nullptr);
   EXPECT_FALSE(loaded.host.active());
   EXPECT_NE(loaded.diagnostic.find("unknown lemma.setup option"), std::string::npos);
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(ConfigurationHostTest, RejectsInvalidUiOptions) {
+  for (const auto* const ui :
+       {"{ outer_title = 'yes' }", "{ status_line = 1 }", "{ title = true }"}) {
+    TemporaryConfig file(std::string("require('lemma').setup({ ui = ") + ui + " })\n");
+    ASSERT_TRUE(file.valid());
+    const auto loaded = extension::load_configuration(file.path());
+    EXPECT_EQ(loaded.status, extension::ConfigurationStatus::invalid) << ui;
+    EXPECT_EQ(loaded.generation, nullptr) << ui;
+  }
 }
 
 } // namespace

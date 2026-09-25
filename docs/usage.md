@@ -328,6 +328,17 @@ Mouse reports outside the current grid are discarded, never typed into the shell
 partial mouse, size, and clipboard reports have a fixed 30-second transport deadline, independent
 of Escape-key timing; progress does not renew it. Bracketed paste remains opaque.
 
+### Window title
+
+While attached, Lemma sets the outer terminal's window title with OSC 2 to `SESSION: LABEL`.
+`LABEL` is the active Tab's explicit name, else the focused Pane's terminal title (OSC 0/2), else
+its process name. The title follows Pane, Tab, and Session switches and is sent only when it
+changes. Control characters and malformed UTF-8 are removed, and the title is truncated to 256
+bytes at a character boundary. Lemma saves the user's title with XTWINOPS `CSI 22;2 t` on attach
+and restores it with `CSI 23;2 t` on detach or exit; outer terminals without a title stack keep
+Lemma's last title. Set [`ui.outer_title`](configuration.md#api) to `false` to leave the title
+unchanged; disabling it by reload restores the saved title.
+
 ### Kitty graphics
 
 Lemma retains Kitty images and placements in the daemon's native terminal state; it does not pass
