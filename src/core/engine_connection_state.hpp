@@ -98,6 +98,9 @@ struct ExtensionObservation final {
   std::uint64_t presentation_hash{0};
   std::uint64_t signal_stamp{0};
   std::size_t pane_cursor{0};
+  // After a Pane change Event, a pending signal record goes next, so a continuously changing
+  // selected Pane cannot withhold other Panes' signals.
+  bool signal_turn{false};
 };
 using ExtensionObservations = std::array<ExtensionObservation, limits::extension_sessions_hard_max>;
 

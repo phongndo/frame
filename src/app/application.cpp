@@ -624,8 +624,9 @@ struct SurfaceArguments final {
            "to require a specific outcome. --contains TEXT matches terminal content;\n"
            "--until-prompt requires a shell-integration prompt marker. Terminal conditions can\n"
            "match existing state; use --after-generation N to require newer terminal state.\n"
-           "--until-command waits for the next shell-integration command completion (OSC 133;D)\n"
-           "and reports its exit code; --after-commands N instead waits for completion N+1.\n"
+           "--until-command waits for the next shell-integration command completion (OSC 133;C\n"
+           "then D) and reports its exit code; --after-commands N instead waits for completion\n"
+           "N+1.\n"
            "The default timeout is 30s. --session selects the containing Session, not a wait\n"
            "for that Session to end. Use --hold at creation to retain output after process "
            "exit.\n\n"
@@ -675,6 +676,10 @@ struct SurfaceArguments final {
     output = "  By default, print captured text to stdout.\n";
   } else if (name == "split") {
     output = "  By default, print the new Pane ID to stdout.\n";
+  } else if (name == "wait") {
+    output =
+        "  By default, succeed quietly; report failures on stderr. --until-command prints the\n"
+        "  completed command's exit code (or unknown) and exits 1 unless it is 0.\n";
   }
   return write_fragment(stdout, output) ? 0 : 1;
 }
@@ -1216,12 +1221,33 @@ void print_proc_failure(const api::JsonValue& failure) noexcept {
   static_cast<void>(write_fragment(stderr, "\n"));
 }
 
+// Like --exit-code 0, a readable command wait succeeds only when the command reported status 0.
+[[nodiscard]] auto print_command_completion(const api::JsonValue& completion) noexcept -> int {
+  const auto* const code = api::json_member(completion, "exit_code");
+  if (code == nullptr || code->kind != api::JsonKind::number) {
+    static_cast<void>(platform::write_text(STDOUT_FILENO, "unknown\n"));
+    return 1;
+  }
+  std::array<char, 24> text{};
+  const auto converted = std::to_chars(text.begin(), text.end(), code->number);
+  const auto size = static_cast<std::size_t>(std::distance(text.begin(), converted.ptr));
+  const bool written = converted.ec == std::errc{} &&
+                       platform::write_text(STDOUT_FILENO, std::string_view(text.data(), size)) &&
+                       platform::write_text(STDOUT_FILENO, "\n");
+  return written && code->number == 0 ? 0 : 1;
+}
+
 [[nodiscard]] auto print_basic_result(const api::CommandKind kind,
                                       const api::JsonValue& result) noexcept -> int {
   if (kind == api::CommandKind::pane_capture) {
     const auto* capture = api::json_member(result, "capture");
     const auto text = capture == nullptr ? std::nullopt : api::json_string(*capture, "text");
     return text.has_value() && platform::write_text(STDOUT_FILENO, *text) ? 0 : 1;
+  }
+  if (const auto* const completion =
+          kind == api::CommandKind::pane_wait ? api::json_member(result, "completion") : nullptr;
+      completion != nullptr) {
+    return print_command_completion(*completion);
   }
   if (kind == api::CommandKind::pane_split) {
     const auto pane = api::json_string(result, "pane");

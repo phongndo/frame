@@ -952,6 +952,110 @@ class AgentInterfaceMuxTest(unittest.TestCase):
         )
         self.assertEqual(signals["notification"]["title"], "Job")
 
+    def test_command_wait_after_input_in_one_proc_observes_fast_commands(self) -> None:
+        # A minimal OSC 133 shell: prompt (A/B), then C, the command, and D;status per line.
+        shell = (
+            r"while printf '\033]133;A\007$ \033]133;B\007'; read line; do "
+            r"""printf '\033]133;C\007'; sh -c "$line"; """
+            r"printf '\033]133;D;%s\007' $?; done"
+        )
+        status, started = self.json_command(
+            "proc", "session", "start", "command-wait", "--", "/bin/sh", "-c", shell
+        )
+        self.assertEqual(status, 0, started)
+        target = {
+            "session": {"id": started["session"]["id"]},
+            "pane": {"id": started["pane"]},
+        }
+        # Pending Procs share the one-step-per-turn Proc service, delaying a wait step's start.
+        waiters = [
+            subprocess.Popen(
+                [
+                    str(self.server.cli_path),
+                    str(self.server.socket_path),
+                    "proc",
+                    "pane",
+                    "wait",
+                    started["pane"],
+                    "--session",
+                    "command-wait",
+                    "--contains",
+                    "never-matches",
+                    "--timeout",
+                    "30s",
+                ],
+                env=self.server.environment,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            for _ in range(12)
+        ]
+        for waiter in waiters:
+            self.addCleanup(waiter.wait, 5.0)
+            self.addCleanup(waiter.kill)
+        for index, (line, code) in enumerate([("true", 0), ("exit 7", 7)] * 5, start=1):
+            completed = subprocess.run(
+                [
+                    str(self.server.cli_path),
+                    str(self.server.socket_path),
+                    "proc",
+                    "--stdin",
+                ],
+                env=self.server.environment,
+                input=json.dumps(
+                    {
+                        "schema": "lemma.proc/v1",
+                        "commands": [
+                            {
+                                "command": "pane.input",
+                                **target,
+                                "events": [
+                                    {"kind": "text", "text": line},
+                                    {"kind": "key", "key": "enter"},
+                                ],
+                            },
+                            {
+                                "command": "pane.wait",
+                                **target,
+                                "until_command": True,
+                                "timeout_ms": 5000,
+                            },
+                        ],
+                    }
+                ),
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+                check=False,
+            )
+            self.assertEqual(
+                completed.returncode, 0, completed.stdout + completed.stderr
+            )
+            waited = json.loads(completed.stdout)["results"][1]["result"]
+            self.assertEqual(
+                waited["completion"], {"commands": index, "exit_code": code}
+            )
+
+        # Readable CLI: print the latest completion's exit code; success requires status 0.
+        selectors = ("--session", "command-wait", "--pane", started["pane"])
+        failed = self.public_command(
+            "wait", *selectors, "--until-command", "--after-commands", "9"
+        )
+        self.assertEqual((failed.returncode, failed.stdout), (1, "7\n"), failed.stderr)
+        self.server.require_command(
+            "send", *selectors, "--paste", "true", "--key", "enter"
+        )
+        passed = self.public_command(
+            "wait",
+            *selectors,
+            "--until-command",
+            "--after-commands",
+            "10",
+            "--timeout",
+            "3s",
+        )
+        self.assertEqual((passed.returncode, passed.stdout), (0, "0\n"), passed.stderr)
+
     def test_legacy_action_and_op_interfaces_are_rejected(self) -> None:
         cli = self.server.command("action", "daemon", "inspect")
         self.assertEqual(cli.status, 2, cli.output)

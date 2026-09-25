@@ -2209,12 +2209,12 @@ void service_extension_observers(extension::Runtime& extensions, Sessions& sessi
     }
     const auto changed =
         next_changed_pane(*subscription, observed.panes, sessions, runtimes, observed.pane_cursor);
-    if (!changed.has_value()) {
-      const auto signal =
-          next_signal_pane(*subscription, sessions, runtimes, observed.signal_stamp);
-      if (signal.pane == nullptr) {
-        continue;
-      }
+    const auto signal =
+        !changed.has_value() || observed.signal_turn
+            ? next_signal_pane(*subscription, sessions, runtimes, observed.signal_stamp)
+            : ObservedPane{};
+    observed.signal_turn = false;
+    if (signal.pane != nullptr) {
       try {
         std::string event;
         if (!append_signal_event(event, extensions.event_sequence(peer.owner), signal)) {
@@ -2231,7 +2231,11 @@ void service_extension_observers(extension::Runtime& extensions, Sessions& sessi
       cursor = (cursor + visited + 1U) % active.size();
       return;
     }
+    if (!changed.has_value()) {
+      continue;
+    }
     const auto pane_index = *changed;
+    observed.signal_turn = subscription->signals;
     auto& pane_state = std::span(observed.panes).subspan(pane_index, 1).front();
     const auto target = observed_pane(*subscription, sessions, runtimes, pane_index);
     auto* const pane = target.pane;

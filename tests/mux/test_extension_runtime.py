@@ -13,6 +13,8 @@ from threading import Event
 from typing import Any
 
 from benchmarks.mux_benchmark import attach_frame, connect_blocked_client
+from extensions.lemma_client import EVENT as CLIENT_EVENT
+from extensions.lemma_client import PROC as PROC_REQUEST
 from extensions.lemma_client import Client
 from tests.support.mux_harness import LemmaServer, Session, wait_until
 
@@ -238,6 +240,80 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                 except TimeoutError:
                     break
             self.assertNotIn("pane.signal", [event["event"] for event in events])
+
+    def test_signals_are_not_starved_by_a_streaming_selected_pane(self) -> None:
+        # Both Panes wait for one Proc. The streaming Pane then changes on every drain, and the
+        # other signals on its own because control Commands are slow behind a sustained flood.
+        session = self.server.create_session(
+            "signal-stream",
+            attach=False,
+            hold=True,
+            command=("/bin/sh", "-c", "read go; exec yes streaming"),
+        )
+        session_id = session.state().id
+        with Client(
+            str(self.server.socket_path), name="signal-control", session=session_id
+        ) as control:
+            signaling = control.command(
+                "pane.split",
+                session={"id": session_id},
+                pane={"id": "0:1"},
+                direction="right",
+                focus="preserve",
+                hold=True,
+                argv=[
+                    "/bin/sh",
+                    "-c",
+                    r"read go; sleep 1; printf '\007\033]9;attention\007'; sleep 30",
+                ],
+            )["pane"]
+        with Client(
+            str(self.server.socket_path),
+            name="signal-stream-observer",
+            session=session_id,
+            panes=("0:1", signaling),
+            signals=True,
+        ) as observer:
+            self.assertEqual(observer.event()["event"], "snapshot")
+            observer.send(
+                PROC_REQUEST,
+                {
+                    "schema": "lemma.proc/v1",
+                    "commands": [
+                        {
+                            "command": "pane.input",
+                            "session": {"id": session_id},
+                            "pane": {"id": pane},
+                            "events": [{"kind": "key", "key": "enter"}],
+                        }
+                        for pane in (signaling, "0:1")
+                    ],
+                },
+            )
+            deadline = time.monotonic() + 8.0
+            streamed = 0
+            signal: dict[str, Any] | None = None
+            while signal is None and time.monotonic() < deadline:
+                try:
+                    record = observer.receive(deadline)
+                except TimeoutError:
+                    break
+                event = record.document
+                if record.kind != CLIENT_EVENT:
+                    continue
+                streamed += event["event"] == "pane.terminal" and event["pane"] == "0:1"
+                if (
+                    event["event"] == "pane.signal"
+                    and event["pane"] == signaling
+                    and event["signals"]["notifications"] == 1
+                ):
+                    signal = event["signals"]
+            self.assertIsNotNone(
+                signal, f"signal starved behind {streamed} pane.terminal Events"
+            )
+            assert signal is not None
+            self.assertEqual(signal["bells"], 1)
+            self.assertGreater(streamed, 0)
 
     def test_python_client_negotiates_explicit_session_scoped_surfaces(self) -> None:
         session = self.server.create_session("python-surface", command=("cat",))

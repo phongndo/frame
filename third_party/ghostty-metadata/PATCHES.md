@@ -80,8 +80,9 @@ store source is modified.
   to terminal state, including when that application fails. Terminal state, parser behavior,
   child-visible capabilities, allocation, and existing callbacks are unchanged; no option enum value
   is added.
-- Regression coverage: `TerminalTest.ReportsSemanticPromptCommandStateThroughLocalHook` and the
-  extension-runtime `pane.signal` mux test.
+- Regression coverage: `TerminalTest.ReportsSemanticPromptCommandStateThroughLocalHook`,
+  `TerminalTest.CountsOneCompletionPerShellIntegrationCommand`, and the extension-runtime
+  `pane.signal` mux test.
 - Owner: Lemma terminal maintainers.
 - Removal condition: upstream exposes semantic prompt command transitions with exit status through
   the C API, and the regressions pass using that interface without this patch.

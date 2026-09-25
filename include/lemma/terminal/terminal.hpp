@@ -168,8 +168,8 @@ struct EffectBatch final {
   std::uint64_t pwd_changes{0};
   std::uint64_t desktop_notifications{0};
   std::uint64_t progress_reports{0};
-  // OSC 133 prompt/command transitions that changed TerminalSignals command state.
-  std::uint64_t command_transitions{0};
+  // Callbacks that changed a TerminalSignals value; identical repeated reports do not count.
+  std::uint64_t signal_changes{0};
   std::uint64_t clipboard_writes_denied{0};
   std::uint64_t unknown_sequences_dropped{0};
   bool unknown_sequence_truncated{false};
@@ -189,7 +189,8 @@ struct TerminalSignals final {
 
   std::uint64_t bells{0};
   std::uint64_t notifications{0};
-  // OSC 133;D reports; exit_code belongs to the latest one.
+  // Completed commands: OSC 133;D while running (after OSC 133;C); exit_code belongs to the
+  // latest one. Other D markers close a prompt and change nothing.
   std::uint64_t commands{0};
   std::uint64_t title_changes{0};
   std::uint64_t cwd_changes{0};

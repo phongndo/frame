@@ -33,9 +33,18 @@ auto drain_responses(std::vector<std::byte>& responses, std::size_t& offset,
   return count;
 }
 
-void saturating_increment(std::uint64_t& value) noexcept {
+// Returns whether the value changed.
+auto saturating_increment(std::uint64_t& value) noexcept -> bool {
   if (value < std::numeric_limits<std::uint64_t>::max()) {
     ++value;
+    return true;
+  }
+  return false;
+}
+
+void record_signal_change(EffectBatch& effects, const bool changed) noexcept {
+  if (changed) {
+    static_cast<void>(saturating_increment(effects.signal_changes));
   }
 }
 
@@ -176,31 +185,33 @@ void Terminal::Impl::write_pty([[maybe_unused]] GhosttyTerminal terminal_handle,
 void Terminal::Impl::bell([[maybe_unused]] GhosttyTerminal terminal_handle,
                           void* userdata) noexcept {
   auto& impl = *static_cast<Impl*>(userdata);
-  saturating_increment(impl.effects.bells);
-  saturating_increment(impl.signals.bells);
+  static_cast<void>(saturating_increment(impl.effects.bells));
+  record_signal_change(impl.effects, saturating_increment(impl.signals.bells));
 }
 
 void Terminal::Impl::title_changed([[maybe_unused]] GhosttyTerminal terminal_handle,
                                    void* userdata) noexcept {
   auto& impl = *static_cast<Impl*>(userdata);
-  saturating_increment(impl.effects.title_changes);
-  saturating_increment(impl.signals.title_changes);
+  static_cast<void>(saturating_increment(impl.effects.title_changes));
+  record_signal_change(impl.effects, saturating_increment(impl.signals.title_changes));
 }
 
 void Terminal::Impl::pwd_changed([[maybe_unused]] GhosttyTerminal terminal_handle,
                                  void* userdata) noexcept {
   auto& impl = *static_cast<Impl*>(userdata);
-  saturating_increment(impl.effects.pwd_changes);
-  saturating_increment(impl.signals.cwd_changes);
+  static_cast<void>(saturating_increment(impl.effects.pwd_changes));
+  record_signal_change(impl.effects, saturating_increment(impl.signals.cwd_changes));
 }
 
 void Terminal::Impl::desktop_notification(
     [[maybe_unused]] GhosttyTerminal terminal_handle, void* userdata,
     const GhosttyTerminalDesktopNotification* notification) noexcept {
   auto& impl = *static_cast<Impl*>(userdata);
-  saturating_increment(impl.effects.desktop_notifications);
+  static_cast<void>(saturating_increment(impl.effects.desktop_notifications));
   auto& signals = impl.signals;
-  saturating_increment(signals.notifications);
+  // Each notification is a new occurrence even when its text repeats.
+  static_cast<void>(saturating_increment(signals.notifications));
+  static_cast<void>(saturating_increment(impl.effects.signal_changes));
   bool truncated = false;
   std::size_t title = 0;
   std::size_t body = 0;
@@ -222,17 +233,22 @@ void Terminal::Impl::progress_report([[maybe_unused]] GhosttyTerminal terminal_h
                                      void* userdata,
                                      const GhosttyTerminalProgressReport* report) noexcept {
   auto& impl = *static_cast<Impl*>(userdata);
-  saturating_increment(impl.effects.progress_reports);
+  static_cast<void>(saturating_increment(impl.effects.progress_reports));
   if (report == nullptr || report->size < offsetof(GhosttyTerminalProgressReport, progress) +
                                               sizeof(GhosttyTerminalProgressReport::progress)) {
     return;
   }
   auto& signals = impl.signals;
-  signals.progress = progress_state(report->state);
-  signals.progress_percent =
-      signals.progress != ProgressState::none && report->progress >= 0 && report->progress <= 100
+  const auto state = progress_state(report->state);
+  const auto percent =
+      state != ProgressState::none && report->progress >= 0 && report->progress <= 100
           ? std::optional{static_cast<std::uint8_t>(report->progress)}
           : std::nullopt;
+  // Applications repeat identical reports; only a changed value is a signal.
+  record_signal_change(impl.effects,
+                       state != signals.progress || percent != signals.progress_percent);
+  signals.progress = state;
+  signals.progress_percent = percent;
 }
 
 void Terminal::Impl::semantic_prompt([[maybe_unused]] GhosttyTerminal terminal_handle,
@@ -267,15 +283,21 @@ void Terminal::Impl::semantic_prompt([[maybe_unused]] GhosttyTerminal terminal_h
     signals.command = CommandState::running;
     break;
   case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_COMMAND_END:
+    // Shell integrations also emit D to close a prompt: fish sends a bare D after
+    // `D;$status`, bash repeats `D;$?` after an empty Enter, and zsh sends a bare D. Only a D
+    // that ends output started by C completes a command.
+    if (signals.command != CommandState::running) {
+      return;
+    }
     signals.command = CommandState::finished;
     signals.exit_code = prompt->has_exit_code ? std::optional{prompt->exit_code} : std::nullopt;
-    saturating_increment(signals.commands);
+    static_cast<void>(saturating_increment(signals.commands));
     break;
   case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_FRESH_LINE:
   case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_MAX_VALUE:
     return;
   }
-  saturating_increment(impl.effects.command_transitions);
+  static_cast<void>(saturating_increment(impl.effects.signal_changes));
 }
 
 void Terminal::Impl::unknown_sequence([[maybe_unused]] GhosttyTerminal terminal_handle,

@@ -412,9 +412,7 @@ process_pty_output(const int pty, vt::Terminal& terminal, PresentationGate& pres
   drain.title_changed = drain.title_changed || effects.title_changes > 0 ||
                         effects.pwd_changes > 0 || effects.progress_reports > 0;
   // Signal values stay in the terminal's latest-value record; the drain only notes a change.
-  drain.signal = drain.signal || effects.bells > 0 || effects.desktop_notifications > 0 ||
-                 effects.title_changes > 0 || effects.pwd_changes > 0 ||
-                 effects.progress_reports > 0 || effects.command_transitions > 0;
+  drain.signal = drain.signal || effects.signal_changes > 0;
   drain.changed = true;
   return queue_terminal_responses(pending_writes, terminal);
 }
@@ -7909,6 +7907,16 @@ execute_public_proc_step(ProcExecutionState& state, Sessions& sessions, PaneRunt
   ++state.next_command;
   if ((!succeeded && !state.continue_on_error) || state.next_command == command_count) {
     return encode_proc_result(state);
+  }
+  // Steps run one per reactor turn, but input queued by this step is written after this service
+  // pass. Capture a following command wait's baseline now, before the application can respond.
+  const auto& following = std::span(state.steps).subspan(state.next_command, 1).front();
+  if (following.request.kind == api::CommandKind::pane_wait &&
+      following.request.wait_condition == api::WaitCondition::command &&
+      !following.request.after_commands.has_value()) {
+    if (auto wait = concrete_proc_command(following, state.outputs); wait.has_value()) {
+      state.wait = begin_public_wait(std::move(*wait), sessions, runtimes);
+    }
   }
   return std::nullopt;
 }

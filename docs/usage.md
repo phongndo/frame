@@ -106,7 +106,8 @@ a process directly or press Enter automatically. `capture` prints terminal text,
 does not send input or move the viewport. `wait` blocks until the Pane's process exits or a specified
 condition matches, with a default timeout of 30 seconds. Any process exit satisfies a conditionless
 wait; use `--exit-code 0` to require success. `--until-prompt` requires shell-integration markers;
-`--until-command` waits for the next shell-integration command completion and reports its exit code.
+`--until-command` waits for the next shell-integration command completion, prints its exit code,
+and exits 1 unless that code is 0.
 Terminal conditions can match existing state; use `--after-generation` when newer state is required.
 Waiting for an entire Session or Tab to end is not supported.
 
