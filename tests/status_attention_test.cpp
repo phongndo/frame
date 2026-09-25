@@ -1,15 +1,18 @@
 #include "api/json.hpp"
+#include "core/session.hpp"
 #include "user/attention.hpp"
 
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace lemma::user {
 namespace {
@@ -79,12 +82,12 @@ TEST(StatusAttentionTest, InactiveTabsMarkUnseenAlertsAndFailedCommandsUntilVisi
   ASSERT_TRUE(attention.signal("1:1", signals(1, 1)));
   EXPECT_EQ(marker(attention, "1:1"), "!");
   ASSERT_TRUE(attention.signal("2:1", signals(2, 0, 0, 1, 2)));
-  EXPECT_EQ(marker(attention, "1:1"), "x !");
+  EXPECT_EQ(marker(attention, "1:1"), "x!");
   auto running = signals(3, 0, 0, 1, 2);
   running.progress = Progress::normal;
   running.percent = 7;
   ASSERT_TRUE(attention.signal("2:1", running));
-  EXPECT_EQ(marker(attention, "1:1"), "7% x !");
+  EXPECT_EQ(marker(attention, "1:1"), "7%x!");
 
   attention.visit("1:1");
   EXPECT_EQ(marker(attention, "1:1"), "");
@@ -168,6 +171,41 @@ TEST(StatusAttentionTest, RetainedAttentionMarksWhatHappenedWhileDetached) {
   EXPECT_EQ(marker(attention, "2:1"), "x");
 }
 
+TEST(StatusAttentionTest, SessionsObservedFromCreationCountTheirFirstListing) {
+  auto attention = TabAttention::since_creation();
+  const std::array panes{
+      PaneMember{.pane = "0:1", .tab = "0:1", .signals = signals(1, 1)},
+      PaneMember{.pane = "1:1", .tab = "1:1", .signals = signals(2, 1, 0, 1, 1)},
+  };
+  attention.list(panes);
+  attention.visit("0:1");
+
+  EXPECT_EQ(marker(attention, "0:1"), "");
+  EXPECT_EQ(marker(attention, "1:1"), "x!");
+}
+
+static_assert(attention_panes_max == core::panes_per_session_max);
+
+TEST(StatusAttentionTest, OverlongListingsAreClampedToTheSessionPaneBound) {
+  std::vector<std::string> ids;
+  ids.reserve(attention_panes_max + 1U);
+  for (std::size_t index = 0; index <= attention_panes_max; ++index) {
+    ids.push_back(std::to_string(index) + ":1");
+  }
+  std::vector<PaneMember> panes;
+  panes.reserve(ids.size());
+  for (const auto& id : ids) {
+    panes.push_back({.pane = id, .tab = "1:1", .signals = signals(1, 1)});
+  }
+  auto attention = TabAttention::since_creation();
+  attention.list(panes);
+  attention.visit("0:1");
+
+  EXPECT_TRUE(attention.signal(ids.at(attention_panes_max - 1U), signals(2, 1)));
+  EXPECT_FALSE(attention.signal(ids.back(), signals(2, 1)));
+  EXPECT_EQ(marker(attention, "1:1"), "!");
+}
+
 TEST(StatusAttentionTest, OlderRecordsDoNotReplaceNewerValues) {
   TabAttention attention;
   const std::array panes{
@@ -207,8 +245,13 @@ TEST(StatusAttentionTest, SevereProgressWinsAndStatesHaveDistinctMarkers) {
 
   EXPECT_EQ(marker(attention, "1:1"), "30%=");
   EXPECT_EQ(marker(attention, "2:1"), "100%x");
-  ASSERT_TRUE(attention.signal("4:1", signals(2, 1, 0, 1, 1)));
-  EXPECT_EQ(marker(attention, "2:1"), "% x !");
+  auto failed_too = progress(2, Progress::error, std::uint8_t{100});
+  failed_too.commands = 1;
+  failed_too.exit_code = 1;
+  ASSERT_TRUE(attention.signal("4:1", failed_too));
+  EXPECT_EQ(marker(attention, "2:1"), "100%x");
+  ASSERT_TRUE(attention.signal("4:1", signals(3, 1, 0, 1, 1)));
+  EXPECT_EQ(marker(attention, "2:1"), "%x!");
   ASSERT_TRUE(attention.signal("2:1", progress(3, Progress::paused, std::nullopt)));
   EXPECT_EQ(marker(attention, "1:1"), "%=");
 }

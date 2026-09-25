@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -234,7 +235,7 @@ TEST(PaneCompositionTest, InactiveTabAttentionIsEmphasizedPartOfItsLabel) {
       .focused = true,
   };
   const std::array tabs{
-      StatusTab{.number = 1, .title = "zsh", .attention = "42% !"},
+      StatusTab{.number = 1, .title = "zsh", .attention = "42%!"},
       StatusTab{.number = 2, .title = "nvim", .active = true},
   };
   const StatusLine status{.session_name = {},
@@ -253,12 +254,86 @@ TEST(PaneCompositionTest, InactiveTabAttentionIsEmphasizedPartOfItsLabel) {
   ASSERT_TRUE(result.has_value());
   const auto encoded = as_text(std::span(output).first(result->bytes));
   EXPECT_THAT(encoded,
-              testing::HasSubstr("\x1B[0m1:zsh \x1B[0;1m42% !\x1B[0m  \x1B[0;1m[ 2:nvim ]"));
-  // "1:zsh 42% !" occupies columns 0-10; the marker selects its Tab like the title does.
-  EXPECT_EQ(status_target_at_column(status, {.columns = 40, .rows = 3}, 10),
+              testing::HasSubstr("\x1B[0m1:zsh \x1B[0;1m42%!\x1B[0m  \x1B[0;1m[ 2:nvim ]"));
+  // "1:zsh 42%!" occupies columns 0-9; the marker selects its Tab like the title does.
+  EXPECT_EQ(status_target_at_column(status, {.columns = 40, .rows = 3}, 9),
             (StatusTarget{.kind = StatusTargetKind::tab, .tab_position = 0}));
   EXPECT_EQ(status_target_at_column(status, {.columns = 40, .rows = 3}, 13),
             (StatusTarget{.kind = StatusTargetKind::tab, .tab_position = 1}));
+}
+
+struct ProjectedStatus final {
+  std::string text;
+  std::vector<std::string> cells;
+  std::vector<bool> bold;
+};
+
+[[nodiscard]] auto project_status(const std::span<const StatusTab> tabs,
+                                  const std::uint16_t columns) -> ProjectedStatus {
+  const StatusLine status{.session_name = {},
+                          .tabs = tabs,
+                          .prompt_target = StatusPromptTarget::none,
+                          .prompt_feedback = StatusPromptFeedback::none,
+                          .prompt_value = {},
+                          .input_context = {},
+                          .prompt_cursor = 0,
+                          .dirty = true};
+  std::array<ui::Cell, limits::terminal_columns_hard_max> storage{};
+  const auto cells = std::span(storage).first(columns);
+  std::uint16_t cursor = 0;
+  EXPECT_TRUE(project_status_cells(status, {.columns = columns, .rows = 3}, cells, cursor));
+  ProjectedStatus projected;
+  for (const auto& cell : cells) {
+    projected.cells.push_back(cell.text_size == 0 ? std::string(" ")
+                                                  : std::string(cell.text.data(), cell.text_size));
+    projected.text += projected.cells.back();
+    projected.bold.push_back((cell.style.attributes & ui::attribute_bold) != 0);
+  }
+  return projected;
+}
+
+// Eight 12-column titles in 80 columns show only four Tabs beside the active one's end.
+[[nodiscard]] auto eight_tabs(const std::size_t active) -> std::array<StatusTab, 8> {
+  std::array<StatusTab, 8> tabs{};
+  for (std::size_t index = 0; index < tabs.size(); ++index) {
+    tabs.at(index) = {.number = static_cast<std::uint16_t>(index + 1U),
+                      .title = "agent-worker",
+                      .active = index == active};
+  }
+  return tabs;
+}
+
+TEST(PaneCompositionTest, TrailingOverflowEmphasizesHiddenAttention) {
+  auto tabs = eight_tabs(0);
+  tabs.at(6).attention = "!";
+  const auto alerted = project_status(tabs, 80);
+  EXPECT_THAT(alerted.text, testing::HasSubstr("4:agent-worker …!  +"));
+  const auto ellipsis = std::ranges::find(alerted.cells, std::string("…"));
+  ASSERT_NE(ellipsis, alerted.cells.end());
+  const auto glyph = static_cast<std::size_t>(ellipsis - alerted.cells.begin()) + 1U;
+  EXPECT_EQ(alerted.cells.at(glyph), "!");
+  EXPECT_FALSE(alerted.bold.at(glyph - 1U));
+  EXPECT_TRUE(alerted.bold.at(glyph));
+}
+
+TEST(PaneCompositionTest, OverflowShowsTheMostUrgentHiddenAttention) {
+  auto tabs = eight_tabs(0);
+  tabs.at(5).attention = "40%x";
+  tabs.at(6).attention = "!";
+  EXPECT_THAT(project_status(tabs, 80).text, testing::HasSubstr("4:agent-worker …x  +"));
+  tabs.at(5).attention = {};
+  tabs.at(6).attention = "40%";
+  EXPECT_THAT(project_status(tabs, 80).text, testing::HasSubstr("4:agent-worker …%  +"));
+}
+
+TEST(PaneCompositionTest, LeadingOverflowSummarizesOnlyTabsHiddenBeforeTheRange) {
+  auto tabs = eight_tabs(7);
+  tabs.at(1).attention = "!";
+  EXPECT_TRUE(project_status(tabs, 80).text.starts_with("…! 5:agent-worker"));
+  // Attention on a visible Tab leaves the plain ellipsis in the reserved width.
+  tabs.at(1).attention = {};
+  tabs.at(4).attention = "!";
+  EXPECT_TRUE(project_status(tabs, 80).text.starts_with("…  5:agent-worker !"));
 }
 
 TEST(PaneCompositionTest, StatusRejectsActiveControlAndOverlongAttention) {

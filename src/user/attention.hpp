@@ -15,11 +15,11 @@
 
 namespace lemma::user {
 
-// The per-Session Pane bound that Core derives from the daemon-wide limits.
+// Core's per-Session Pane bound (core::panes_per_session_max); a unit test asserts they agree.
 inline constexpr std::size_t attention_panes_max =
     static_cast<std::size_t>(limits::panes_hard_max / limits::sessions_hard_max);
-// The longest marker: "100%x x !".
-inline constexpr std::size_t attention_marker_bytes_max = 9;
+// The longest marker: "100%=x!".
+inline constexpr std::size_t attention_marker_bytes_max = 7;
 
 enum class Progress : std::uint8_t {
   none,
@@ -59,13 +59,22 @@ struct Marker final {
   }
 };
 
-// Per-Session statusline attention: which inactive Tabs have unseen bells or notifications, a
-// failed command since the last visit, or progress in flight. Pane->Tab membership comes only from
+// Per-Session statusline attention: which inactive Tabs have unseen bells or notifications,
+// something failed (progress in error, or a failed command since the last visit), or progress in
+// flight. Pane->Tab membership comes only from
 // complete `pane.list` projections; signal records never create Panes.
 class TabAttention final {
 public:
-  // Replaces membership with a complete listing. Panes in the first listing are seen as listed;
-  // Panes that appear later, including while detached, count every signal since their creation.
+  // Attention for a Session observed from its creation: no listed Pane counts as already seen.
+  [[nodiscard]] static auto since_creation() -> TabAttention {
+    TabAttention attention;
+    attention.listed_ = true;
+    return attention;
+  }
+
+  // Replaces membership with a complete listing. Unless the Session was observed from creation,
+  // Panes in the first listing are seen as listed. Panes that appear later, including while
+  // detached, count every signal since their creation.
   void list(std::span<const PaneMember> panes);
   // Applies a newer signal record. Returns false for a Pane absent from the last listing.
   [[nodiscard]] auto signal(std::string_view pane, const PaneSignals& signals) -> bool;

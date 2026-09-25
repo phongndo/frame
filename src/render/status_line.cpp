@@ -132,9 +132,37 @@ status_label(const StatusTab& tab,
   return label;
 }
 
+// Overflow indicators reserve one more column for a hidden-attention glyph whenever any Tab
+// carries attention, so which Tabs are hidden never depends on which ones carry it.
+[[nodiscard]] auto overflow_columns(const std::span<const StatusLabel> labels) noexcept
+    -> std::size_t {
+  return std::ranges::any_of(labels,
+                             [](const StatusLabel& label) { return label.attention_size > 0; })
+             ? 3U
+             : 2U;
+}
+
+[[nodiscard]] auto attention_text(const StatusLabel& label) noexcept -> std::string_view {
+  return std::string_view(label.text.data(), label.size).substr(label.size - label.attention_size);
+}
+
+// The most urgent attention among hidden labels: `x` (something failed), then `!` (unseen alert),
+// then `%` (any other attention, which is progress in flight).
+[[nodiscard]] auto hidden_attention(const std::span<const StatusLabel> hidden) noexcept -> char {
+  const auto any = [&](const auto predicate) { return std::ranges::any_of(hidden, predicate); };
+  if (any([](const StatusLabel& label) { return attention_text(label).contains('x'); })) {
+    return 'x';
+  }
+  if (any([](const StatusLabel& label) { return attention_text(label).contains('!'); })) {
+    return '!';
+  }
+  return any([](const StatusLabel& label) { return label.attention_size > 0; }) ? '%' : '\0';
+}
+
 [[nodiscard]] auto status_width(const std::span<const StatusLabel> labels, const std::size_t begin,
                                 const std::size_t end) noexcept -> std::size_t {
-  std::size_t width = begin > 0 ? 2U : 0U;
+  const auto overflow = overflow_columns(labels);
+  std::size_t width = begin > 0 ? overflow : 0U;
   for (std::size_t index = begin; index <= end; ++index) {
     width += std::span(labels).subspan(index, 1).front().size;
     if (index < end) {
@@ -142,7 +170,7 @@ status_label(const StatusTab& tab,
     }
   }
   if (end + 1U < labels.size()) {
-    width += 2U;
+    width += overflow;
   }
   return width;
 }
@@ -392,7 +420,10 @@ struct InlineStatusPromptProjection final {
     cursor_column += projection.field.cursor_offset;
   } else {
     cursor_column = projection.tab_column;
-    cursor_column += projection.begin > 0 && !projection.bare_field ? 2U : 0U;
+    cursor_column +=
+        projection.begin > 0 && !projection.bare_field
+            ? overflow_columns(std::span(projection.labels).first(projection.label_count))
+            : 0U;
     for (std::size_t index = projection.begin; index < projection.active; ++index) {
       cursor_column += labels.subspan(index, 1).front().size + 2U;
     }
@@ -558,6 +589,23 @@ constexpr ui::Style status_prompt_cell_style{.attributes =
          write_status_text(cells, column, text.substr(plain), status_identity_cell_style);
 }
 
+// Writes `… ` before or ` …` after the visible labels, padded to the reserved overflow width,
+// with the hidden labels' most urgent attention glyph emphasized after the ellipsis.
+[[nodiscard]] auto write_overflow(const std::span<ui::Cell> cells, std::size_t& column,
+                                  const std::span<const StatusLabel> labels,
+                                  const std::span<const StatusLabel> hidden,
+                                  const bool leading) noexcept -> bool {
+  const auto glyph = hidden_attention(hidden);
+  const auto mark = glyph == '\0' ? std::string_view{} : std::string_view(&glyph, 1);
+  const auto padding = overflow_columns(labels) - 1U - mark.size();
+  constexpr std::string_view spaces = "   ";
+  return (leading || write_status_text(cells, column, " ", status_default_cell_style)) &&
+         write_status_text(cells, column, "…", status_default_cell_style) &&
+         write_status_text(cells, column, mark, status_identity_cell_style) &&
+         write_status_text(cells, column, spaces.substr(0, leading ? padding : padding - 1U),
+                           status_default_cell_style);
+}
+
 [[nodiscard]] auto write_prompt_field(const std::span<ui::Cell> cells, std::size_t& column,
                                       const PromptField& field, const ui::Style base,
                                       const ui::Style edit) noexcept -> bool {
@@ -649,7 +697,7 @@ struct ModalPromptProjection final {
     column = projection.tab_column - 1U;
     const auto labels = std::span(projection.labels).first(projection.label_count);
     if (!projection.bare_field && projection.begin > 0 &&
-        !write_status_text(cells, column, "… ", status_default_cell_style)) {
+        !write_overflow(cells, column, labels, labels.first(projection.begin), true)) {
       return false;
     }
     for (std::size_t index = projection.begin; index <= projection.end; ++index) {
@@ -667,7 +715,7 @@ struct ModalPromptProjection final {
       }
     }
     if (!projection.bare_field && projection.end + 1U < labels.size() &&
-        !write_status_text(cells, column, " …", status_default_cell_style)) {
+        !write_overflow(cells, column, labels, labels.subspan(projection.end + 1U), false)) {
       return false;
     }
   }
@@ -715,7 +763,7 @@ struct ModalPromptProjection final {
   column = projection.tab_column - 1U;
   if (projection.show_range) {
     if (projection.begin > 0 &&
-        !write_status_text(cells, column, "… ", status_default_cell_style)) {
+        !write_overflow(cells, column, labels, labels.first(projection.begin), true)) {
       return false;
     }
     for (std::size_t index = projection.begin; index <= projection.end; ++index) {
@@ -729,7 +777,7 @@ struct ModalPromptProjection final {
       }
     }
     if (projection.end + 1U < labels.size() &&
-        !write_status_text(cells, column, " …", status_default_cell_style)) {
+        !write_overflow(cells, column, labels, labels.subspan(projection.end + 1U), false)) {
       return false;
     }
   } else if (!write_status_label(cells, column, labels.subspan(projection.begin, 1).front(),
@@ -879,7 +927,7 @@ auto project_status_cells(const StatusLine status, const Viewport viewport,
   const auto labels = std::span(projection.labels).first(projection.label_count);
   auto current_column = static_cast<std::size_t>(projection.tab_column - 1U);
   if (projection.show_range && projection.begin > 0) {
-    current_column += 2U;
+    current_column += overflow_columns(labels);
   }
   for (std::size_t index = projection.begin; index <= projection.end; ++index) {
     const auto label_columns = labels.subspan(index, 1).front().size;

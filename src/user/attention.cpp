@@ -61,19 +61,7 @@ using api::JsonValue;
 
 class MarkerWriter final {
 public:
-  void token(const std::string_view text) noexcept {
-    if (marker_.size > 0) {
-      put(' ');
-    }
-    for (const char character : text) {
-      put(character);
-    }
-  }
-
   void progress(const PaneSignals& signals) noexcept {
-    if (marker_.size > 0) {
-      put(' ');
-    }
     if (signals.percent.has_value() && signals.progress != Progress::indeterminate) {
       std::array<char, 3> digits{};
       const auto result = std::to_chars(digits.begin(), digits.end(), *signals.percent);
@@ -86,14 +74,9 @@ public:
     put('%');
     if (signals.progress == Progress::paused) {
       put('=');
-    } else if (signals.progress == Progress::error) {
-      put('x');
     }
   }
 
-  [[nodiscard]] auto marker() const noexcept -> Marker { return marker_; }
-
-private:
   void put(const char character) noexcept {
     if (marker_.size < marker_.text.size()) {
       std::span(marker_.text).subspan(marker_.size, 1).front() = character;
@@ -101,6 +84,9 @@ private:
     }
   }
 
+  [[nodiscard]] auto marker() const noexcept -> Marker { return marker_; }
+
+private:
   Marker marker_;
 };
 
@@ -139,12 +125,11 @@ void TabAttention::see(Entry& entry) noexcept {
 }
 
 void TabAttention::list(const std::span<const PaneMember> panes) {
-  if (panes.size() > attention_panes_max) {
-    throw std::runtime_error("too many listed panes");
-  }
+  // A Session never lists more; clamping keeps a malformed listing from dropping the statusline.
+  const auto listed = panes.first(std::min(panes.size(), attention_panes_max));
   std::vector<Entry> next;
-  next.reserve(panes.size());
-  for (const auto& member : panes) {
+  next.reserve(listed.size());
+  for (const auto& member : listed) {
     const auto found = std::ranges::find(panes_, member.pane, &Entry::pane);
     auto& entry = found == panes_.end() ? next.emplace_back(Entry{.pane = std::string(member.pane),
                                                                   .tab = {},
@@ -216,12 +201,13 @@ auto TabAttention::marker(const std::string_view tab) const noexcept -> Marker {
   MarkerWriter writer;
   if (progress != nullptr) {
     writer.progress(progress->latest);
+    failed = failed || progress->latest.progress == Progress::error;
   }
   if (failed) {
-    writer.token("x");
+    writer.put('x');
   }
   if (alerted) {
-    writer.token("!");
+    writer.put('!');
   }
   return writer.marker();
 }

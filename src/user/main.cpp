@@ -397,17 +397,28 @@ struct Status final {
   }
 };
 
-// Attention outlives a detached Session's status connection, so a reattached statusline marks
-// what happened while detached. Entries end with their Session.
+// Attention belongs to each live Session rather than its status connection, so a reattached
+// statusline marks what happened while detached. Sessions in the first discovery snapshot existed
+// before lemma-ui and take their first listing as seen; later Sessions are observed from creation.
 using RetainedAttention = std::map<std::string, lemma::user::TabAttention, std::less<>>;
 
 // Discovery observes bounded Session summaries; only attached Sessions own status Surfaces.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void discover_statuses(const std::string_view endpoint, const JsonValue& document,
-                       std::vector<std::unique_ptr<Status>>& statuses,
-                       RetainedAttention& retained) {
+                       std::vector<std::unique_ptr<Status>>& statuses, RetainedAttention& retained,
+                       bool& discovered) {
   const auto* const sessions = api::json_member(document, "sessions");
   if (sessions != nullptr) {
+    for (const auto& session : sessions->array) {
+      const auto id = text(session, "id");
+      if (!retained.contains(id) && std::ranges::none_of(statuses, [&](const auto& status) {
+            return status->session == id;
+          })) {
+        retained.emplace(id, discovered ? lemma::user::TabAttention::since_creation()
+                                        : lemma::user::TabAttention{});
+      }
+    }
+    discovered = true;
     std::erase_if(statuses, [&](const auto& status) {
       const bool detached = std::ranges::none_of(sessions->array, [&](const auto& session) {
         return text(session, "id") == status->session && enabled(session, "attached");
@@ -449,6 +460,7 @@ auto run_status(const std::string_view endpoint) -> int {
       R"({"schema":"lemma.extension/v1","name":"lemma-ui-discovery","capabilities":["observe"],"events":{"schema":"lemma.events/v1"}})");
   std::vector<std::unique_ptr<Status>> statuses;
   RetainedAttention retained;
+  bool discovered = false;
   while (true) {
     std::vector<pollfd> descriptors{{.fd = observer.descriptor(), .events = POLLIN, .revents = 0}};
     bool ready = observer.ready();
@@ -466,7 +478,7 @@ auto run_status(const std::string_view endpoint) -> int {
     }
     if (observer.ready() || descriptors.front().revents != 0) {
       if (auto record = observer.next(0); record.has_value()) {
-        discover_statuses(endpoint, record->document, statuses, retained);
+        discover_statuses(endpoint, record->document, statuses, retained, discovered);
       }
     }
     // Discovery can replace the vector, so use nonblocking receives rather than stale poll indices.
