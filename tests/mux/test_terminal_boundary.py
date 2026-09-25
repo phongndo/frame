@@ -535,6 +535,67 @@ class FocusReportMuxTest(unittest.TestCase):
         self.expect_reports(second, b"\x1b[I\x1b[O")
 
 
+TITLE_SETTER = """
+import os, sys
+os.write(1, b'\\x1b]2;first\\xc2\\x9d\\xe2\\x98\\x83 title\\x1b\\\\__TITLE_READY__\\r\\n')
+for line in sys.stdin:
+    name = line.strip().encode()
+    os.write(1, b'\\x1b]2;' + name + b'\\x1b\\\\__SET_' + name + b'__\\r\\n')
+"""
+
+
+class OuterTitleMuxTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.server = LemmaServer.from_environment(
+            config_text='require("lemma").setup({})\\n'
+        )
+        self.addCleanup(self.server.close)
+
+    def test_focused_pane_title_is_sanitized_presented_on_change_and_restored(
+        self,
+    ) -> None:
+        session = self.server.create_session(
+            "outer_title", command=(sys.executable, "-c", TITLE_SETTER)
+        )
+        client = session.require_client()
+        client.expect_raw(b"\x1b[22;2t")
+        client.expect_output("__TITLE_READY__")
+        # The C1 control is dropped; the session name identifies the attachment.
+        first = "outer_title: first☃ title".encode()
+        client.expect_raw(b"\x1b]2;" + first + b"\x1b\\")
+        self.assertNotIn(b"\xc2\x9d", client.process.output_tail)
+
+        # A full redraw without a title change does not repeat the title.
+        presented = client.process.output_tail.count(b"\x1b]2;")
+        client.resize(100, 30)
+        self.server.wait_for_state(
+            session.name, lambda state: state.columns == 100, "resize to apply"
+        )
+        client.drain(0.2)
+        self.assertEqual(client.process.output_tail.count(b"\x1b]2;"), presented)
+
+        client.send("second\r")
+        client.expect_output("__SET_second__")
+        client.expect_raw(b"\x1b]2;outer_title: second\x1b\\")
+
+        # Titles are bounded to 256 bytes, truncated at a code point boundary.
+        prefix = b"outer_title: "
+        client.send("é" * 200 + "\r")
+        visible = (256 - len(prefix)) // 2
+        client.expect_raw(b"\x1b]2;" + prefix + "é".encode() * visible + b"\x1b\\")
+
+        # Disabling the option restores the saved title and saves it again for detach.
+        config = Path(self.server.environment["XDG_CONFIG_HOME"]) / "lemma/init.lua"
+        config.write_text('require("lemma").setup({ ui = { outer_title = false } })\n')
+        self.server.require_command("config", "reload")
+        client.expect_raw(b"\x1b[23;2t\x1b[22;2t")
+        client.send("third\r")
+        client.expect_output("__SET_third__")
+        client.drain(0.2)
+        self.assertNotIn(b"outer_title: third", client.process.output_tail)
+        session.detach()
+
+
 class GraphicsMuxTest(unittest.TestCase):
     def setUp(self) -> None:
         self.server = LemmaServer.from_environment()

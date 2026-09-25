@@ -40,18 +40,19 @@ constexpr auto host_terminal_reply_timeout = std::chrono::seconds(30);
 // Window managers emit SIGWINCH repeatedly during one physical resize gesture. A trailing-edge
 // commit prevents those samples from becoming a stream of child PTY resizes and shell redraws.
 constexpr auto outer_resize_quiet_delay = std::chrono::milliseconds(50);
+// XTWINOPS 22;2 / 23;2 save and restore the user's window title around Lemma's OSC 2 titles.
 // Do not request Kitty's "report all keys" flag: several outer terminals accept that flag but
 // omit associated text, which turns ordinary printable input into semantically incomplete events.
 // Disambiguation, event types, alternate keys, and associated text preserve metadata where it is
 // available while ordinary layout/IME text remains ordinary bytes.
 constexpr std::string_view outer_terminal_enter =
     "\x1B[?1049h\x1B[2J\x1B[H\x1B[?2004h\x1B[?1004h\x1B[?1002h\x1B[?1006h\x1B[>23u"
-    "\x1B[?2048s\x1B[?2048h\x1B[?5522$p";
+    "\x1B[?2048s\x1B[?2048h\x1B[?5522$p\x1B[22;2t";
 constexpr std::string_view outer_terminal_restore =
     "\x18\x1B_Gq=2,m=0;\x1B\\\x1B_Ga=d,d=A,q=2\x1B\\"
     "\x1B[0m\x1B[?2026l\x1B[?1l\x1B[?9l\x1B[?1000l\x1B[?1002l\x1B[?1003l"
     "\x1B[?1004l\x1B[?1005l\x1B[?1006l\x1B[?1007l\x1B[?1015l\x1B[?1016l"
-    "\x1B[?2004l\x1B]112\x1B\\\x1B[0 q\x1B[?25h\x1B[?7h\x1B[<u\x1B[?2048r\x1B[?1049l";
+    "\x1B[?2004l\x1B]112\x1B\\\x1B[0 q\x1B[?25h\x1B[?7h\x1B[<u\x1B[?2048r\x1B[23;2t\x1B[?1049l";
 constexpr std::string_view interruption_diagnostic = "lemma attach interrupted by signal\n";
 constexpr auto signal_cleanup_storage = [] {
   std::array<char, outer_terminal_restore.size() + interruption_diagnostic.size()> payload{};

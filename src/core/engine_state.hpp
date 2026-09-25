@@ -233,6 +233,9 @@ struct ClipboardPaste final {
   std::unique_ptr<clipboard::PngFile> file;
 };
 
+// Bounded OSC 2 payload presented as the outer terminal's window title.
+inline constexpr std::size_t outer_title_bytes_max = 256;
+
 struct AttachmentRuntime final {
   AttachmentRuntime() noexcept = default;
   AttachmentRuntime(const AttachmentRuntime&) = delete;
@@ -270,6 +273,10 @@ struct AttachmentRuntime final {
   std::uint32_t pending_attach_generation{0};
   std::uint64_t status_signature{0};
   std::optional<render::OuterModeProjection> outer_modes;
+  // Last title presented through OSC 2; the client restores the user's title on exit.
+  std::array<char, outer_title_bytes_max> outer_title{};
+  std::size_t outer_title_size{0};
+  bool outer_title_presented{false};
   int client{-1};
   bool status_valid{false};
   // Outer-terminal focus from mode 1004 reports. A new connection assumes the user is typing into
@@ -365,6 +372,7 @@ static_assert(sizeof(SessionRecord) <= std::size_t{96} * 1'024U);
 [[nodiscard]] auto reactor_now() noexcept -> std::chrono::steady_clock::time_point;
 [[nodiscard]] auto reactor_input_map() noexcept -> const input::CompiledInputMap&;
 [[nodiscard]] auto reactor_status_line() noexcept -> bool;
+[[nodiscard]] auto reactor_outer_title() noexcept -> bool;
 
 [[nodiscard]] inline auto pane_rows(const std::uint16_t viewport_rows) noexcept -> std::uint16_t {
   return viewport_rows;

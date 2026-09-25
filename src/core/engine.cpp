@@ -249,6 +249,11 @@ private:
   return active_reactor_environment->status_line;
 }
 
+[[nodiscard]] auto reactor_outer_title() noexcept -> bool {
+  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  return active_reactor_environment->outer_title;
+}
+
 [[nodiscard]] auto reactor_poll(const std::span<pollfd> descriptors,
                                 const int timeout_milliseconds) noexcept -> int {
   LEMMA_ASSERT(active_reactor_environment != nullptr);
@@ -11171,6 +11176,7 @@ void service_configuration_reload(ReactorEnvironment& environment, ReloadState& 
     environment.scrollback_lines = generation.scrollback_lines();
     environment.clipboard_read = generation.clipboard_read();
     environment.clipboard_write = generation.clipboard_write();
+    environment.outer_title = generation.outer_title();
     environment.default_program = generation.default_program();
     environment.default_cwd = generation.default_cwd();
     environment.command_history_file = generation.history_file();

@@ -30,6 +30,7 @@ struct TerminalConfiguration final {
 
 struct UiConfiguration final {
   bool status_line{true};
+  bool outer_title{true};
 };
 
 struct LaunchConfiguration final {
@@ -84,12 +85,13 @@ public:
   Generation(input::CompiledInputMap&& input_map, std::optional<std::size_t> scrollback_lines,
              bool status_line, std::string&& default_cwd, std::vector<std::byte>&& default_program,
              std::string&& history_file, std::vector<ExtensionConfiguration> extensions = {},
-             bool clipboard_read = false, bool clipboard_write = false) noexcept
+             bool clipboard_read = false, bool clipboard_write = false,
+             bool outer_title = true) noexcept
       : input_map_(std::move(input_map)), scrollback_lines_(scrollback_lines),
         default_cwd_(std::move(default_cwd)), default_program_(std::move(default_program)),
         history_file_(std::move(history_file)), extensions_(std::move(extensions)),
         status_line_(status_line), clipboard_read_(clipboard_read),
-        clipboard_write_(clipboard_write) {}
+        clipboard_write_(clipboard_write), outer_title_(outer_title) {}
   Generation(const Generation&) = delete;
   auto operator=(const Generation&) -> Generation& = delete;
   Generation(Generation&&) noexcept = default;
@@ -110,6 +112,7 @@ public:
   [[nodiscard]] auto history_file() const noexcept -> std::string_view { return history_file_; }
   [[nodiscard]] auto clipboard_read() const noexcept -> bool { return clipboard_read_; }
   [[nodiscard]] auto clipboard_write() const noexcept -> bool { return clipboard_write_; }
+  [[nodiscard]] auto outer_title() const noexcept -> bool { return outer_title_; }
 
   [[nodiscard]] auto extensions() const noexcept -> std::span<const ExtensionConfiguration> {
     return extensions_;
@@ -125,6 +128,7 @@ private:
   bool status_line_{true};
   bool clipboard_read_{false};
   bool clipboard_write_{false};
+  bool outer_title_{true};
 };
 
 [[nodiscard]] auto parse_key(std::string_view value) noexcept -> std::optional<input::InputChord>;

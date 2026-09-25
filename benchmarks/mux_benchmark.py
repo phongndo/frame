@@ -53,6 +53,10 @@ LEGACY_LEMMA_OUTER_TERMINAL_RESTORE = (
     b"\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l"
     b"\x1b[?2004l\x1b]112\x1b\\\x1b[0 q\x1b[?25h\x1b[?7h\x1b[<u\x1b[?1049l"
 )
+# Baselines before outer-title support neither push nor restore the outer window title.
+PRE_TITLE_LEMMA_OUTER_TERMINAL_RESTORE = LEMMA_OUTER_TERMINAL_RESTORE.replace(
+    b"\x1b[23;2t", b""
+)
 WARM_MARKER = b"__LEMMA_WARM_SCROLL_DONE__"
 WARM_READY_MARKER = b"__LEMMA_WARM_SCROLL_READY__"
 BLOCK_READY = b"__LEMMA_PTY_READY__"
@@ -1469,6 +1473,7 @@ class LemmaRuntime:
             self.environment,
             terminal_restore_sequence=(
                 LEMMA_OUTER_TERMINAL_RESTORE,
+                PRE_TITLE_LEMMA_OUTER_TERMINAL_RESTORE,
                 LEGACY_LEMMA_OUTER_TERMINAL_RESTORE,
             ),
         )

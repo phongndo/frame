@@ -216,11 +216,16 @@ struct LuaConfiguration final {
   lua_pushnil(state);
   while (lua_next(state, absolute) != 0) {
     const auto key = lua_table_key(state);
-    if (key != std::optional<std::string_view>{"status_line"} ||
-        lua_type(state, -1) != LUA_TBOOLEAN) {
-      return raise_lua_error(state, "ui.status_line must be a boolean");
+    if (key != std::optional<std::string_view>{"status_line"} &&
+        key != std::optional<std::string_view>{"outer_title"}) {
+      return raise_lua_error(state, "unknown lemma.setup.ui option");
     }
-    target.status_line = lua_toboolean(state, -1) != 0;
+    if (lua_type(state, -1) != LUA_TBOOLEAN) {
+      return raise_lua_error(state, *key == "status_line" ? "ui.status_line must be a boolean"
+                                                          : "ui.outer_title must be a boolean");
+    }
+    (*key == "status_line" ? target.status_line : target.outer_title) =
+        lua_toboolean(state, -1) != 0;
     lua_pop(state, 1);
   }
   return 0;
