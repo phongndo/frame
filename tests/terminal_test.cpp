@@ -442,6 +442,62 @@ TEST(TerminalTest, ScrollDetectionHashesCompleteGraphemes) {
                                  std::span(projected_output).first(projected_full->bytes)));
 }
 
+TEST(TerminalTest, AdjacentGraphemeClustersSharingABaseRenderDistinctly) {
+  TerminalOptions options;
+  options.size = {.columns = 3, .rows = 4};
+  auto canonical = make_terminal(options);
+  auto projected = make_terminal(options);
+  // Every cluster has the same raw cell ('a' plus extra codepoints stored outside it), and rows
+  // differ only in their second cluster. Reusing a neighbor's decode would repeat the first
+  // cluster and make every row hash alike, so the scroll below could not be identified.
+  // Split literals keep each base 'a' out of the preceding hex escape.
+  write_text(canonical, "a\xCC\x81"
+                        "a\xCC\x82"
+                        "\r\n"
+                        "a\xCC\x81"
+                        "a\xCC\x83"
+                        "\r\n"
+                        "a\xCC\x81"
+                        "a\xCC\x84"
+                        "\r\n"
+                        "a\xCC\x81"
+                        "a\xCC\x85");
+
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  const auto initial = canonical.render_ansi(output, true);
+  ASSERT_TRUE(initial.has_value());
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const std::string_view encoded(reinterpret_cast<const char*>(output.data()), initial->bytes);
+  EXPECT_THAT(encoded, testing::HasSubstr("a\xCC\x81"
+                                          "a\xCC\x82"));
+  EXPECT_THAT(encoded, testing::HasSubstr("a\xCC\x81"
+                                          "a\xCC\x85"));
+  projected.write(std::span(output).first(initial->bytes));
+
+  write_text(canonical, "\r\n"
+                        "a\xCC\x81"
+                        "a\xCC\x86"
+                        "\r\n"
+                        "a\xCC\x81"
+                        "a\xCC\x87");
+  const auto changed = canonical.render_ansi(output);
+  ASSERT_TRUE(changed.has_value());
+  EXPECT_EQ(changed->scrolled_rows, 2);
+  EXPECT_EQ(changed->rows, 2U);
+  projected.write(std::span(output).first(changed->bytes));
+
+  canonical.invalidate_ansi_render_state();
+  projected.invalidate_ansi_render_state();
+  std::array<std::byte, std::size_t{16} * 1'024U> canonical_output{};
+  std::array<std::byte, std::size_t{16} * 1'024U> projected_output{};
+  const auto canonical_full = canonical.render_ansi(canonical_output, true);
+  const auto projected_full = projected.render_ansi(projected_output, true);
+  ASSERT_TRUE(canonical_full.has_value());
+  ASSERT_TRUE(projected_full.has_value());
+  EXPECT_TRUE(std::ranges::equal(std::span(canonical_output).first(canonical_full->bytes),
+                                 std::span(projected_output).first(projected_full->bytes)));
+}
+
 TEST(TerminalTest, FragmentedWritesPreserveCanonicalState) {
   TerminalOptions options;
   options.size = {.columns = 12, .rows = 3};
@@ -1408,6 +1464,25 @@ TEST(TerminalTest, ProjectsHostSelectionColorsInsteadOfReverseVideo) {
   EXPECT_THAT(ansi, testing::HasSubstr("48;2;10;20;30"));
   EXPECT_THAT(ansi, testing::HasSubstr("38;2;200;210;220"));
   EXPECT_THAT(ansi, testing::Not(testing::HasSubstr("\x1B[0;7m")));
+}
+
+TEST(TerminalTest, SelectionSplitsRunsOfIdenticalCells) {
+  TerminalOptions options;
+  options.size = {.columns = 4, .rows = 2};
+  options.theme = default_theme();
+  options.theme->selection_background = RgbColor{.red = 10, .green = 20, .blue = 30};
+  auto terminal = make_terminal(options);
+  write_text(terminal, "aaaa");
+  ASSERT_TRUE(
+      terminal.select(SelectionUnit::cell, {.space = PointSpace::viewport, .column = 1, .row = 0})
+          .value_or(false));
+
+  std::array<std::byte, 8'192> output{};
+  const auto rendered = terminal.render_ansi(output, true);
+  ASSERT_TRUE(rendered.has_value());
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const std::string_view ansi(reinterpret_cast<const char*>(output.data()), rendered->bytes);
+  EXPECT_THAT(ansi, testing::HasSubstr("\x1B[0ma\x1B[0;48;2;10;20;30ma\x1B[0maa"));
 }
 
 TEST(TerminalTest, ProjectsIncrementalSelectionAndCopyCursorHighlight) {
