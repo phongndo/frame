@@ -328,6 +328,7 @@ add_library(
   src/client/attached_client.cpp
   src/client/host_input_parser.cpp
   src/client/host_terminal_theme.cpp
+  src/client/outer_resize_schedule.cpp
 )
 lemma_internal_target(lemma_client)
 target_link_libraries(
@@ -411,6 +412,7 @@ if(LEMMA_BUILD_TESTS)
     tests/input_router_test.cpp
     tests/latency_trace_test.cpp
     tests/layout_test.cpp
+    tests/outer_resize_schedule_test.cpp
     tests/protocol_test.cpp
     tests/reactor_environment_test.cpp
     tests/status_attention_test.cpp

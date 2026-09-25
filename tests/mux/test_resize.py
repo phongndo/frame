@@ -4,6 +4,7 @@ import json
 import os
 import signal
 import sys
+import time
 import unittest
 
 from tests.support.mux_harness import LemmaServer
@@ -74,6 +75,84 @@ while True:
         state = session.state()
         self.assertEqual((state.columns, state.rows), (160, 50))
         self.assertEqual(json.loads(report.read_text()), [49, 160, 2560, 1666])
+
+    def test_drag_commits_immediately_and_coalesces_to_final_size(self) -> None:
+        # Ghostty reports every applied Pane geometry change in band (mode 2048), so the child's
+        # report count is the number of resizes the daemon actually performed.
+        report = self.server.root / "reports.json"
+        script = f"""
+import json, os, re, tty
+from pathlib import Path
+report = Path({str(report)!r})
+pattern = re.compile(rb'\\x1b\\[48;(\\d+);(\\d+);\\d+;\\d+t')
+tty.setraw(0)
+os.write(1, b'\\x1b[?2048h')
+data = b''
+count = 0
+while True:
+    chunk = os.read(0, 4096)
+    if not chunk:
+        break
+    data += chunk
+    end = 0
+    for match in pattern.finditer(data):
+        count += 1
+        size = [int(match[1]), int(match[2])]
+        end = match.end()
+    data = data[end:] if end else data[-64:]
+    if end:
+        temporary = report.with_suffix('.tmp')
+        temporary.write_text(json.dumps({{'count': count, 'size': size}}))
+        temporary.replace(report)
+        if count == 1:
+            os.write(1, b'DRAG_' + b'READY')
+"""
+        session = self.server.create_session(
+            "resize_drag", command=(sys.executable, "-c", script)
+        )
+        client = session.require_client()
+        client.expect_output("DRAG_READY")
+
+        def reports() -> tuple[int, list[int]]:
+            value = json.loads(report.read_text())
+            return int(value["count"]), list(value["size"])
+
+        self.assertEqual(reports(), (1, [23, 80]))
+
+        # Keep resizing faster than any quiet period would allow. The first step must reach the
+        # Pane while the drag continues rather than waiting for the gesture to end.
+        started = time.monotonic()
+        columns = 80
+        while reports()[0] == 1:
+            self.assertLess(
+                columns, 230, "drag geometry was deferred until the drag ended"
+            )
+            columns += 1
+            client.resize(columns, 24)
+            client.drain(0.002)
+        for _ in range(100):
+            columns += 1
+            client.resize(columns, 24)
+            client.drain(0.002)
+        deadline = time.monotonic() + 5.0
+        while reports()[1] != [23, columns]:
+            self.assertLess(
+                time.monotonic(), deadline, f"final size never settled: {reports()}"
+            )
+            client.drain(0.01)
+        settled = time.monotonic()
+
+        # Commits are at least one interval apart, so the daemon's work is bounded by the drag's
+        # duration rather than by the number of SIGWINCH samples.
+        commit_interval = 0.016
+        commits = reports()[0] - 1
+        bound = int((settled - started) / commit_interval) + 1
+        self.assertGreaterEqual(commits, 2)
+        self.assertLessEqual(
+            commits, bound, f"{commits} resizes for {columns - 80} steps"
+        )
+        state = session.state()
+        self.assertEqual((state.columns, state.rows), (columns, 24))
 
     def test_nested_resize_reaches_each_real_child_pty(self) -> None:
         session = self.server.create_session("nested_resize")

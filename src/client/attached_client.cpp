@@ -2,6 +2,7 @@
 
 #include "client/host_input_parser.hpp"
 #include "client/host_terminal_theme.hpp"
+#include "client/outer_resize_schedule.hpp"
 #include "daemon/server.hpp"
 #include "diagnostic/latency_trace.hpp"
 #include "platform/io.hpp"
@@ -37,9 +38,6 @@ constexpr auto host_input_flush_delay = std::chrono::milliseconds(50);
 // Recognized OSC records are transport, not ambiguous Escape keys. Partial progress cannot renew
 // this deadline; exhaustion still fails closed instead of reinterpreting clipboard bytes as input.
 constexpr auto host_terminal_reply_timeout = std::chrono::seconds(30);
-// Window managers emit SIGWINCH repeatedly during one physical resize gesture. A trailing-edge
-// commit prevents those samples from becoming a stream of child PTY resizes and shell redraws.
-constexpr auto outer_resize_quiet_delay = std::chrono::milliseconds(50);
 // XTWINOPS 22;2 / 23;2 save and restore the user's window title around Lemma's OSC 2 titles.
 // Do not request Kitty's "report all keys" flag: several outer terminals accept that flag but
 // omit associated text, which turns ordinary printable input into semantically incomplete events.
@@ -926,31 +924,38 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
     diagnostic::LatencyTraceMarkerMatcher output_trace_matcher;
     std::uint64_t pending_trace_correlation = 0;
     auto host_input_deadline = std::chrono::steady_clock::time_point{};
-    auto outer_resize_deadline = std::chrono::steady_clock::time_point{};
+    // Window managers emit SIGWINCH repeatedly during one physical resize gesture. The schedule
+    // commits the first sample immediately and bounds the rest to one geometry per display
+    // interval.
+    OuterResizeSchedule outer_resize;
     auto sent_size = size;
     auto observed_size = size;
     bool in_band_geometry = false;
-    bool outer_resize_deferred = false;
     bool attached = terminal_setup_succeeded;
+    // Sends the latest pending geometry regardless of pacing. Later input calls this first so it
+    // cannot overtake the geometry that the user observed before typing.
     const auto commit_outer_resize = [&]() noexcept {
-      if (!outer_resize_deferred) {
+      if (!outer_resize.pending()) {
         return true;
       }
       const auto settled_size = in_band_geometry ? observed_size : terminal_size();
-      if ((settled_size.columns != sent_size.columns || settled_size.rows != sent_size.rows ||
-           settled_size.cell_width_px != sent_size.cell_width_px ||
-           settled_size.cell_height_px != sent_size.cell_height_px) &&
-          !send_resize(connection, settled_size, client_sequence)) {
+      const bool changed = settled_size.columns != sent_size.columns ||
+                           settled_size.rows != sent_size.rows ||
+                           settled_size.cell_width_px != sent_size.cell_width_px ||
+                           settled_size.cell_height_px != sent_size.cell_height_px;
+      if (changed && !send_resize(connection, settled_size, client_sequence)) {
         return false;
       }
       sent_size = settled_size;
-      outer_resize_deferred = false;
+      outer_resize.commit(std::chrono::steady_clock::now(), changed);
       return true;
     };
-    const auto defer_outer_resize = [&]() noexcept {
+    const auto observe_outer_resize = [&]() noexcept {
       resize_pending = 0;
-      outer_resize_deferred = true;
-      outer_resize_deadline = std::chrono::steady_clock::now() + outer_resize_quiet_delay;
+      outer_resize.observe(std::chrono::steady_clock::now());
+    };
+    const auto commit_due_outer_resize = [&]() noexcept {
+      return !outer_resize.due(std::chrono::steady_clock::now()) || commit_outer_resize();
     };
     // NOLINTNEXTLINE(readability-function-cognitive-complexity)
     const auto forward_host_batch = [&](const HostInputBatch& batch) noexcept {
@@ -981,7 +986,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
           // Once observed, native reports outrank potentially stale or pixel-less proxy ioctls.
           observed_size = event.window_size;
           in_band_geometry = true;
-          defer_outer_resize();
+          observe_outer_resize();
           break;
         case HostInputKind::ordinary:
           if (!send_input(connection, bytes, client_sequence)) {
@@ -1083,11 +1088,10 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
       }
 
       if (resize_pending != 0) {
-        defer_outer_resize();
+        observe_outer_resize();
         resize_wakeup.drain();
-      } else if (outer_resize_deferred &&
-                 std::chrono::steady_clock::now() >= outer_resize_deadline &&
-                 !commit_outer_resize()) {
+      }
+      if (!commit_due_outer_resize()) {
         break;
       }
 
@@ -1111,9 +1115,9 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
         const auto theme_timeout = static_cast<int>(std::max(remaining.count(), std::int64_t{1}));
         poll_timeout = poll_timeout < 0 ? theme_timeout : std::min(poll_timeout, theme_timeout);
       }
-      if (outer_resize_deferred) {
-        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-            outer_resize_deadline - std::chrono::steady_clock::now());
+      if (const auto resize_deadline = outer_resize.deadline(); resize_deadline.has_value()) {
+        const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(
+            *resize_deadline - std::chrono::steady_clock::now());
         const auto resize_timeout = static_cast<int>(std::max(remaining.count(), std::int64_t{1}));
         poll_timeout = poll_timeout < 0 ? resize_timeout : std::min(poll_timeout, resize_timeout);
       }
@@ -1143,8 +1147,12 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
         }
       }
       if ((resize_events.revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
-        defer_outer_resize();
+        observe_outer_resize();
         resize_wakeup.drain();
+        // Commit a leading-edge resize before draining server output toward the outer terminal.
+        if (!commit_due_outer_resize()) {
+          break;
+        }
       }
       if ((server_events.revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
         const auto received =
@@ -1168,11 +1176,10 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
       }
 
       if ((input_events.revents & POLLIN) != 0) {
-        // Input observed after a physical resize must not overtake the settled geometry update.
-        // It also gives an actively interacting user an immediate endpoint without waiting for the
-        // trailing-edge timer.
+        // Input observed after a physical resize must not overtake the latest geometry update,
+        // even while pacing would otherwise hold that geometry until the next interval.
         if (resize_pending != 0) {
-          defer_outer_resize();
+          observe_outer_resize();
           resize_wakeup.drain();
         }
         if (!commit_outer_resize()) {
