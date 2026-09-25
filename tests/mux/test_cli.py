@@ -86,6 +86,9 @@ class ProductionCliTest(unittest.TestCase):
         self.assertIn("TERM=lemma", captured)
         self.assertIn("Lemma terminal multiplexer", captured)
         self.assertIn("COLORS=256", captured)
+        for capability in ("Ss=", "Se=", "Cs=", "Cr="):
+            self.assertIn(capability, captured)
+        self.assertNotIn("Ms=", captured)
 
     def test_capture_and_split_fail_when_stdout_is_not_writable(self) -> None:
         started = self.start("output-failure", "printf 'small-output\\n'")

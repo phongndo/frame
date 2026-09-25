@@ -160,8 +160,10 @@ The default prefix is `C-b`.
 
 The mouse can focus panes, select tabs, create a tab from the status `+`, reorder tabs by dragging,
 resize split dividers, select terminal text, and scroll canonical history. Mouse reports are sent to
-the child when its active terminal modes request them. Visible pane and built-in editor cursors use
-a block shape; pane-requested blinking is preserved.
+the child when its active terminal modes request them. The focused pane's cursor keeps the shape
+(block, underline, or bar), blink state, and color its application requests. Copy mode, native
+prompts, and focused extension Surfaces use a steady block while they own the cursor. Detaching
+resets the outer terminal to its own configured cursor.
 
 The replaceable statusline extension supplies the normal top row. `C-b s` opens the shipped
 [session manager](extensions.md#shipped-user-layer).
@@ -292,8 +294,10 @@ It describes the virtual terminal inside a Pane, not the outer terminal. `TERMIN
 points to that entry, including when running directly from a build tree. Keep the resources with
 the executable when relocating an installation; copying only the binary is insufficient.
 
-The entry uses the xterm-256color base, adds direct-color and styled-underline declarations, and
-omits clipboard and cursor-shape capabilities not provided by the current policy. Ghostty's
+The entry uses the xterm-256color base, adds direct-color and styled-underline declarations,
+keeps its cursor shape and color capabilities, and omits the clipboard-write capability because
+[application clipboard](#application-clipboard) writes are denied by default. A pane's cursor-style
+reset selects a steady block, independent of the outer terminal's configured default. Ghostty's
 terminal-name query reports the same identity as `TERM`.
 
 An SSH destination also needs the entry to run terminfo-based applications under `TERM=lemma`.

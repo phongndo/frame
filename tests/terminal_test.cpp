@@ -314,32 +314,41 @@ TEST(TerminalTest, RendersOnlyChangedAnsiRows) {
 
 // GoogleTest assertions inflate the measured branch count.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST(TerminalTest, ProjectsEveryCursorStyleAsABlock) {
+TEST(TerminalTest, ProjectsEveryCursorShapeAndBlinkStateOnlyWhenChanged) {
   struct CursorProjection final {
     std::string_view canonical;
     std::string_view projected;
   };
+  // DECSCUSR 0 selects Ghostty's default steady block; mode 12 changes only the blink state.
   constexpr std::array projections{
       CursorProjection{.canonical = "\x1B[1 q", .projected = "\x1B[1 q"},
       CursorProjection{.canonical = "\x1B[2 q", .projected = "\x1B[2 q"},
-      CursorProjection{.canonical = "\x1B[3 q", .projected = "\x1B[1 q"},
-      CursorProjection{.canonical = "\x1B[4 q", .projected = "\x1B[2 q"},
-      CursorProjection{.canonical = "\x1B[5 q", .projected = "\x1B[1 q"},
-      CursorProjection{.canonical = "\x1B[6 q", .projected = "\x1B[2 q"},
+      CursorProjection{.canonical = "\x1B[3 q", .projected = "\x1B[3 q"},
+      CursorProjection{.canonical = "\x1B[4 q", .projected = "\x1B[4 q"},
+      CursorProjection{.canonical = "\x1B[5 q", .projected = "\x1B[5 q"},
+      CursorProjection{.canonical = "\x1B[6 q", .projected = "\x1B[6 q"},
+      CursorProjection{.canonical = "\x1B[0 q", .projected = "\x1B[2 q"},
+      CursorProjection{.canonical = "\x1B[6 q\x1B[?12h", .projected = "\x1B[5 q"},
   };
   auto terminal = make_terminal();
   std::array<std::byte, 8'192> output{};
+  const auto render = [&terminal, &output](const bool full) {
+    const auto rendered = terminal.render_ansi(output, full);
+    EXPECT_TRUE(rendered.has_value());
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    return std::string(reinterpret_cast<const char*>(output.data()), rendered.value_or({}).bytes);
+  };
+  static_cast<void>(render(true));
 
   for (const auto& projection : projections) {
     write_text(terminal, projection.canonical);
-    const auto rendered = terminal.render_ansi(output, true);
-    ASSERT_TRUE(rendered.has_value());
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-    const std::string_view ansi(reinterpret_cast<const char*>(output.data()), rendered->bytes);
-    EXPECT_THAT(ansi, testing::HasSubstr(projection.projected));
+    const auto ansi = render(false);
+    EXPECT_THAT(ansi, testing::HasSubstr(projection.projected)) << projection.canonical;
     if (projection.canonical != projection.projected) {
       EXPECT_THAT(ansi, testing::Not(testing::HasSubstr(projection.canonical)));
     }
+    EXPECT_THAT(render(false), testing::Not(testing::HasSubstr(" q"))) << projection.canonical;
+    EXPECT_THAT(render(true), testing::HasSubstr(projection.projected)) << projection.canonical;
   }
 }
 

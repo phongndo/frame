@@ -146,6 +146,12 @@ void invalidate_pane_mode_projections(const std::span<const PaneSurface> panes) 
   }
 }
 
+void invalidate_pane_cursor_projections(const std::span<const PaneSurface> panes) noexcept {
+  for (const auto& pane : panes) {
+    pane.terminal->invalidate_ansi_cursor_projection();
+  }
+}
+
 void invalidate_focused_cursor_projection(const std::span<const PaneSurface> panes) noexcept {
   const auto focused = std::ranges::find(panes, true, &PaneSurface::focused);
   if (focused != panes.end()) {
@@ -466,6 +472,9 @@ project_scene_cursor(const Scene scene, const std::span<std::byte> output, std::
                                  : CompositionError::invalid_pane);
     }
     used += rendered->bytes;
+    // The focused Surface projects Lemma's steady block while every Pane is unfocused. Returning
+    // focus to a Pane must restore its canonical shape even when the terminal has no damage.
+    invalidate_pane_cursor_projections(scene.panes);
     return {};
   }
   if (scene.grids.empty() || !pane_cursor.has_value()) {
