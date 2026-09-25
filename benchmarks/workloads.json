@@ -250,6 +250,10 @@
       ],
       "cli_mode": "interactive-open-loop",
       "fixture": "latency",
+      "comparison_sampling": {
+        "blocks": 8,
+        "repetition_scale": 10
+      },
       "subjects": [
         "direct",
         "lemma",

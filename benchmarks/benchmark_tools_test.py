@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import io
 import json
 import os
 import runpy
@@ -14,6 +16,7 @@ import sys
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar
 from unittest import mock
@@ -21,6 +24,7 @@ from unittest import mock
 from annotate_micro_report import git_metadata
 from benchmark_manifest import (
     ManifestError,
+    comparison_sampling,
     expected_failure,
     load_manifest,
     suite_workloads,
@@ -38,8 +42,14 @@ from check_regression import (
     statistic,
     validate_comparative_check,
 )
+from compare_mux import (
+    block_bootstrap_median_delta,
+    bootstrap_median_delta,
+    direct_control_drift,
+    merge_blocks,
+    run_subject_workload,
+)
 from compare_mux import main as comparison_main
-from compare_mux import run_subject_workload
 from compare_regression import (
     add_comparison,
     profile_values,
@@ -102,6 +112,11 @@ from mux_benchmark import (
 from ownership_census import record_sizes
 from performance_host import validate as validate_host
 from terminal_lab import validate_samples
+from validate_report import (
+    ReportError,
+    validate_comparison_report,
+    validate_process_report,
+)
 
 from tests.support.pty_process import PtyProcess
 
@@ -903,6 +918,333 @@ class ComparisonEvidenceTest(unittest.TestCase):
             self.assertTrue(execution["execution_order"])
             self.assertEqual(execution["seed"], 42)
 
+    def sampled_comparison(
+        self,
+        fail: Callable[[str, str, int, Path], Exception | None] | None = None,
+    ) -> tuple[int, dict[str, Any], str]:
+        """Run the comparison with synthetic fragments; fail may raise for one block."""
+        calls: list[tuple[str, str, int]] = []
+
+        def fragment(*args: Any) -> dict[str, Any]:
+            _, subject, workload, arguments, _, destination = args
+            repetitions = arguments.repetitions * comparison_sampling(workload)[1]
+            block = sum(1 for call in calls if call[:2] == (subject, workload["id"]))
+            calls.append((subject, workload["id"], repetitions))
+            if fail is not None:
+                error = fail(subject, workload["id"], block, destination)
+                if error is not None:
+                    raise error
+            # Distinct per-block values prove pooling keeps every block's samples.
+            samples = [1_000 * (block + 1)] * repetitions
+            return {
+                "schema": 5,
+                "multiplexer": subject,
+                "repetitions": repetitions,
+                "statistics_valid": {
+                    "p50": True,
+                    "p95": repetitions >= 20,
+                    "p99": repetitions >= 100,
+                },
+                "host_load_average": [0.1, 0.1, 0.1],
+                "maximum_gate_load_average_1m": 4.0,
+                "environment_valid": True,
+                "binaries": {"probe": {"sha256": "0" * 64, "bytes": 1}},
+                "scenario_ids": [workload["id"]],
+                "workloads": {
+                    workload["id"]: {
+                        "status": "completed",
+                        "clock": "steady_clock",
+                        "key_to_outer_bytes": {
+                            "samples_ns": samples,
+                            "p50_ns": samples[0],
+                        },
+                        "workload_cpu": {"block": block},
+                    }
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / "executable"
+            executable.touch()
+            output = root / "comparison.json"
+            arguments = ["compare_mux.py", "--output", str(output)]
+            arguments.extend(["--repetitions", "2"])
+            for name in ("server", "cli", "peer", "probe"):
+                arguments.extend([f"--{name}", str(executable)])
+            stderr = io.StringIO()
+            with (
+                mock.patch("sys.argv", arguments),
+                mock.patch("compare_mux.resolve_executable", return_value=executable),
+                mock.patch("compare_mux.run_subject_workload", side_effect=fragment),
+                mock.patch("sys.stdout"),
+                mock.patch("sys.stderr", stderr),
+            ):
+                status = comparison_main()
+            report = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(len(calls), len(report["execution_order"]))
+        return status, report, stderr.getvalue()
+
+    @staticmethod
+    def sampled_workload() -> tuple[dict[str, Any], dict[str, Any], int, int]:
+        manifest = load_manifest()
+        sampled = next(
+            workload
+            for workload in manifest["process_workloads"]
+            if "comparison_sampling" in workload
+        )
+        return manifest, sampled, *comparison_sampling(sampled)
+
+    def test_sampled_workload_pools_interleaved_bracketed_blocks(self) -> None:
+        manifest, sampled, blocks, scale = self.sampled_workload()
+        self.assertGreater(blocks, 1)
+        status, report, _ = self.sampled_comparison()
+
+        self.assertEqual(status, 0)
+        validate_comparison_report(report, manifest, allow_failures=False)
+        order = [
+            task
+            for task in report["execution_order"]
+            if task["workload"] == sampled["id"]
+        ]
+        multiplexers = {
+            subject for subject in sampled["subjects"] if subject != "direct"
+        }
+        # Each block runs every multiplexer between its two direct controls.
+        subjects = len(multiplexers) + 2
+        self.assertEqual(len(order), blocks * subjects)
+        positions = [
+            index
+            for index, task in enumerate(report["execution_order"])
+            if task["workload"] == sampled["id"] and task["phase"] == "before"
+        ]
+        self.assertGreater(
+            max(positions) - min(positions),
+            (blocks - 1) * subjects,
+            "sampled blocks were not interleaved with other workloads",
+        )
+        for block in range(blocks):
+            tasks = [task for task in order if task["block"] == block]
+            self.assertEqual(
+                (tasks[0]["subject"], tasks[0]["phase"]), ("direct", "before")
+            )
+            self.assertEqual(
+                (tasks[-1]["subject"], tasks[-1]["phase"]), ("direct", "after")
+            )
+            self.assertEqual({task["subject"] for task in tasks[1:-1]}, multiplexers)
+        lemma = next(r for r in report["results"] if r["multiplexer"] == "lemma")
+        self.assertEqual(lemma["repetitions"], 2)
+        self.assertEqual(lemma["workloads"]["warm_scroll"]["status"], "completed")
+        self.assertEqual(
+            len(lemma["workloads"]["warm_scroll"]["key_to_outer_bytes"]["samples_ns"]),
+            2,
+        )
+        pooled = lemma["workloads"][sampled["id"]]
+        self.assertEqual(pooled["repetitions"], 2 * scale * blocks)
+        endpoint = pooled["key_to_outer_bytes"]
+        self.assertEqual(len(endpoint["samples_ns"]), 2 * scale * blocks)
+        self.assertEqual(
+            endpoint["block_p50_ns"], [1_000 * (block + 1) for block in range(blocks)]
+        )
+        self.assertEqual(endpoint["p90_ns"], 1_000 * blocks)
+        self.assertNotIn("workload_cpu", pooled)
+        self.assertEqual(
+            [block["workload_cpu"] for block in pooled["blocks"]],
+            [{"block": block} for block in range(blocks)],
+        )
+        self.assertEqual(
+            sorted(block["block"] for block in pooled["blocks"]), list(range(blocks))
+        )
+        after = report["direct_after_controls"][sampled["id"]]
+        self.assertEqual(
+            len(after["key_to_outer_bytes"]["samples_ns"]), 2 * scale * blocks
+        )
+        methods = {
+            (delta["workload"], delta["confidence_method"])
+            for delta in report["direct_baseline_deltas"]
+        }
+        self.assertIn((sampled["id"], "block_bootstrap"), methods)
+        self.assertIn(("warm_scroll", "sample_bootstrap"), methods)
+        drift = next(
+            item
+            for item in report["direct_control_drift"]
+            if item["workload"] == sampled["id"]
+        )
+        self.assertEqual(len(drift["blocks"]), blocks)
+
+    def test_a_failed_block_is_recorded_and_the_comparison_continues(self) -> None:
+        manifest, sampled, blocks, _ = self.sampled_workload()
+
+        def fail(
+            subject: str, identifier: str, block: int, destination: Path
+        ) -> Exception | None:
+            if identifier != sampled["id"] or block != 2:
+                return None
+            if subject == "lemma":
+                destination.with_suffix(".stderr.log").write_text(
+                    "open-loop timeout: sent=200 pty=199", encoding="utf-8"
+                )
+                return subprocess.CalledProcessError(1, ["mux_benchmark.py"])
+            if subject == "zellij":
+                failed = {"status": "failed", "error": "native open-loop probe failed"}
+                destination.write_text(
+                    json.dumps({"workloads": {identifier: failed}}), encoding="utf-8"
+                )
+                return ReportError("zellij workload has an unreviewed failure")
+            return None
+
+        status, report, stderr = self.sampled_comparison(fail)
+
+        self.assertEqual(status, 1)
+        self.assertIn("failed validation", stderr)
+        self.assertIn(sampled["id"], stderr)
+        results = {result["multiplexer"]: result for result in report["results"]}
+        for subject, error in (
+            ("lemma", "CalledProcessError"),
+            ("zellij", "native open-loop probe failed"),
+        ):
+            pooled = results[subject]["workloads"][sampled["id"]]
+            self.assertEqual(pooled["status"], "failed")
+            self.assertIn(error, pooled["error"])
+            self.assertEqual(len(pooled["blocks"]), blocks)
+            self.assertEqual(pooled["completed_blocks"], blocks - 1)
+        lemma_failure = next(
+            block
+            for block in results["lemma"]["workloads"][sampled["id"]]["blocks"]
+            if block["status"] == "failed"
+        )
+        self.assertIn("open-loop timeout", lemma_failure["stderr_tail"])
+        self.assertTrue(lemma_failure["fragment"].endswith(".json"))
+        # Other subjects and workloads still completed.
+        self.assertEqual(
+            results["tmux"]["workloads"][sampled["id"]]["status"], "completed"
+        )
+        self.assertEqual(
+            results["lemma"]["workloads"]["warm_scroll"]["status"], "completed"
+        )
+        with self.assertRaisesRegex(ReportError, sampled["id"]):
+            validate_comparison_report(report, manifest, allow_failures=True)
+
+    def test_block_bootstrap_widens_plateaued_confidence(self) -> None:
+        baseline = [[10] * 100 for _ in range(5)]
+        # Three blocks settle on one plateau and two on another.
+        contender = [[100] * 100] * 3 + [[300] * 100] * 2
+        pooled_baseline = [sample for block in baseline for sample in block]
+        pooled_contender = [sample for block in contender for sample in block]
+
+        sample_interval = bootstrap_median_delta(pooled_baseline, pooled_contender, 7)
+        block_interval = block_bootstrap_median_delta(baseline, contender, 7)
+
+        self.assertEqual(sample_interval, (90, 90))
+        self.assertEqual(block_interval, (90, 290))
+
+    def test_direct_drift_pairs_each_blocks_controls(self) -> None:
+        def pooled(block_values: list[int]) -> dict[str, Any]:
+            blocks = [
+                {
+                    "status": "completed",
+                    "block": index,
+                    "key_to_outer_bytes": {"samples_ns": [value] * 4, "p50_ns": value},
+                }
+                for index, value in enumerate(block_values)
+            ]
+            return merge_blocks(blocks)
+
+        before = pooled([10, 30, 10, 30])
+        after = pooled([30, 10, 30, 10])
+
+        (drift,) = direct_control_drift(
+            {"workloads": {"sampled": before}}, {"sampled": after}
+        )
+
+        self.assertEqual(drift["drift_p50"], 0)
+        self.assertEqual(
+            [block["drift_p50"] for block in drift["blocks"]], [20, -20, 20, -20]
+        )
+        self.assertEqual(drift["maximum_absolute_block_drift_p50"], 20)
+
+    def test_only_comparison_sampling_may_raise_a_workload_sample_count(self) -> None:
+        manifest, sampled, _, _ = self.sampled_workload()
+        _, report, _ = self.sampled_comparison()
+        lemma = next(r for r in report["results"] if r["multiplexer"] == "lemma")
+        # A process or gate report cannot claim extra samples through the pooled count.
+        standalone = {
+            **lemma,
+            "scenario_ids": [sampled["id"]],
+            "workloads": {sampled["id"]: lemma["workloads"][sampled["id"]]},
+        }
+        with self.assertRaisesRegex(ReportError, "expected 1 or 2"):
+            validate_process_report(standalone, manifest, allow_failures=False)
+        unsampled = copy.deepcopy(lemma)
+        warm = unsampled["workloads"]["warm_scroll"]
+        warm["repetitions"] = 4
+        warm["key_to_outer_bytes"]["samples_ns"] *= 2
+        with self.assertRaisesRegex(ReportError, "expected 1 or 2"):
+            validate_process_report(unsampled, manifest, allow_failures=False)
+
+    def test_comparison_validation_requires_every_declared_block(self) -> None:
+        manifest, sampled, blocks, scale = self.sampled_workload()
+        _, report, _ = self.sampled_comparison()
+
+        def lemma(document: dict[str, Any]) -> dict[str, Any]:
+            result = next(r for r in document["results"] if r["multiplexer"] == "lemma")
+            return result["workloads"][sampled["id"]]
+
+        def after(document: dict[str, Any]) -> dict[str, Any]:
+            return document["direct_after_controls"][sampled["id"]]
+
+        def drop_samples(pooled: dict[str, Any]) -> None:
+            pooled["repetitions"] -= 2 * scale
+            endpoint = pooled["key_to_outer_bytes"]
+            endpoint["samples_ns"] = endpoint["samples_ns"][2 * scale :]
+
+        def drop_block(pooled: dict[str, Any]) -> None:
+            pooled["blocks"].pop()
+
+        def drop_block_median(pooled: dict[str, Any]) -> None:
+            pooled["key_to_outer_bytes"]["block_p50_ns"].pop()
+
+        def duplicate_block(pooled: dict[str, Any]) -> None:
+            pooled["blocks"][1]["block"] = pooled["blocks"][0]["block"]
+
+        def fail_block(pooled: dict[str, Any]) -> None:
+            pooled["blocks"][0]["status"] = "failed"
+
+        cases = (
+            (lemma, drop_samples, "did not pool every block"),
+            (lemma, drop_block, f"retained {blocks - 1} of {blocks} blocks"),
+            (lemma, drop_block_median, "block medians do not match"),
+            (lemma, duplicate_block, "invalid block indices"),
+            (after, drop_samples, "did not pool every block"),
+            (after, drop_block, f"retained {blocks - 1} of {blocks} blocks"),
+            (after, drop_block_median, "block medians do not match"),
+            (after, fail_block, "block .* did not complete"),
+        )
+        for select, corrupt, message in cases:
+            with self.subTest(target=select.__name__, corruption=corrupt.__name__):
+                document = copy.deepcopy(report)
+                corrupt(select(document))
+                with self.assertRaisesRegex(ReportError, message):
+                    validate_comparison_report(document, manifest, allow_failures=True)
+        failed_after = copy.deepcopy(report)
+        after(failed_after).update(status="failed", error="probe timeout")
+        with self.assertRaisesRegex(ReportError, "after-control .* probe timeout"):
+            validate_comparison_report(failed_after, manifest, allow_failures=True)
+
+    def test_a_failed_block_fails_the_pooled_workload(self) -> None:
+        completed = {
+            "status": "completed",
+            "key_to_outer_bytes": {"samples_ns": [1, 2], "p50_ns": 1},
+        }
+        failed = {"status": "failed", "error": "PTY write timed out"}
+
+        merged = merge_blocks([completed, failed, completed])
+
+        self.assertEqual(merged["status"], "failed")
+        self.assertEqual(merged["error"], failed["error"])
+        self.assertEqual(merged["completed_blocks"], 2)
+        self.assertEqual(merged["blocks"], [completed, failed, completed])
+
     def test_capture_failure_retains_stderr_without_a_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1278,6 +1620,19 @@ class BenchmarkManifestTest(unittest.TestCase):
             self.assertRaisesRegex(TimeoutError, "no such session"),
         ):
             wait_for_profile_panes(runtime, client, "profile", 2)
+
+    def test_comparison_sampling_is_bounded(self) -> None:
+        for sampling in (
+            {"blocks": 0, "repetition_scale": 10},
+            {"blocks": 8, "repetition_scale": 101},
+            {"blocks": 8},
+        ):
+            manifest = json.loads(
+                Path("benchmarks/workloads.json").read_text(encoding="utf-8")
+            )
+            manifest["process_workloads"][0]["comparison_sampling"] = sampling
+            with self.assertRaisesRegex(ManifestError, "comparison_sampling"):
+                validate_manifest(manifest)
 
     def test_unsupported_reasons_cannot_hide_a_supported_subject(self) -> None:
         manifest = json.loads(

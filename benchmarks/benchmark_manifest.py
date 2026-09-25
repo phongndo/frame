@@ -159,6 +159,22 @@ def validate_manifest(manifest: Any) -> None:
                     f"{label}.unsupported_subjects must name only excluded subjects"
                 )
             _nonempty_string(reason, f"{label}.unsupported_subjects.{subject}")
+        if "comparison_sampling" in workload:
+            sampling = workload.get("comparison_sampling")
+            limits = {"blocks": 32, "repetition_scale": 100}
+            if not isinstance(sampling, dict) or set(sampling) != set(limits):
+                raise ManifestError(
+                    f"{label}.comparison_sampling must define blocks and repetition_scale"
+                )
+            for key, value in sampling.items():
+                if (
+                    not isinstance(value, int)
+                    or isinstance(value, bool)
+                    or not 1 <= value <= limits[str(key)]
+                ):
+                    raise ManifestError(
+                        f"{label}.comparison_sampling.{key} is outside the supported bounds"
+                    )
     if len(identifiers) != len(set(identifiers)):
         raise ManifestError("process workload IDs must be unique")
     if len(cli_modes) != len(set(cli_modes)):
@@ -449,6 +465,16 @@ def unsupported_result(workload: dict[str, Any], subject: str) -> dict[str, str]
         if isinstance(reason, str)
         else f"{workload['id']} is not defined for the {subject} subject",
     }
+
+
+def comparison_sampling(workload: dict[str, Any]) -> tuple[int, int]:
+    """Return (blocks, repetition_scale) for one workload in the comparison suite.
+
+    Only the cross-subject comparison uses this: gate and extension captures run the
+    workload's plain repetition count.
+    """
+    sampling = workload.get("comparison_sampling", {})
+    return int(sampling.get("blocks", 1)), int(sampling.get("repetition_scale", 1))
 
 
 def workload_map(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:

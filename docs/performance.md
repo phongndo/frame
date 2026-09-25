@@ -67,6 +67,26 @@ Repeated warm-scroll commands use sequence-numbered, delimited completion marker
 an earlier completion cannot finish a later sample. Execution randomizes workload blocks and
 subjects, with direct controls bracketing each supported block.
 
+A workload's `comparison_sampling` makes the comparison run several independently launched blocks,
+each with scaled repetitions, shuffled among the other workload blocks. Reports pool the raw
+samples, add p90 and per-block medians, and keep block-varying CPU and resource snapshots per block.
+Samples within a block are correlated, so the direct-baseline confidence interval resamples whole
+blocks, and direct-control drift pairs each block's own before and after controls. A block that
+crashes or fails is recorded with its error, fragment, and stderr tail; its subject's pooled result
+fails, and the remaining blocks and workloads still run. The comparison then writes the report and
+validates it, so an unreviewed failure exits nonzero after the evidence is saved. Other workloads
+still stop at their first unreviewed failure. Validation requires every declared block in pooled
+results and direct after-controls. Gate and extension captures ignore `comparison_sampling` and
+keep one repetition count per report.
+
+`interactive_open_loop` uses this because each 120 Hz key arrives after the probe, client, daemon,
+and peer have idled for about 8 ms, so every sample includes wake-from-idle costs. They grow with the
+inter-key interval and as the rest of the host goes quiet, for the direct control too. On the
+powersave host, consecutive keys settle on latency plateaus that switch every few tens of keys and
+can hold a whole block, so one 20-key block (about 0.2 s) mostly samples host state. Read the pooled
+p50/p90 with block medians and direct controls; p95 and above also absorb transient host load. The
+workload never keeps CPUs awake: absolute values include the wake-up cost a typist pays on that host.
+
 Latency endpoints are deliberately distinct:
 
 ```text

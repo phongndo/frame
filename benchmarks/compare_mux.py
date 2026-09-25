@@ -15,8 +15,12 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from benchmark_manifest import load_manifest, unsupported_result
-from validate_report import validate_process_report
+from benchmark_manifest import comparison_sampling, load_manifest, unsupported_result
+from validate_report import (
+    ReportError,
+    validate_comparison_report,
+    validate_process_report,
+)
 
 
 def resolve_executable(value: str) -> Path:
@@ -31,6 +35,79 @@ def percentile(samples: list[int], quantile: float) -> int:
     ordered = sorted(samples)
     index = max(0, min(len(ordered) - 1, math.ceil(quantile * len(ordered)) - 1))
     return ordered[index]
+
+
+def distribution_summary(samples: list[int], block_p50: list[int]) -> dict[str, Any]:
+    """Summarize samples pooled from independently launched, interleaved blocks."""
+    return {
+        "samples_ns": samples,
+        "p50_ns": percentile(samples, 0.50),
+        "p90_ns": percentile(samples, 0.90),
+        "p95_ns": percentile(samples, 0.95),
+        "p99_ns": percentile(samples, 0.99),
+        "p95_valid": len(samples) >= 20,
+        "p99_valid": len(samples) >= 100,
+        # Per-block medians expose host-state regimes that pooling would otherwise hide.
+        "block_p50_ns": block_p50,
+    }
+
+
+def merge_blocks(blocks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pool block distributions; any failed block fails the workload with every block retained."""
+    completed = [block for block in blocks if block.get("status") == "completed"]
+    if len(completed) != len(blocks):
+        failed = next(block for block in blocks if block.get("status") != "completed")
+        return {**failed, "completed_blocks": len(completed), "blocks": blocks}
+    merged: dict[str, Any] = {"status": "completed"}
+    for key, value in blocks[0].items():
+        values = [block.get(key) for block in blocks]
+        if isinstance(value, dict) and isinstance(value.get("samples_ns"), list):
+            summaries = [item for item in values if isinstance(item, dict)]
+            if len(summaries) != len(blocks) or not all(
+                isinstance(item.get("samples_ns"), list) for item in summaries
+            ):
+                raise ValueError(f"comparison blocks disagree on distribution {key}")
+            merged[key] = distribution_summary(
+                [sample for item in summaries for sample in item["samples_ns"]],
+                [item["p50_ns"] for item in summaries],
+            )
+        elif all(item == value for item in values):
+            merged[key] = value
+    # Block-varying values such as batch CPU and resource snapshots remain per block.
+    merged["blocks"] = blocks
+    return merged
+
+
+def block_failure(
+    destination: Path, identifier: str, block: int, error: Exception
+) -> dict[str, Any]:
+    """Record a sampled block that crashed or reported an unreviewed failure.
+
+    The subject's own failed result, when its fragment exists, keeps its error text and
+    classification; otherwise the harness error and stderr tail stand in for it.
+    """
+    try:
+        stderr_tail = destination.with_suffix(".stderr.log").read_text(
+            encoding="utf-8", errors="replace"
+        )[-2_048:]
+    except OSError:
+        stderr_tail = ""
+    failure: dict[str, Any] = {
+        "status": "failed",
+        "error": f"{type(error).__name__}: {error}",
+        "fragment": str(destination),
+        "stderr_tail": stderr_tail,
+    }
+    try:
+        recorded = json.loads(destination.read_text(encoding="utf-8"))["workloads"][
+            identifier
+        ]
+    except (OSError, ValueError, KeyError, TypeError):
+        recorded = None
+    if isinstance(recorded, dict) and recorded.get("status") == "failed":
+        failure.update(recorded)
+    failure["block"] = block
+    return failure
 
 
 def distributions(
@@ -69,6 +146,48 @@ def bootstrap_median_delta(
     return percentile(deltas, 0.025), percentile(deltas, 0.975)
 
 
+def block_bootstrap_median_delta(
+    baseline: list[list[int]],
+    contender: list[list[int]],
+    seed: int,
+    resamples: int = 2_000,
+) -> tuple[int, int]:
+    """Resample whole blocks: samples within a block share a host-state plateau."""
+    generator = random.Random(seed)
+    deltas = []
+    for _ in range(resamples):
+        baseline_sample = [
+            sample
+            for _ in baseline
+            for sample in baseline[generator.randrange(len(baseline))]
+        ]
+        contender_sample = [
+            sample
+            for _ in contender
+            for sample in contender[generator.randrange(len(contender))]
+        ]
+        deltas.append(
+            percentile(contender_sample, 0.50) - percentile(baseline_sample, 0.50)
+        )
+    return percentile(deltas, 0.025), percentile(deltas, 0.975)
+
+
+def block_distributions(
+    result: dict[str, Any], path: tuple[str, ...]
+) -> list[list[int]] | None:
+    """Return one path's per-block samples for a pooled result, if it has blocks."""
+    blocks = result.get("blocks")
+    if not isinstance(blocks, list) or not blocks:
+        return None
+    samples = [distributions(block).get(path) for block in blocks]
+    present = [block for block in samples if block]
+    return present if len(present) == len(blocks) else None
+
+
+def block_indices(result: dict[str, Any]) -> list[int]:
+    return [int(block["block"]) for block in result["blocks"]]
+
+
 def direct_deltas(
     reports: dict[str, dict[str, Any]], thresholds: dict[str, float]
 ) -> list[dict[str, Any]]:
@@ -97,9 +216,18 @@ def direct_deltas(
                 seed = int.from_bytes(
                     hashlib.sha256(identity.encode("utf-8")).digest()[:8], "big"
                 )
-                confidence_low, confidence_high = bootstrap_median_delta(
-                    baseline_samples, samples, seed
-                )
+                baseline_blocks = block_distributions(baseline, path)
+                subject_blocks = block_distributions(result, path)
+                if baseline_blocks is not None and subject_blocks is not None:
+                    confidence_method = "block_bootstrap"
+                    confidence_low, confidence_high = block_bootstrap_median_delta(
+                        baseline_blocks, subject_blocks, seed
+                    )
+                else:
+                    confidence_method = "sample_bootstrap"
+                    confidence_low, confidence_high = bootstrap_median_delta(
+                        baseline_samples, samples, seed
+                    )
                 ratio = subject_p50 / direct_p50 if direct_p50 > 0 else None
                 practical_change = (
                     abs(subject_p50 - direct_p50)
@@ -118,6 +246,7 @@ def direct_deltas(
                         "subject_p50": subject_p50,
                         "added_p50": subject_p50 - direct_p50,
                         "added_p50_confidence_95": [confidence_low, confidence_high],
+                        "confidence_method": confidence_method,
                         "p50_ratio": ratio,
                         "practical_change": practical_change,
                     }
@@ -144,17 +273,70 @@ def direct_control_drift(
                 continue
             before_p50 = percentile(before_samples, 0.50)
             after_p50 = percentile(after_samples, 0.50)
-            result.append(
-                {
-                    "workload": workload,
-                    "metric_path": list(path),
-                    "before_p50": before_p50,
-                    "after_p50": after_p50,
-                    "drift_p50": after_p50 - before_p50,
-                    "drift_ratio": after_p50 / before_p50 if before_p50 > 0 else None,
-                }
-            )
+            drift: dict[str, Any] = {
+                "workload": workload,
+                "metric_path": list(path),
+                "before_p50": before_p50,
+                "after_p50": after_p50,
+                "drift_p50": after_p50 - before_p50,
+                "drift_ratio": after_p50 / before_p50 if before_p50 > 0 else None,
+            }
+            before_blocks = block_distributions(before, path)
+            after_blocks = block_distributions(after, path)
+            if (
+                before_blocks is not None
+                and after_blocks is not None
+                and block_indices(before) == block_indices(after)
+            ):
+                # Pair each block's own bracketing controls: opposite-sign drift in
+                # different blocks cancels in the pooled comparison above.
+                blocks = [
+                    {
+                        "block": block_index,
+                        "before_p50": percentile(before_block, 0.50),
+                        "after_p50": percentile(after_block, 0.50),
+                        "drift_p50": percentile(after_block, 0.50)
+                        - percentile(before_block, 0.50),
+                    }
+                    for block_index, before_block, after_block in zip(
+                        block_indices(before), before_blocks, after_blocks, strict=True
+                    )
+                ]
+                drift["blocks"] = blocks
+                drift["maximum_absolute_block_drift_p50"] = max(
+                    abs(block["drift_p50"]) for block in blocks
+                )
+            result.append(drift)
     return result
+
+
+def execution_plan(
+    blocks: list[tuple[dict[str, Any], int]],
+    subjects: list[str],
+    generator: random.Random,
+) -> list[dict[str, Any]]:
+    """Bracket each shuffled block with direct controls around shuffled subjects."""
+    execution_order: list[dict[str, Any]] = []
+    for workload, block in blocks:
+        supported = [
+            subject
+            for subject in subjects
+            if subject != "direct" and subject in workload["subjects"]
+        ]
+        generator.shuffle(supported)
+        phases = [("subject", subject) for subject in supported]
+        if "direct" in workload["subjects"]:
+            phases = [("before", "direct"), *phases, ("after", "direct")]
+        execution_order.extend(
+            {
+                "subject": subject,
+                "workload": workload["id"],
+                "phase": phase,
+                "block": block,
+            }
+            for phase, subject in phases
+        )
+    return execution_order
 
 
 def run_subject_workload(
@@ -181,7 +363,7 @@ def run_subject_workload(
         "--probe",
         str(arguments.probe.resolve()),
         "--repetitions",
-        str(arguments.repetitions),
+        str(arguments.repetitions * comparison_sampling(workload)[1]),
         "--output",
         str(destination),
     ]
@@ -256,6 +438,11 @@ def main() -> int:
             ]
         if arguments.repetitions < 1 or arguments.repetitions > 10_000:
             parser.error("--repetitions must be between 1 and 10000")
+        if any(
+            arguments.repetitions * comparison_sampling(workload)[1] > 10_000
+            for workload in manifest["process_workloads"]
+        ):
+            parser.error("scaled comparison repetitions must not exceed 10000")
         subjects = list(manifest["terminal_lab"]["subjects"])
         workloads = [
             workload
@@ -263,48 +450,21 @@ def main() -> int:
             if workload["id"] in manifest["suites"]["comparison"]
         ]
         generator = random.Random(arguments.seed)
-        workload_order = list(workloads)
-        generator.shuffle(workload_order)
-        execution_order: list[dict[str, str]] = []
-        for workload in workload_order:
-            supported = [
-                subject
-                for subject in subjects
-                if subject != "direct" and subject in workload["subjects"]
-            ]
-            generator.shuffle(supported)
-            if "direct" in workload["subjects"]:
-                execution_order.append(
-                    {
-                        "subject": "direct",
-                        "workload": workload["id"],
-                        "phase": "before",
-                    }
-                )
-            execution_order.extend(
-                {
-                    "subject": subject,
-                    "workload": workload["id"],
-                    "phase": "subject",
-                }
-                for subject in supported
-            )
-            if "direct" in workload["subjects"]:
-                execution_order.append(
-                    {
-                        "subject": "direct",
-                        "workload": workload["id"],
-                        "phase": "after",
-                    }
-                )
+        blocks = [
+            (workload, block)
+            for workload in workloads
+            for block in range(comparison_sampling(workload)[0])
+        ]
+        generator.shuffle(blocks)
+        execution_order = execution_plan(blocks, subjects, generator)
         executables = {
             "tmux": resolve_executable(arguments.tmux),
             "zellij": resolve_executable(arguments.zellij),
             "herdr": resolve_executable(arguments.herdr),
         }
         harness = Path(__file__).with_name("mux_benchmark.py").resolve()
-        reports: dict[str, dict[str, Any]] = {}
-        direct_after_controls: dict[str, dict[str, Any]] = {}
+        block_results: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        base_reports: dict[str, dict[str, Any]] = {}
         environment_valid = True
         workload_by_id = {workload["id"]: workload for workload in workloads}
         evidence_directory = arguments.output.with_suffix(".fragments")
@@ -333,29 +493,71 @@ def main() -> int:
         for index, task in enumerate(execution_order):
             subject = task["subject"]
             workload = workload_by_id[task["workload"]]
-            fragment = run_subject_workload(
-                harness,
-                subject,
-                workload,
-                arguments,
-                executables,
-                fragment_root / f"{index:03d}-{subject}-{workload['id']}.json",
+            sampled = comparison_sampling(workload) != (1, 1)
+            destination = fragment_root / f"{index:03d}-{subject}-{workload['id']}.json"
+            fragment: dict[str, Any] | None = None
+            try:
+                fragment = run_subject_workload(
+                    harness,
+                    subject,
+                    workload,
+                    arguments,
+                    executables,
+                    destination,
+                )
+                result = fragment["workloads"][workload["id"]]
+            except (subprocess.SubprocessError, ValueError) as error:
+                if not sampled:
+                    raise
+                # One failed block of many must not discard the other subjects and
+                # workloads: the pooled result fails and final validation rejects it.
+                result = block_failure(
+                    destination, workload["id"], task["block"], error
+                )
+            if fragment is not None:
+                environment_valid = environment_valid and bool(
+                    fragment.get("environment_valid")
+                )
+                base_reports.setdefault(subject, fragment)
+            if sampled:
+                result = {**result, "block": task["block"]}
+            phase = "after" if task["phase"] == "after" else "subject"
+            block_results.setdefault((subject, workload["id"], phase), []).append(
+                result
             )
-            environment_valid = environment_valid and bool(
-                fragment.get("environment_valid")
-            )
-            workload_result = fragment["workloads"][workload["id"]]
-            if subject == "direct" and task["phase"] == "after":
-                direct_after_controls[workload["id"]] = workload_result
+        missing_reports = sorted(set(subjects).difference(base_reports))
+        if missing_reports:
+            raise RuntimeError(f"no subject report was captured for {missing_reports}")
+        reports: dict[str, dict[str, Any]] = {}
+        direct_after_controls: dict[str, dict[str, Any]] = {}
+        for (subject, identifier, phase), results in block_results.items():
+            blocks_declared, scale = comparison_sampling(workload_by_id[identifier])
+            if (blocks_declared, scale) == (1, 1):
+                merged = results[0]
+            else:
+                merged = merge_blocks(results)
+                if merged["status"] == "completed":
+                    # Validation checks pooled distributions against this count.
+                    merged["repetitions"] = (
+                        arguments.repetitions * scale * blocks_declared
+                    )
+            if phase == "after":
+                direct_after_controls[identifier] = merged
                 continue
             if subject not in reports:
                 reports[subject] = {
-                    **fragment,
+                    **base_reports[subject],
+                    "repetitions": arguments.repetitions,
+                    "statistics_valid": {
+                        "p50": True,
+                        "p95": arguments.repetitions >= 20,
+                        "p99": arguments.repetitions >= 100,
+                    },
                     "scenario_ids": [],
                     "workloads": {},
                 }
-            reports[subject]["scenario_ids"].append(workload["id"])
-            reports[subject]["workloads"][workload["id"]] = workload_result
+            reports[subject]["scenario_ids"].append(identifier)
+            reports[subject]["workloads"][identifier] = merged
         scenario_order = [workload["id"] for workload in workloads]
         for subject in subjects:
             report = reports[subject]
@@ -394,7 +596,9 @@ def main() -> int:
         "policy": (
             "Workload blocks are randomized, non-direct subjects are randomized within "
             "each block, and direct controls bracket every supported block; all use an "
-            "identical native probe, fixture, dimensions, and completion endpoint."
+            "identical native probe, fixture, dimensions, and completion endpoint. "
+            "Workloads with comparison_sampling run several independently launched "
+            "blocks interleaved across the run and pool their raw distributions."
         ),
         "results": [reports[subject] for subject in subjects],
         "direct_after_controls": direct_after_controls,
@@ -410,6 +614,16 @@ def main() -> int:
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(encoded, encoding="utf-8")
     print(encoded, end="")
+    try:
+        # Recorded block failures reach here; reviewed competitor failures remain valid.
+        validate_comparison_report(report, manifest, allow_failures=True)
+    except ReportError as error:
+        print(
+            f"comparison report {arguments.output} failed validation: {error}; "
+            f"comparison fragments retained in {fragment_root}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

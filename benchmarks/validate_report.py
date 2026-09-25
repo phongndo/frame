@@ -11,6 +11,7 @@ from typing import Any
 
 from benchmark_manifest import (
     ManifestError,
+    comparison_sampling,
     expected_failure,
     load_manifest,
     workload_map,
@@ -61,12 +62,66 @@ def sample_distributions(value: Any, prefix: str = "") -> list[tuple[str, list[A
     return distributions
 
 
+def validate_pooled_blocks(
+    result: dict[str, Any], label: str, blocks: int, block_repetitions: int
+) -> None:
+    """Require a comparison-sampled result to pool every declared block completely."""
+    expected = blocks * block_repetitions
+    if result.get("repetitions") != expected:
+        raise ReportError(f"{label} did not pool every block")
+    recorded = result.get("blocks")
+    if not isinstance(recorded, list) or len(recorded) != blocks:
+        raise ReportError(f"{label} retained {len(recorded or [])} of {blocks} blocks")
+    indices = [
+        block.get("block") if isinstance(block, dict) else None for block in recorded
+    ]
+    if sorted(index for index in indices if isinstance(index, int)) != list(
+        range(blocks)
+    ):
+        raise ReportError(f"{label} has invalid block indices")
+    for block in recorded:
+        if block.get("status") != "completed":
+            raise ReportError(f"{label} block {block.get('block')} did not complete")
+        for name, samples in sample_distributions(block):
+            if name.endswith("samples_ns") and len(samples) not in {
+                1,
+                block_repetitions,
+            }:
+                raise ReportError(
+                    f"{label} block {block['block']}.{name} has {len(samples)} samples, "
+                    f"expected {block_repetitions}"
+                )
+    pooled = {
+        key: value
+        for key, value in result.items()
+        if isinstance(value, dict) and isinstance(value.get("samples_ns"), list)
+    }
+    if not pooled:
+        raise ReportError(f"{label} retained no pooled distributions")
+    for key, value in pooled.items():
+        if len(value["samples_ns"]) != expected:
+            raise ReportError(
+                f"{label}.{key} has {len(value['samples_ns'])} samples, expected {expected}"
+            )
+        block_p50 = value.get("block_p50_ns")
+        if not isinstance(block_p50, list) or block_p50 != [
+            block.get(key, {}).get("p50_ns") for block in recorded
+        ]:
+            raise ReportError(f"{label}.{key} block medians do not match its blocks")
+
+
 def validate_process_report(
     report: dict[str, Any],
     manifest: dict[str, Any],
     *,
     allow_failures: bool,
+    sampled_blocks: dict[str, tuple[int, int]] | None = None,
 ) -> None:
+    """Validate one subject report.
+
+    sampled_blocks maps comparison-sampled workload IDs to (blocks, repetitions per block).
+    Only comparison reports pass it; every other report keeps its report-wide count.
+    """
     if report.get("schema") != REPORT_SCHEMA:
         raise ReportError(f"process report must use schema {REPORT_SCHEMA}")
     subject = report.get("multiplexer")
@@ -144,12 +199,19 @@ def validate_process_report(
         distributions = sample_distributions(result)
         if not distributions:
             raise ReportError(f"workload {identifier} retained no raw distributions")
+        expected = repetitions
+        if sampled_blocks is not None and identifier in sampled_blocks:
+            blocks, block_repetitions = sampled_blocks[identifier]
+            validate_pooled_blocks(
+                result, f"{subject} workload {identifier}", blocks, block_repetitions
+            )
+            expected = blocks * block_repetitions
         for label, samples in distributions:
             if label.endswith("samples_ns") or label.endswith("samples_bytes"):
-                if len(samples) not in {1, repetitions}:
+                if len(samples) not in {1, expected}:
                     raise ReportError(
                         f"workload {identifier}.{label} has {len(samples)} samples, "
-                        f"expected 1 or {repetitions}"
+                        f"expected 1 or {expected}"
                     )
 
     profiles = report.get("pane_profiles")
@@ -239,19 +301,27 @@ def validate_comparison_report(
             subject,
             identifier,
             "before" if subject == "direct" else "subject",
+            block,
         )
         for identifier in manifest["suites"]["comparison"]
+        for block in range(comparison_sampling(scenarios[identifier])[0])
         for subject in expected
         if subject in scenarios[identifier]["subjects"]
     }
     expected_tasks.update(
-        ("direct", identifier, "after")
+        ("direct", identifier, "after", block)
         for identifier in manifest["suites"]["comparison"]
+        for block in range(comparison_sampling(scenarios[identifier])[0])
         if "direct" in scenarios[identifier]["subjects"]
     )
     observed_tasks = (
         {
-            (task.get("subject"), task.get("workload"), task.get("phase"))
+            (
+                task.get("subject"),
+                task.get("workload"),
+                task.get("phase"),
+                task.get("block"),
+            )
             for task in execution_order
             if isinstance(task, dict)
         }
@@ -274,13 +344,38 @@ def validate_comparison_report(
     }
     if not isinstance(controls, dict) or set(controls) != expected_controls:
         raise ReportError("comparison report has no complete direct after-controls")
-    if any(
-        not isinstance(result, dict) or result.get("status") != "completed"
-        for result in controls.values()
-    ):
-        raise ReportError("a direct after-control did not complete")
     for result in results:
-        validate_process_report(result, manifest, allow_failures=allow_failures)
+        repetitions = result.get("repetitions")
+        sampled_blocks = (
+            {
+                identifier: (blocks, repetitions * scale)
+                for identifier in manifest["suites"]["comparison"]
+                for blocks, scale in (comparison_sampling(scenarios[identifier]),)
+                if (blocks, scale) != (1, 1)
+            }
+            if isinstance(repetitions, int)
+            else None
+        )
+        validate_process_report(
+            result,
+            manifest,
+            allow_failures=allow_failures,
+            sampled_blocks=sampled_blocks,
+        )
+        if result.get("multiplexer") != "direct" or sampled_blocks is None:
+            continue
+        for identifier, control in controls.items():
+            if not isinstance(control, dict) or control.get("status") != "completed":
+                error = control.get("error") if isinstance(control, dict) else None
+                raise ReportError(
+                    f"direct after-control {identifier} did not complete: {error}"
+                )
+            if identifier in sampled_blocks:
+                validate_pooled_blocks(
+                    control,
+                    f"direct after-control {identifier}",
+                    *sampled_blocks[identifier],
+                )
 
 
 def validate_micro_report(report: dict[str, Any]) -> None:
