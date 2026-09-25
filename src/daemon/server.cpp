@@ -1989,9 +1989,25 @@ auto pane_status(const RuntimeEndpoint& endpoint, const std::string_view session
   return {.status = OperationStatus::applied, .process = process, .value = value};
 }
 
+// Every encoded subscription ends with the object's closing brace and LF.
+[[nodiscard]] auto request_signals(std::optional<std::string> request)
+    -> std::optional<std::string> {
+  try {
+    if (request.has_value()) {
+      request->insert(request->size() - 2U, R"(,"signals":true)");
+    }
+    return request;
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
 auto events(const RuntimeEndpoint& endpoint, const std::optional<std::string_view> session,
-            const std::span<const PaneId> panes, const bool screen) -> int {
-  const auto request = event_request(session, panes, screen);
+            const std::span<const PaneId> panes, const bool screen, const bool signals) -> int {
+  auto request = event_request(session, panes, screen);
+  if (signals) {
+    request = request_signals(std::move(request));
+  }
   if (!request.has_value()) {
     return 2;
   }

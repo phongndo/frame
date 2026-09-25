@@ -14,6 +14,10 @@
     {
       "file": "patches/kitty-render.patch",
       "sha256": "23d862ca0039ba21007cd47714a9f61e15bb3edd87d7737f9819494344cb9dc8"
+    },
+    {
+      "file": "patches/semantic-prompt.patch",
+      "sha256": "c06e49fb25e20b744f547791507d89cf38d953ba0f2836f9640a2c268edc5a66"
     }
   ],
   "zig_version": "0.16.0",

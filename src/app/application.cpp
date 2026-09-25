@@ -390,19 +390,30 @@ struct SurfaceArguments final {
   }
   // Only this operation's options own a following value. Other option-like words can be
   // positional titles, and must not consume selectors or help flags that follow them.
-  constexpr std::array options{
-      std::pair{"start", "--cwd"},      std::pair{"start", "-c"},
-      std::pair{"new", "--cwd"},        std::pair{"new", "-c"},
-      std::pair{"new", "--title"},      std::pair{"new", "--focus"},
-      std::pair{"split", "--cwd"},      std::pair{"split", "-c"},
-      std::pair{"split", "--focus"},    std::pair{"input", "--text"},
-      std::pair{"input", "--paste"},    std::pair{"input", "--key"},
-      std::pair{"send", "--text"},      std::pair{"capture", "--source"},
-      std::pair{"capture", "--format"}, std::pair{"capture", "--wrap"},
-      std::pair{"capture", "--lines"},  std::pair{"wait", "--timeout"},
-      std::pair{"wait", "--exit-code"}, std::pair{"wait", "--signal"},
-      std::pair{"wait", "--contains"},  std::pair{"wait", "--after-generation"},
-      std::pair{"proc", "--file"}};
+  constexpr std::array options{std::pair{"start", "--cwd"},
+                               std::pair{"start", "-c"},
+                               std::pair{"new", "--cwd"},
+                               std::pair{"new", "-c"},
+                               std::pair{"new", "--title"},
+                               std::pair{"new", "--focus"},
+                               std::pair{"split", "--cwd"},
+                               std::pair{"split", "-c"},
+                               std::pair{"split", "--focus"},
+                               std::pair{"input", "--text"},
+                               std::pair{"input", "--paste"},
+                               std::pair{"input", "--key"},
+                               std::pair{"send", "--text"},
+                               std::pair{"capture", "--source"},
+                               std::pair{"capture", "--format"},
+                               std::pair{"capture", "--wrap"},
+                               std::pair{"capture", "--lines"},
+                               std::pair{"wait", "--timeout"},
+                               std::pair{"wait", "--exit-code"},
+                               std::pair{"wait", "--signal"},
+                               std::pair{"wait", "--contains"},
+                               std::pair{"wait", "--after-generation"},
+                               std::pair{"wait", "--after-commands"},
+                               std::pair{"proc", "--file"}};
   return std::ranges::any_of(options, [=](const auto& entry) {
     return entry.first == operation && entry.second == option;
   });
@@ -613,6 +624,9 @@ struct SurfaceArguments final {
            "to require a specific outcome. --contains TEXT matches terminal content;\n"
            "--until-prompt requires a shell-integration prompt marker. Terminal conditions can\n"
            "match existing state; use --after-generation N to require newer terminal state.\n"
+           "--until-command waits for the next shell-integration command completion (OSC 133;C\n"
+           "then D) and reports its exit code; --after-commands N instead waits for completion\n"
+           "N+1.\n"
            "The default timeout is 30s. --session selects the containing Session, not a wait\n"
            "for that Session to end. Use --hold at creation to retain output after process "
            "exit.\n\n"
@@ -662,6 +676,10 @@ struct SurfaceArguments final {
     output = "  By default, print captured text to stdout.\n";
   } else if (name == "split") {
     output = "  By default, print the new Pane ID to stdout.\n";
+  } else if (name == "wait") {
+    output =
+        "  By default, succeed quietly; report failures on stderr. --until-command prints the\n"
+        "  completed command's exit code (or unknown) and exits 1 unless it is 0.\n";
   }
   return write_fragment(stdout, output) ? 0 : 1;
 }
@@ -891,9 +909,10 @@ struct SurfaceArguments final {
   if (command == "events") {
     constexpr std::string_view help =
         "Usage:\n"
-        "  lemma events [--session NAME|ID] [--pane ID ... [--screen]]\n\n"
+        "  lemma events [--session NAME|ID] [--pane ID ... [--screen]] [--signals]\n\n"
         "Stream an initial snapshot followed by NDJSON Events. --pane is repeatable up to 8 "
-        "times; --screen requires at least one Pane filter.\n"
+        "times; --screen requires at least one Pane filter. --signals adds pane.signal Events\n"
+        "for bells, notifications, progress, and shell-integration command state.\n"
         "The stream is open-ended; bound it with the caller's timeout or cancellation mechanism.\n";
     return write_fragment(stdout, help) ? 0 : 1;
   }
@@ -1202,12 +1221,33 @@ void print_proc_failure(const api::JsonValue& failure) noexcept {
   static_cast<void>(write_fragment(stderr, "\n"));
 }
 
+// Like --exit-code 0, a readable command wait succeeds only when the command reported status 0.
+[[nodiscard]] auto print_command_completion(const api::JsonValue& completion) noexcept -> int {
+  const auto* const code = api::json_member(completion, "exit_code");
+  if (code == nullptr || code->kind != api::JsonKind::number) {
+    static_cast<void>(platform::write_text(STDOUT_FILENO, "unknown\n"));
+    return 1;
+  }
+  std::array<char, 24> text{};
+  const auto converted = std::to_chars(text.begin(), text.end(), code->number);
+  const auto size = static_cast<std::size_t>(std::distance(text.begin(), converted.ptr));
+  const bool written = converted.ec == std::errc{} &&
+                       platform::write_text(STDOUT_FILENO, std::string_view(text.data(), size)) &&
+                       platform::write_text(STDOUT_FILENO, "\n");
+  return written && code->number == 0 ? 0 : 1;
+}
+
 [[nodiscard]] auto print_basic_result(const api::CommandKind kind,
                                       const api::JsonValue& result) noexcept -> int {
   if (kind == api::CommandKind::pane_capture) {
     const auto* capture = api::json_member(result, "capture");
     const auto text = capture == nullptr ? std::nullopt : api::json_string(*capture, "text");
     return text.has_value() && platform::write_text(STDOUT_FILENO, *text) ? 0 : 1;
+  }
+  if (const auto* const completion =
+          kind == api::CommandKind::pane_wait ? api::json_member(result, "completion") : nullptr;
+      completion != nullptr) {
+    return print_command_completion(*completion);
   }
   if (kind == api::CommandKind::pane_split) {
     const auto pane = api::json_string(result, "pane");
@@ -1642,6 +1682,16 @@ void print_proc_failure(const api::JsonValue& failure) noexcept {
       } else if (option == "--until-prompt" && !condition_seen) {
         command.wait_condition = api::WaitCondition::prompt;
         condition_seen = true;
+      } else if (option == "--until-command" && !condition_seen) {
+        command.wait_condition = api::WaitCondition::command;
+        condition_seen = true;
+      } else if (option == "--after-commands" && !command.after_commands.has_value() &&
+                 index + 1U < values.size()) {
+        const auto commands = parse_integer<std::uint64_t>(values.subspan(++index, 1).front());
+        if (!commands.has_value()) {
+          return invalid_arguments("proc pane wait");
+        }
+        command.after_commands = commands;
       } else if (option == "--after-generation" && !generation_seen && index + 1U < values.size()) {
         const auto generation = parse_integer<std::uint64_t>(values.subspan(++index, 1).front());
         if (!generation.has_value()) {
@@ -1662,8 +1712,13 @@ void print_proc_failure(const api::JsonValue& failure) noexcept {
     }
     if ((command.wait_condition == api::WaitCondition::process_exit ||
          command.wait_condition == api::WaitCondition::exit_code ||
-         command.wait_condition == api::WaitCondition::signal) &&
+         command.wait_condition == api::WaitCondition::signal ||
+         command.wait_condition == api::WaitCondition::command) &&
         command.after_terminal_generation != 0) {
+      return invalid_arguments("proc pane wait");
+    }
+    if (command.after_commands.has_value() &&
+        command.wait_condition != api::WaitCondition::command) {
       return invalid_arguments("proc pane wait");
     }
     return execute(command);
@@ -1867,6 +1922,7 @@ command_target(const TabId tab = {}, const PaneId pane = {}, const PaneId peer =
   std::optional<std::string_view> session;
   std::vector<PaneId> panes;
   bool screen = false;
+  bool signals = false;
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     const std::string_view argument(arguments.subspan(index, 1).front());
     if (argument == "--session" && !session.has_value() && index + 1U < arguments.size()) {
@@ -1880,6 +1936,8 @@ command_target(const TabId tab = {}, const PaneId pane = {}, const PaneId peer =
       panes.push_back(*pane);
     } else if (argument == "--screen" && !screen) {
       screen = true;
+    } else if (argument == "--signals" && !signals) {
+      signals = true;
     } else {
       return invalid_arguments("events");
     }
@@ -1887,7 +1945,7 @@ command_target(const TabId tab = {}, const PaneId pane = {}, const PaneId peer =
   if ((!panes.empty() && !session.has_value()) || (screen && panes.empty())) {
     return invalid_arguments("events");
   }
-  return daemon::events(endpoint, session, panes, screen);
+  return daemon::events(endpoint, session, panes, screen, signals);
 }
 
 [[nodiscard]] auto run_session_control(const daemon::RuntimeEndpoint& endpoint,

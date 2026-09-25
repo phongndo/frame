@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import select
 import socket
 import subprocess
@@ -853,7 +854,207 @@ class AgentInterfaceMuxTest(unittest.TestCase):
         )
         self.assertEqual(status, 0, closed)
         self.assertEqual(closed["status"], "applied")
-        self.assertEqual(closed["process"], {"state": "exited_unknown"})
+        self.assertEqual(closed["process"], {"state": "exited", "code": 4})
+
+    def test_global_signal_events_and_close_on_exit_wait(self) -> None:
+        # The daemon exits with its last Session; keep one beyond the closing Pane's Session.
+        self.server.require_command(
+            "proc",
+            "session",
+            "start",
+            "signal-keeper",
+            "--",
+            "/bin/sh",
+            "-c",
+            "sleep 30",
+        )
+        process = subprocess.Popen(
+            [
+                str(self.server.cli_path),
+                str(self.server.socket_path),
+                "events",
+                "--signals",
+            ],
+            env=self.server.environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=0,
+        )
+
+        def stop() -> None:
+            process.kill()
+            process.communicate(timeout=1.0)
+
+        self.addCleanup(stop)
+        assert process.stdout is not None
+        stream = process.stdout.fileno()
+        pending = bytearray()
+
+        def next_event(deadline: float) -> dict[str, Any] | None:
+            while b"\n" not in pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                ready, _, _ = select.select([stream], [], [], remaining)
+                if ready:
+                    chunk = os.read(stream, 65536)
+                    if not chunk:
+                        return None
+                    pending.extend(chunk)
+            line, _, rest = bytes(pending).partition(b"\n")
+            pending[:] = rest
+            return json.loads(line)
+
+        snapshot = next_event(time.monotonic() + 2.0)
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot["event"], "snapshot")
+        status, started = self.json_command(
+            "proc",
+            "session",
+            "start",
+            "signal-feed",
+            "--",
+            "/bin/sh",
+            "-c",
+            r"printf '\033]9;4;3\033\\\033]777;notify;Job;finished\007'; sleep 1; exit 5",
+        )
+        self.assertEqual(status, 0, started)
+        status, waited = self.json_command(
+            "proc",
+            "pane",
+            "wait",
+            started["pane"],
+            "--session",
+            "signal-feed",
+            "--timeout",
+            "5s",
+        )
+        # Close-on-exit retains the exit status for the pending wait.
+        self.assertEqual(status, 0, waited)
+        self.assertEqual(waited["process"], {"state": "exited", "code": 5})
+
+        deadline = time.monotonic() + 5.0
+        seen: list[dict[str, Any]] = []
+        signals: dict[str, Any] | None = None
+        while signals is None and (event := next_event(deadline)) is not None:
+            seen.append(event)
+            if (
+                event["event"] == "pane.signal"
+                and event["session"] == started["session"]["id"]
+                and event["signals"]["notifications"] == 1
+            ):
+                signals = event["signals"]
+        self.assertIsNotNone(signals, (seen, self.server.logs()))
+        assert signals is not None
+        self.assertEqual(
+            signals["progress"], {"state": "indeterminate", "percent": None}
+        )
+        self.assertEqual(signals["notification"]["title"], "Job")
+
+    def test_command_wait_after_input_in_one_proc_observes_fast_commands(self) -> None:
+        # A minimal OSC 133 shell: prompt (A/B), then C, the command, and D;status per line.
+        shell = (
+            r"while printf '\033]133;A\007$ \033]133;B\007'; read line; do "
+            r"""printf '\033]133;C\007'; sh -c "$line"; """
+            r"printf '\033]133;D;%s\007' $?; done"
+        )
+        status, started = self.json_command(
+            "proc", "session", "start", "command-wait", "--", "/bin/sh", "-c", shell
+        )
+        self.assertEqual(status, 0, started)
+        target = {
+            "session": {"id": started["session"]["id"]},
+            "pane": {"id": started["pane"]},
+        }
+        # Pending Procs share the one-step-per-turn Proc service, delaying a wait step's start.
+        waiters = [
+            subprocess.Popen(
+                [
+                    str(self.server.cli_path),
+                    str(self.server.socket_path),
+                    "proc",
+                    "pane",
+                    "wait",
+                    started["pane"],
+                    "--session",
+                    "command-wait",
+                    "--contains",
+                    "never-matches",
+                    "--timeout",
+                    "30s",
+                ],
+                env=self.server.environment,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            for _ in range(12)
+        ]
+        for waiter in waiters:
+            self.addCleanup(waiter.wait, 5.0)
+            self.addCleanup(waiter.kill)
+        for index, (line, code) in enumerate([("true", 0), ("exit 7", 7)] * 5, start=1):
+            completed = subprocess.run(
+                [
+                    str(self.server.cli_path),
+                    str(self.server.socket_path),
+                    "proc",
+                    "--stdin",
+                ],
+                env=self.server.environment,
+                input=json.dumps(
+                    {
+                        "schema": "lemma.proc/v1",
+                        "commands": [
+                            {
+                                "command": "pane.input",
+                                **target,
+                                "events": [
+                                    {"kind": "text", "text": line},
+                                    {"kind": "key", "key": "enter"},
+                                ],
+                            },
+                            {
+                                "command": "pane.wait",
+                                **target,
+                                "until_command": True,
+                                "timeout_ms": 5000,
+                            },
+                        ],
+                    }
+                ),
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+                check=False,
+            )
+            self.assertEqual(
+                completed.returncode, 0, completed.stdout + completed.stderr
+            )
+            waited = json.loads(completed.stdout)["results"][1]["result"]
+            self.assertEqual(
+                waited["completion"], {"commands": index, "exit_code": code}
+            )
+
+        # Readable CLI: print the latest completion's exit code; success requires status 0.
+        selectors = ("--session", "command-wait", "--pane", started["pane"])
+        failed = self.public_command(
+            "wait", *selectors, "--until-command", "--after-commands", "9"
+        )
+        self.assertEqual((failed.returncode, failed.stdout), (1, "7\n"), failed.stderr)
+        self.server.require_command(
+            "send", *selectors, "--paste", "true", "--key", "enter"
+        )
+        passed = self.public_command(
+            "wait",
+            *selectors,
+            "--until-command",
+            "--after-commands",
+            "10",
+            "--timeout",
+            "3s",
+        )
+        self.assertEqual((passed.returncode, passed.stdout), (0, "0\n"), passed.stderr)
 
     def test_legacy_action_and_op_interfaces_are_rejected(self) -> None:
         cli = self.server.command("action", "daemon", "inspect")

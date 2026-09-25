@@ -763,6 +763,109 @@ template <typename Id>
          append_pid() && output.append_text("}");
 }
 
+[[nodiscard]] constexpr auto progress_state_name(const vt::ProgressState state) noexcept
+    -> std::string_view {
+  switch (state) {
+  case vt::ProgressState::normal:
+    return "normal";
+  case vt::ProgressState::error:
+    return "error";
+  case vt::ProgressState::indeterminate:
+    return "indeterminate";
+  case vt::ProgressState::paused:
+    return "paused";
+  case vt::ProgressState::none:
+    break;
+  }
+  return {};
+}
+
+[[nodiscard]] constexpr auto command_state_name(const vt::CommandState state) noexcept
+    -> std::string_view {
+  switch (state) {
+  case vt::CommandState::prompt:
+    return "prompt";
+  case vt::CommandState::running:
+    return "running";
+  case vt::CommandState::finished:
+    return "finished";
+  case vt::CommandState::none:
+    break;
+  }
+  return {};
+}
+
+[[nodiscard]] auto signal_text(ConnectionOutput& output, const std::string_view text) noexcept
+    -> bool {
+  return output.append_text(text);
+}
+
+[[nodiscard]] auto signal_text(std::string& output, const std::string_view text) -> bool {
+  return append_public(output, text);
+}
+
+[[nodiscard]] auto signal_number(ConnectionOutput& output, const std::uint64_t value) noexcept
+    -> bool {
+  return output.append_number(value);
+}
+
+[[nodiscard]] auto signal_number(std::string& output, const std::uint64_t value) -> bool {
+  return append_public_number(output, value);
+}
+
+template <typename Output>
+[[nodiscard]] auto append_signal_progress(Output& output, const vt::TerminalSignals& signals)
+    -> bool {
+  const auto progress = progress_state_name(signals.progress);
+  if (progress.empty()) {
+    return signal_text(output, "null");
+  }
+  return signal_text(output, R"({"state":")") && signal_text(output, progress) &&
+         signal_text(output, R"(","percent":)") &&
+         (signals.progress_percent.has_value() ? signal_number(output, *signals.progress_percent)
+                                               : signal_text(output, "null")) &&
+         signal_text(output, "}");
+}
+
+template <typename Output>
+[[nodiscard]] auto append_signal_exit_code(Output& output, const std::optional<std::int32_t> exit)
+    -> bool {
+  if (!exit.has_value()) {
+    return signal_text(output, "null");
+  }
+  const auto code = static_cast<std::int64_t>(*exit);
+  return (code >= 0 || signal_text(output, "-")) &&
+         signal_number(output, static_cast<std::uint64_t>(code < 0 ? -code : code));
+}
+
+template <typename Output>
+[[nodiscard]] auto append_signal_command(Output& output, const vt::TerminalSignals& signals)
+    -> bool {
+  const auto command = command_state_name(signals.command);
+  if (command.empty()) {
+    return signal_text(output, "null");
+  }
+  return signal_text(output, R"({"state":")") && signal_text(output, command) &&
+         signal_text(output, R"(","exit_code":)") &&
+         append_signal_exit_code(output, signals.exit_code) && signal_text(output, "}");
+}
+
+// Every field except notification text; all values are numbers or fixed enum names, so the
+// record also fits the fixed-capacity pane listing projection.
+template <typename Output>
+[[nodiscard]] auto append_signal_fields(Output& output, const PaneRuntime& runtime) -> bool {
+  const auto& signals = runtime.terminal.signals();
+  return signal_text(output, R"({"generation":)") && signal_number(output, runtime.signal_stamp) &&
+         signal_text(output, R"(,"bells":)") && signal_number(output, signals.bells) &&
+         signal_text(output, R"(,"notifications":)") &&
+         signal_number(output, signals.notifications) && signal_text(output, R"(,"progress":)") &&
+         append_signal_progress(output, signals) && signal_text(output, R"(,"commands":)") &&
+         signal_number(output, signals.commands) && signal_text(output, R"(,"command":)") &&
+         append_signal_command(output, signals) && signal_text(output, R"(,"title_changes":)") &&
+         signal_number(output, signals.title_changes) &&
+         signal_text(output, R"(,"cwd_changes":)") && signal_number(output, signals.cwd_changes);
+}
+
 // Structured pane queries traverse the bounded semantic hierarchy once and expose no title-based
 // selectors or terminal-owned representation.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -801,7 +904,8 @@ template <typename Id>
           !output.append_text(",\"observed_title\":") ||
           !append_connection_json_string(
               output, std::string_view(runtime->process_name.data(), runtime->process_name_size)) ||
-          !output.append_text("}")) {
+          !output.append_text(",\"signals\":") || !append_signal_fields(output, *runtime) ||
+          !output.append_text("}}")) {
         return false;
       }
       ++emitted;
@@ -1177,6 +1281,22 @@ template <typename Id>
          append_public(output, "}");
 }
 
+[[nodiscard]] auto append_public_signals(std::string& output, const PaneRuntime& runtime) -> bool {
+  const auto& signals = runtime.terminal.signals();
+  if (!append_signal_fields(output, runtime) || !append_public(output, R"(,"notification":)")) {
+    return false;
+  }
+  if (signals.notifications == 0) {
+    return append_public(output, "null}");
+  }
+  return append_public(output, R"({"title":)") &&
+         api::append_json_string(output, signals.notification_title()) &&
+         append_public(output, R"(,"body":)") &&
+         api::append_json_string(output, signals.notification_body()) &&
+         append_public(output, R"(,"truncated":)") &&
+         append_public(output, signals.notification_truncated ? "true}}" : "false}}");
+}
+
 [[nodiscard]] auto pane_inspection(const Tab& tab, const Pane& pane, const PaneRuntime& runtime)
     -> std::string {
   const auto terminal = runtime.terminal.inspection();
@@ -1225,7 +1345,8 @@ template <typename Id>
       !append_public(output, runtime.accepts_input() ? "true" : "false") ||
       !append_public(output, R"(,"health":)") ||
       !api::append_json_string(output, runtime.terminal.integrity_failed() ? "failed" : "ok") ||
-      !append_public(output, "}}")) {
+      !append_public(output, R"(},"signals":)") || !append_public_signals(output, runtime) ||
+      !append_public(output, "}")) {
     return {};
   }
   return output;
@@ -1442,6 +1563,71 @@ next_changed_pane(const api::EventSubscription& subscription,
     }
   }
   return std::nullopt;
+}
+
+// Returns the in-scope Pane with the oldest signal stamp newer than watermark. Stamps are
+// daemon-wide and monotonic, so Sessions whose newest stamp is already observed are skipped without
+// visiting their Panes, and repeated changes to one Pane coalesce into its latest value. When no
+// in-scope Pane changed, the watermark advances to the clock so later turns are O(1).
+[[nodiscard]] auto signal_pane_selected(const api::EventSubscription& subscription,
+                                        const PaneId pane) noexcept -> bool {
+  return subscription.panes.empty() ||
+         std::ranges::any_of(subscription.panes, [pane](const api::PaneSelector& selected) {
+           return selected.id == pane;
+         });
+}
+
+// Replaces oldest with this Session's Pane whose stamp is the smallest one after watermark.
+void find_oldest_signal(const api::EventSubscription& subscription, SessionRecord& session,
+                        PaneRuntimeStore& runtimes, const std::uint64_t watermark,
+                        ObservedPane& oldest) noexcept {
+  if (!session.active || session.signal_stamp <= watermark) {
+    return;
+  }
+  for (auto& slot : session.panes) {
+    auto* const runtime =
+        slot.pane == nullptr ? nullptr : find_pane_runtime(runtimes, session, *slot.pane);
+    if (runtime == nullptr || runtime->signal_stamp <= watermark ||
+        (oldest.runtime != nullptr && runtime->signal_stamp >= oldest.runtime->signal_stamp) ||
+        !signal_pane_selected(subscription, slot.pane->id)) {
+      continue;
+    }
+    oldest = {.session = &session, .pane = slot.pane.get(), .runtime = runtime};
+  }
+}
+
+[[nodiscard]] auto next_signal_pane(const api::EventSubscription& subscription, Sessions& sessions,
+                                    PaneRuntimeStore& runtimes, std::uint64_t& watermark) noexcept
+    -> ObservedPane {
+  if (!subscription.signals || runtimes.signal_clock() <= watermark) {
+    return {};
+  }
+  ObservedPane oldest;
+  if (subscription.session.has_value()) {
+    if (auto* const session = public_session(sessions, *subscription.session); session != nullptr) {
+      find_oldest_signal(subscription, *session, runtimes, watermark, oldest);
+    }
+  } else {
+    for (auto& session : sessions) {
+      if (session != nullptr) {
+        find_oldest_signal(subscription, *session, runtimes, watermark, oldest);
+      }
+    }
+  }
+  if (oldest.pane == nullptr) {
+    watermark = runtimes.signal_clock();
+  }
+  return oldest;
+}
+
+[[nodiscard]] auto append_signal_event(std::string& output, const std::uint64_t sequence,
+                                       const ObservedPane target) -> bool {
+  return append_public(output, R"({"schema":"lemma.event/v1","sequence":)") &&
+         append_public_number(output, sequence) &&
+         append_public(output, R"(,"event":"pane.signal","session":)") &&
+         append_public_id(output, target.session->id) && append_public(output, R"(,"pane":)") &&
+         append_public_id(output, target.pane->id) && append_public(output, R"(,"signals":)") &&
+         append_public_signals(output, *target.runtime) && append_public(output, "}");
 }
 
 [[nodiscard]] auto append_public_process(std::string& output, const Pane& pane,
@@ -1668,6 +1854,7 @@ next_changed_pane(const api::EventSubscription& subscription,
   try {
     pending.event_sequence = sequence;
     pending.observed_pane_cursor = 0;
+    pending.observed_signal_stamp = 0;
     if (!append_event_header(output, pending, "snapshot") ||
         !append_public(output, R"(,"sessions":)") ||
         !append_sessions_snapshot(output, sessions, pending.subscription.session)) {
@@ -1935,6 +2122,16 @@ next_changed_pane(const api::EventSubscription& subscription,
           observed.present = true;
         }
       }
+      if (const auto signal = next_signal_pane(pending.subscription, sessions, runtimes,
+                                               pending.observed_signal_stamp);
+          signal.pane != nullptr) {
+        if (!append_signal_event(output, pending.event_sequence++, signal) ||
+            !append_public(output, "\n")) {
+          pending.state = PendingState::unused;
+          continue;
+        }
+        pending.observed_signal_stamp = signal.runtime->signal_stamp;
+      }
       if (!output.empty()) {
         finish_public_output(pending, std::move(output), PendingDisposition::keep_observe);
       }
@@ -2010,12 +2207,41 @@ void service_extension_observers(extension::Runtime& extensions, Sessions& sessi
         return;
       }
     }
-    const auto changed =
-        next_changed_pane(*subscription, observed.panes, sessions, runtimes, observed.pane_cursor);
+    // A signal turn looks for a signal before advancing the Pane cursor, so a skipped Pane change
+    // stays next in rotation instead of being dropped.
+    auto signal = observed.signal_turn
+                      ? next_signal_pane(*subscription, sessions, runtimes, observed.signal_stamp)
+                      : ObservedPane{};
+    observed.signal_turn = false;
+    const auto changed = signal.pane == nullptr
+                             ? next_changed_pane(*subscription, observed.panes, sessions, runtimes,
+                                                 observed.pane_cursor)
+                             : std::nullopt;
+    if (signal.pane == nullptr && !changed.has_value()) {
+      signal = next_signal_pane(*subscription, sessions, runtimes, observed.signal_stamp);
+    }
+    if (signal.pane != nullptr) {
+      try {
+        std::string event;
+        if (!append_signal_event(event, extensions.event_sequence(peer.owner), signal)) {
+          static_cast<void>(extensions.disconnect(peer.owner));
+          return;
+        }
+        if (extensions.send_event(peer.owner, event)) {
+          observed.signal_stamp = signal.runtime->signal_stamp;
+        }
+      } catch (...) {
+        static_cast<void>(extensions.disconnect(peer.owner));
+        return;
+      }
+      cursor = (cursor + visited + 1U) % active.size();
+      return;
+    }
     if (!changed.has_value()) {
       continue;
     }
     const auto pane_index = *changed;
+    observed.signal_turn = subscription->signals;
     auto& pane_state = std::span(observed.panes).subspan(pane_index, 1).front();
     const auto target = observed_pane(*subscription, sessions, runtimes, pane_index);
     auto* const pane = target.pane;

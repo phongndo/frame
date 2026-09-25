@@ -1162,6 +1162,143 @@ TEST(TerminalTest, CapturesEffectsWithoutCallingApplicationCode) {
 
 // GoogleTest assertions inflate the measured branch count.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(TerminalTest, RetainsLatestAttentionSignals) {
+  auto terminal = make_terminal();
+  const auto& signals = terminal.signals();
+  EXPECT_EQ(signals.command, CommandState::none);
+  EXPECT_EQ(signals.progress, ProgressState::none);
+
+  write_text(terminal, "\a\a\x1B]2;one\x1B\\\x1B]7;file:///tmp\x1B\\"
+                       "\x1B]777;notify;Build;done\a\x1B]9;first body\a\x1B]9;4;1;42\x1B\\");
+  EXPECT_EQ(signals.bells, 2U);
+  EXPECT_EQ(signals.title_changes, 1U);
+  EXPECT_EQ(signals.cwd_changes, 1U);
+  EXPECT_EQ(signals.notifications, 2U);
+  // Latest-value: the OSC 9 notification replaces the OSC 777 title and body.
+  EXPECT_EQ(signals.notification_title(), "");
+  EXPECT_EQ(signals.notification_body(), "first body");
+  EXPECT_FALSE(signals.notification_truncated);
+  EXPECT_EQ(signals.progress, ProgressState::normal);
+  EXPECT_EQ(signals.progress_percent, std::optional<std::uint8_t>{42});
+
+  write_text(terminal, "\x1B]777;notify;Agent;needs \xFF input\a\x1B]9;4;2\x1B\\");
+  EXPECT_EQ(signals.notification_title(), "Agent");
+  EXPECT_EQ(signals.notification_body(), "needs ? input");
+  EXPECT_EQ(signals.progress, ProgressState::error);
+  EXPECT_FALSE(signals.progress_percent.has_value());
+  write_text(terminal, "\x1B]9;4;3\x1B\\");
+  EXPECT_EQ(signals.progress, ProgressState::indeterminate);
+  write_text(terminal, "\x1B]9;4;4;7\x1B\\");
+  EXPECT_EQ(signals.progress, ProgressState::paused);
+  EXPECT_EQ(signals.progress_percent, std::optional<std::uint8_t>{7});
+  write_text(terminal, "\x1B]9;4;0\x1B\\");
+  EXPECT_EQ(signals.progress, ProgressState::none);
+  EXPECT_FALSE(signals.progress_percent.has_value());
+  const auto effects = terminal.take_effects();
+  EXPECT_EQ(effects.desktop_notifications, 3U);
+  EXPECT_GT(effects.signal_changes, 0U);
+
+  // Identical repeated progress reports are not signal changes; a new value is.
+  write_text(terminal, "\x1B]9;4;1;50\x1B\\");
+  EXPECT_EQ(terminal.take_effects().signal_changes, 1U);
+  write_text(terminal, "\x1B]9;4;1;50\x1B\\\x1B]9;4;1;50\x1B\\");
+  const auto repeated = terminal.take_effects();
+  EXPECT_EQ(repeated.progress_reports, 2U);
+  EXPECT_EQ(repeated.signal_changes, 0U);
+  write_text(terminal, "\x1B]9;4;1;51\x1B\\");
+  EXPECT_EQ(terminal.take_effects().signal_changes, 1U);
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(TerminalTest, BoundsNotificationTextAtUtf8Boundaries) {
+  auto terminal = make_terminal();
+  // Ghostty's fixed OSC buffer bounds the sequence first; the title bound applies within it.
+  std::string title = "a";
+  while (title.size() <= TerminalSignals::notification_title_bytes_max) {
+    title += "\xC3\xA9";
+  }
+  write_text(terminal, "\x1B]777;notify;" + title + ";body\a");
+  const auto& signals = terminal.signals();
+  EXPECT_EQ(signals.notifications, 1U);
+  EXPECT_TRUE(signals.notification_truncated);
+  // A two-byte sequence never splits at the bound.
+  EXPECT_EQ(signals.notification_title().size(),
+            TerminalSignals::notification_title_bytes_max - 1U);
+  EXPECT_TRUE(signals.notification_title().ends_with("\xC3\xA9"));
+  EXPECT_EQ(signals.notification_body(), "body");
+  write_text(terminal, "\x1B]777;notify;short;body\a");
+  EXPECT_FALSE(signals.notification_truncated);
+  EXPECT_EQ(signals.notification_title(), "short");
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(TerminalTest, ReportsSemanticPromptCommandStateThroughLocalHook) {
+  auto terminal = make_terminal();
+  const auto& signals = terminal.signals();
+  write_text(terminal, "\x1B]133;A\a$ \x1B]133;B\a");
+  EXPECT_EQ(signals.command, CommandState::prompt);
+  EXPECT_EQ(terminal.take_effects().signal_changes, 1U);
+  // Prompt redraws repeat markers without a state change.
+  write_text(terminal, "\x1B]133;A\a\x1B]133;P;k=i\a\x1B]133;B\a\x1B]133;L\a");
+  EXPECT_EQ(terminal.take_effects().signal_changes, 0U);
+
+  write_text(terminal, "make\r\n\x1B]133;C\a");
+  EXPECT_EQ(signals.command, CommandState::running);
+  EXPECT_EQ(signals.commands, 0U);
+  write_text(terminal, "failed\r\n\x1B]133;D;2\a");
+  EXPECT_EQ(signals.command, CommandState::finished);
+  EXPECT_EQ(signals.commands, 1U);
+  EXPECT_EQ(signals.exit_code, std::optional<std::int32_t>{2});
+  EXPECT_EQ(terminal.take_effects().signal_changes, 2U);
+
+  // A D that ends no running command closes a prompt and changes nothing.
+  write_text(terminal, "\x1B]133;D\a\x1B]133;A\a$ \x1B]133;B\a\x1B]133;D;0\a");
+  EXPECT_EQ(signals.command, CommandState::prompt);
+  EXPECT_EQ(signals.commands, 1U);
+  EXPECT_EQ(signals.exit_code, std::optional<std::int32_t>{2});
+  EXPECT_EQ(terminal.take_effects().signal_changes, 1U);
+  // Terminal state still follows Ghostty's own OSC 133 semantics.
+  const auto prompt = terminal.cursor_at_prompt();
+  ASSERT_TRUE(prompt.has_value());
+  EXPECT_TRUE(*prompt);
+}
+
+// Replays the pinned Ghostty shell integrations' marker order for one command each.
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(TerminalTest, CountsOneCompletionPerShellIntegrationCommand) {
+  // fish: fish_postexec sends D;$status, then fish_prompt sends a bare D before A.
+  auto fish = make_terminal();
+  write_text(fish, "\x1B]133;A\a> \x1B]133;C\afalse\r\n\x1B]133;D;1\a\x1B]133;D\a\x1B]133;A\a> ");
+  EXPECT_EQ(fish.signals().commands, 1U);
+  EXPECT_EQ(fish.signals().exit_code, std::optional<std::int32_t>{1});
+  EXPECT_EQ(fish.signals().command, CommandState::prompt);
+  // Empty Enter at a fish prompt runs no command.
+  write_text(fish, "\r\n\x1B]133;D\a\x1B]133;A\a> ");
+  EXPECT_EQ(fish.signals().commands, 1U);
+  EXPECT_EQ(fish.signals().exit_code, std::optional<std::int32_t>{1});
+
+  // bash: the prompt command repeats D;$ret after an empty Enter with the previous status.
+  auto bash = make_terminal();
+  write_text(bash, "\x1B]133;A;aid=7\a\x1B]133;P;k=i\a$ \x1B]133;B\a");
+  write_text(bash, "false\r\n\x1B]133;C;\a\x1B]133;D;1;aid=7\a\x1B]133;A;aid=7\a$ ");
+  EXPECT_EQ(bash.signals().commands, 1U);
+  EXPECT_EQ(bash.signals().exit_code, std::optional<std::int32_t>{1});
+  write_text(bash, "\r\n\x1B]133;D;1;aid=7\a\x1B]133;A;aid=7\a$ ");
+  EXPECT_EQ(bash.signals().commands, 1U);
+  write_text(bash, "true\r\n\x1B]133;C;\a\x1B]133;D;0;aid=7\a\x1B]133;A;aid=7\a$ ");
+  EXPECT_EQ(bash.signals().commands, 2U);
+  EXPECT_EQ(bash.signals().exit_code, std::optional<std::int32_t>{0});
+
+  // zsh: a bare D after an empty Enter.
+  auto zsh = make_terminal();
+  write_text(zsh, "\x1B]133;A;cl=line\a%% \x1B]133;C\a\x1B]133;D;0\a\x1B]133;A;cl=line\a%% ");
+  write_text(zsh, "\r\n\x1B]133;D\a\x1B]133;A;cl=line\a%% ");
+  EXPECT_EQ(zsh.signals().commands, 1U);
+  EXPECT_EQ(zsh.signals().exit_code, std::optional<std::int32_t>{0});
+}
 
 TEST(TerminalTest, UsesGhosttyGesturesAndTrackedSelectionEndpoints) {
   TerminalOptions options;

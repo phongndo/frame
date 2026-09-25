@@ -168,10 +168,48 @@ struct EffectBatch final {
   std::uint64_t pwd_changes{0};
   std::uint64_t desktop_notifications{0};
   std::uint64_t progress_reports{0};
+  // Callbacks that changed a TerminalSignals value; identical repeated reports do not count.
+  std::uint64_t signal_changes{0};
   std::uint64_t clipboard_writes_denied{0};
   std::uint64_t unknown_sequences_dropped{0};
   bool unknown_sequence_truncated{false};
   bool pty_response_overflowed{false};
+};
+
+enum class ProgressState : std::uint8_t { none, normal, error, indeterminate, paused };
+enum class CommandState : std::uint8_t { none, prompt, running, finished };
+
+// Latest-value attention signals reported by the running application. Updates are O(1) stores
+// from terminal callbacks; there is no queue. Counters saturate rather than wrap. Notification
+// text is sanitized UTF-8 (invalid bytes and controls become '?'), with title and body together
+// bounded by terminal_effect_text_bytes_max.
+struct TerminalSignals final {
+  static constexpr std::size_t notification_bytes_max = limits::terminal_effect_text_bytes_max;
+  static constexpr std::size_t notification_title_bytes_max = notification_bytes_max / 4U;
+
+  std::uint64_t bells{0};
+  std::uint64_t notifications{0};
+  // Completed commands: OSC 133;D while running (after OSC 133;C); exit_code belongs to the
+  // latest one. Other D markers close a prompt and change nothing.
+  std::uint64_t commands{0};
+  std::uint64_t title_changes{0};
+  std::uint64_t cwd_changes{0};
+  std::optional<std::int32_t> exit_code;
+  CommandState command{CommandState::none};
+  ProgressState progress{ProgressState::none};
+  std::optional<std::uint8_t> progress_percent;
+  std::uint16_t notification_title_bytes{0};
+  std::uint16_t notification_body_bytes{0};
+  bool notification_truncated{false};
+  std::array<char, notification_bytes_max> notification_text{};
+
+  [[nodiscard]] auto notification_title() const noexcept -> std::string_view {
+    return {notification_text.data(), notification_title_bytes};
+  }
+  [[nodiscard]] auto notification_body() const noexcept -> std::string_view {
+    return std::string_view(notification_text.data(), notification_text.size())
+        .substr(notification_title_bytes, notification_body_bytes);
+  }
 };
 
 struct AnsiCursorPosition final {
@@ -685,6 +723,8 @@ public:
   [[nodiscard]] auto pwd() const noexcept -> std::expected<std::string_view, Error>;
   [[nodiscard]] auto scrollback_rows() const noexcept -> std::expected<std::size_t, Error>;
   [[nodiscard]] auto take_effects() noexcept -> EffectBatch;
+  // Cumulative attention signals; the reference remains valid for this terminal's lifetime.
+  [[nodiscard]] auto signals() const noexcept -> const TerminalSignals&;
 
   // Image views are borrowed only until the next terminal mutation. Instance identity never aliases
   // another terminal, including across Pane slot reuse; projection caches must not retain pixels.

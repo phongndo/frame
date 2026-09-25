@@ -181,6 +181,11 @@ PTY -> Ghostty parse
           +-> damage -> retained Scene composition -> attached client
 ```
 
+Application attention effects (BEL, OSC 9/777 notifications, OSC 9;4 progress, OSC 133 command
+state, and title/directory changes) update a fixed per-terminal latest-value record with O(1)
+stores; the drain only stamps the Pane and Session as changed. Observers read that record through
+[Pane signals](api.md#pane-signals).
+
 Terminal responses enter the ordered write queue before later accepted application input.
 Mode-dependent keyboard, paste, focus, and mouse encoding comes from the target Pane's Ghostty
 terminal. Attach, resize, tab changes, and lag recovery can reconstruct a full ANSI frame from

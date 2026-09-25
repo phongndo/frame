@@ -455,6 +455,8 @@ auto wait_condition_name(const WaitCondition condition) noexcept -> std::string_
     return "contains";
   case WaitCondition::prompt:
     return "prompt";
+  case WaitCondition::command:
+    return "command";
   }
   return {};
 }
@@ -954,9 +956,14 @@ auto encode_command(const Command& command) -> std::optional<std::string> {
         }
       } else if (command.wait_condition == WaitCondition::prompt) {
         output += R"(,"until_prompt":true)";
+      } else if (command.wait_condition == WaitCondition::command) {
+        output += R"(,"until_command":true)";
       }
       if (command.after_terminal_generation > 0) {
         output += R"(,"after_generation":)" + std::to_string(command.after_terminal_generation);
+      }
+      if (command.after_commands.has_value()) {
+        output += R"(,"after_commands":)" + std::to_string(*command.after_commands);
       }
       if (command.wait_timeout_milliseconds != wait_timeout_default_milliseconds) {
         output += R"(,"timeout_ms":)" + std::to_string(command.wait_timeout_milliseconds);
@@ -1394,9 +1401,9 @@ auto decode_command(const JsonValue& document) -> CommandDecodeResult {
       return failure("invalid_field", "lines");
     }
   } else if (*name == "pane.wait") {
-    if (auto rejected =
-            reject_unknown({"command", "session", "pane", "exit_code", "signal", "contains",
-                            "until_prompt", "after_generation", "timeout_ms"});
+    if (auto rejected = reject_unknown({"command", "session", "pane", "exit_code", "signal",
+                                        "contains", "until_prompt", "until_command",
+                                        "after_generation", "after_commands", "timeout_ms"});
         rejected.has_value()) {
       return *rejected;
     }
@@ -1444,6 +1451,13 @@ auto decode_command(const JsonValue& document) -> CommandDecodeResult {
       command.wait_condition = WaitCondition::prompt;
       ++condition_count;
     }
+    if (const auto* const until = json_member(document, "until_command"); until != nullptr) {
+      if (json_boolean(document, "until_command") != std::optional{true}) {
+        return failure("invalid_field", "until_command");
+      }
+      command.wait_condition = WaitCondition::command;
+      ++condition_count;
+    }
     if (condition_count > 1U) {
       return failure("conflicting_fields", "condition");
     }
@@ -1455,6 +1469,13 @@ auto decode_command(const JsonValue& document) -> CommandDecodeResult {
         return failure("invalid_field", "after_generation");
       }
       command.after_terminal_generation = *value;
+    }
+    if (const auto* const commands = json_member(document, "after_commands"); commands != nullptr) {
+      const auto value = json_unsigned(document, "after_commands");
+      if (!value.has_value() || command.wait_condition != WaitCondition::command) {
+        return failure("invalid_field", "after_commands");
+      }
+      command.after_commands = value;
     }
     if (const auto* const timeout = json_member(document, "timeout_ms"); timeout != nullptr) {
       const auto value = json_unsigned(document, "timeout_ms");
@@ -1536,8 +1557,8 @@ auto decode_event_subscription(const JsonValue& document) -> EventSubscriptionDe
   if (json_string(document, "schema") != std::optional<std::string_view>{events_schema}) {
     return {.subscription = std::nullopt, .error = {.reason = "invalid_schema", .field = "schema"}};
   }
-  if (const auto field =
-          unknown_field(document, {"schema", "session", "pane", "panes", "screen", "presentation"});
+  if (const auto field = unknown_field(
+          document, {"schema", "session", "pane", "panes", "screen", "presentation", "signals"});
       field.has_value()) {
     return {.subscription = std::nullopt, .error = {.reason = "unknown_field", .field = *field}};
   }
@@ -1603,6 +1624,13 @@ auto decode_event_subscription(const JsonValue& document) -> EventSubscriptionDe
               .error = {.reason = "invalid_field", .field = "presentation"}};
     }
     result.presentation = presentation->boolean;
+  }
+  if (const auto* const signals = json_member(document, "signals"); signals != nullptr) {
+    if (signals->kind != JsonKind::boolean) {
+      return {.subscription = std::nullopt,
+              .error = {.reason = "invalid_field", .field = "signals"}};
+    }
+    result.signals = signals->boolean;
   }
   return {.subscription = std::move(result), .error = {}};
 }

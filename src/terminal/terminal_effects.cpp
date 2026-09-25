@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -30,6 +31,113 @@ auto drain_responses(std::vector<std::byte>& responses, std::size_t& offset,
     offset = 0;
   }
   return count;
+}
+
+// Returns whether the value changed.
+auto saturating_increment(std::uint64_t& value) noexcept -> bool {
+  if (value < std::numeric_limits<std::uint64_t>::max()) {
+    ++value;
+    return true;
+  }
+  return false;
+}
+
+void record_signal_change(EffectBatch& effects, const bool changed) noexcept {
+  if (changed) {
+    static_cast<void>(saturating_increment(effects.signal_changes));
+  }
+}
+
+[[nodiscard]] auto ghostty_text(const GhosttyString value) noexcept -> std::string_view {
+  if (value.ptr == nullptr) {
+    return {};
+  }
+  // Ghostty exposes UTF-8 as uint8_t while string_view uses char.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  return {reinterpret_cast<const char*>(value.ptr), value.len};
+}
+
+// Length of the valid, non-control UTF-8 sequence at the start of text, or zero. The branches
+// are the closed UTF-8 lead-byte classes.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[nodiscard]] auto printable_sequence(const std::string_view text) noexcept -> std::size_t {
+  const auto byte = [&text](const std::size_t index) {
+    return static_cast<unsigned char>(std::span(text).subspan(index, 1).front());
+  };
+  const auto leading = byte(0);
+  if (leading < 0x80U) {
+    return leading >= 0x20U && leading != 0x7fU ? 1U : 0U;
+  }
+  std::size_t length = 0;
+  std::uint32_t codepoint = 0;
+  std::uint32_t minimum = 0;
+  if (leading >= 0xc2U && leading <= 0xdfU) {
+    length = 2;
+    codepoint = leading & 0x1fU;
+    minimum = 0x80U;
+  } else if (leading >= 0xe0U && leading <= 0xefU) {
+    length = 3;
+    codepoint = leading & 0x0fU;
+    minimum = 0x800U;
+  } else if (leading >= 0xf0U && leading <= 0xf4U) {
+    length = 4;
+    codepoint = leading & 0x07U;
+    minimum = 0x10000U;
+  } else {
+    return 0;
+  }
+  if (length > text.size()) {
+    return 0;
+  }
+  for (std::size_t index = 1; index < length; ++index) {
+    if ((byte(index) & 0xc0U) != 0x80U) {
+      return 0;
+    }
+    codepoint = (codepoint << 6U) | (byte(index) & 0x3fU);
+  }
+  const bool c1_control = codepoint >= 0x80U && codepoint <= 0x9fU;
+  const bool surrogate = codepoint >= 0xd800U && codepoint <= 0xdfffU;
+  return codepoint < minimum || codepoint > 0x10ffffU || surrogate || c1_control ? 0U : length;
+}
+
+// Copies sanitized UTF-8 into output without splitting a sequence; returns bytes written.
+[[nodiscard]] auto copy_signal_text(std::string_view text, const std::span<char> output,
+                                    bool& truncated) noexcept -> std::size_t {
+  std::size_t used = 0;
+  while (!text.empty()) {
+    const auto length = printable_sequence(text);
+    const auto size = length == 0 ? std::size_t{1} : length;
+    if (size > output.size() - used) {
+      truncated = true;
+      break;
+    }
+    if (length == 0) {
+      output.subspan(used, 1).front() = '?';
+    } else {
+      std::ranges::copy(text.substr(0, length), output.subspan(used).begin());
+    }
+    used += size;
+    text.remove_prefix(size);
+  }
+  return used;
+}
+
+[[nodiscard]] constexpr auto progress_state(const GhosttyTerminalProgressState state) noexcept
+    -> ProgressState {
+  switch (state) {
+  case GHOSTTY_TERMINAL_PROGRESS_STATE_SET:
+    return ProgressState::normal;
+  case GHOSTTY_TERMINAL_PROGRESS_STATE_ERROR:
+    return ProgressState::error;
+  case GHOSTTY_TERMINAL_PROGRESS_STATE_INDETERMINATE:
+    return ProgressState::indeterminate;
+  case GHOSTTY_TERMINAL_PROGRESS_STATE_PAUSE:
+    return ProgressState::paused;
+  case GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE:
+  case GHOSTTY_TERMINAL_PROGRESS_STATE_MAX_VALUE:
+    break;
+  }
+  return ProgressState::none;
 }
 
 } // namespace
@@ -77,43 +185,119 @@ void Terminal::Impl::write_pty([[maybe_unused]] GhosttyTerminal terminal_handle,
 void Terminal::Impl::bell([[maybe_unused]] GhosttyTerminal terminal_handle,
                           void* userdata) noexcept {
   auto& impl = *static_cast<Impl*>(userdata);
-  if (impl.effects.bells < std::numeric_limits<std::uint64_t>::max()) {
-    ++impl.effects.bells;
-  }
+  static_cast<void>(saturating_increment(impl.effects.bells));
+  record_signal_change(impl.effects, saturating_increment(impl.signals.bells));
 }
 
 void Terminal::Impl::title_changed([[maybe_unused]] GhosttyTerminal terminal_handle,
                                    void* userdata) noexcept {
   auto& impl = *static_cast<Impl*>(userdata);
-  if (impl.effects.title_changes < std::numeric_limits<std::uint64_t>::max()) {
-    ++impl.effects.title_changes;
-  }
+  static_cast<void>(saturating_increment(impl.effects.title_changes));
+  record_signal_change(impl.effects, saturating_increment(impl.signals.title_changes));
 }
 
 void Terminal::Impl::pwd_changed([[maybe_unused]] GhosttyTerminal terminal_handle,
                                  void* userdata) noexcept {
   auto& impl = *static_cast<Impl*>(userdata);
-  if (impl.effects.pwd_changes < std::numeric_limits<std::uint64_t>::max()) {
-    ++impl.effects.pwd_changes;
-  }
+  static_cast<void>(saturating_increment(impl.effects.pwd_changes));
+  record_signal_change(impl.effects, saturating_increment(impl.signals.cwd_changes));
 }
 
 void Terminal::Impl::desktop_notification(
     [[maybe_unused]] GhosttyTerminal terminal_handle, void* userdata,
-    [[maybe_unused]] const GhosttyTerminalDesktopNotification* notification) noexcept {
+    const GhosttyTerminalDesktopNotification* notification) noexcept {
   auto& impl = *static_cast<Impl*>(userdata);
-  if (impl.effects.desktop_notifications < std::numeric_limits<std::uint64_t>::max()) {
-    ++impl.effects.desktop_notifications;
+  static_cast<void>(saturating_increment(impl.effects.desktop_notifications));
+  auto& signals = impl.signals;
+  // Each notification is a new occurrence even when its text repeats.
+  static_cast<void>(saturating_increment(signals.notifications));
+  static_cast<void>(saturating_increment(impl.effects.signal_changes));
+  bool truncated = false;
+  std::size_t title = 0;
+  std::size_t body = 0;
+  if (notification != nullptr &&
+      notification->size >= offsetof(GhosttyTerminalDesktopNotification, body) +
+                                sizeof(GhosttyTerminalDesktopNotification::body)) {
+    const auto storage = std::span(signals.notification_text);
+    title =
+        copy_signal_text(ghostty_text(notification->title),
+                         storage.first(TerminalSignals::notification_title_bytes_max), truncated);
+    body = copy_signal_text(ghostty_text(notification->body), storage.subspan(title), truncated);
   }
+  signals.notification_title_bytes = static_cast<std::uint16_t>(title);
+  signals.notification_body_bytes = static_cast<std::uint16_t>(body);
+  signals.notification_truncated = truncated;
 }
 
-void Terminal::Impl::progress_report(
-    [[maybe_unused]] GhosttyTerminal terminal_handle, void* userdata,
-    [[maybe_unused]] const GhosttyTerminalProgressReport* report) noexcept {
+void Terminal::Impl::progress_report([[maybe_unused]] GhosttyTerminal terminal_handle,
+                                     void* userdata,
+                                     const GhosttyTerminalProgressReport* report) noexcept {
   auto& impl = *static_cast<Impl*>(userdata);
-  if (impl.effects.progress_reports < std::numeric_limits<std::uint64_t>::max()) {
-    ++impl.effects.progress_reports;
+  static_cast<void>(saturating_increment(impl.effects.progress_reports));
+  if (report == nullptr || report->size < offsetof(GhosttyTerminalProgressReport, progress) +
+                                              sizeof(GhosttyTerminalProgressReport::progress)) {
+    return;
   }
+  auto& signals = impl.signals;
+  const auto state = progress_state(report->state);
+  const auto percent =
+      state != ProgressState::none && report->progress >= 0 && report->progress <= 100
+          ? std::optional{static_cast<std::uint8_t>(report->progress)}
+          : std::nullopt;
+  // Applications repeat identical reports; only a changed value is a signal.
+  record_signal_change(impl.effects,
+                       state != signals.progress || percent != signals.progress_percent);
+  signals.progress = state;
+  signals.progress_percent = percent;
+}
+
+void Terminal::Impl::semantic_prompt([[maybe_unused]] GhosttyTerminal terminal_handle,
+                                     void* userdata,
+                                     const GhosttyTerminalSemanticPrompt* prompt) noexcept {
+  if (prompt == nullptr || prompt->size < offsetof(GhosttyTerminalSemanticPrompt, exit_code) +
+                                              sizeof(GhosttyTerminalSemanticPrompt::exit_code)) {
+    return;
+  }
+  if (prompt->action < GHOSTTY_TERMINAL_SEMANTIC_PROMPT_FRESH_LINE ||
+      prompt->action > GHOSTTY_TERMINAL_SEMANTIC_PROMPT_COMMAND_END) {
+    return;
+  }
+  auto& impl = *static_cast<Impl*>(userdata);
+  auto& signals = impl.signals;
+  switch (prompt->action) {
+  case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_NEW_PROMPT:
+  case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_NEW_COMMAND:
+  case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_PROMPT_START:
+  case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_INPUT_START:
+  case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_INPUT_START_EOL:
+    // Prompt redraws repeat these markers; only a state change is an observable signal.
+    if (signals.command == CommandState::prompt) {
+      return;
+    }
+    signals.command = CommandState::prompt;
+    break;
+  case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_OUTPUT_START:
+    if (signals.command == CommandState::running) {
+      return;
+    }
+    signals.command = CommandState::running;
+    break;
+  case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_COMMAND_END:
+    // Shell integrations also emit D to close a prompt: fish sends a bare D after
+    // `D;$status`, bash repeats `D;$?` after an empty Enter, and zsh sends a bare D. Only a D
+    // that ends output started by C completes a command.
+    if (signals.command != CommandState::running) {
+      return;
+    }
+    signals.command = CommandState::finished;
+    signals.exit_code = prompt->has_exit_code ? std::optional{prompt->exit_code} : std::nullopt;
+    static_cast<void>(saturating_increment(signals.commands));
+    break;
+  case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_FRESH_LINE:
+  case GHOSTTY_TERMINAL_SEMANTIC_PROMPT_MAX_VALUE:
+    return;
+  }
+  static_cast<void>(saturating_increment(impl.effects.signal_changes));
 }
 
 void Terminal::Impl::unknown_sequence([[maybe_unused]] GhosttyTerminal terminal_handle,
@@ -208,6 +392,11 @@ auto Terminal::pwd() const noexcept -> std::expected<std::string_view, Error> {
   // Ghostty exposes UTF-8 as uint8_t while string_view uses char.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   return std::string_view(reinterpret_cast<const char*>(pwd.ptr), pwd.len);
+}
+
+auto Terminal::signals() const noexcept -> const TerminalSignals& {
+  LEMMA_ASSERT(impl_ != nullptr);
+  return impl_->signals;
 }
 
 auto Terminal::take_effects() noexcept -> EffectBatch {

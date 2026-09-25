@@ -179,6 +179,49 @@ PTY replay.
 Observers cannot mutate state and are not terminal Attachments. A slow observer cannot block PTY
 progress. Reconnecting creates a fresh snapshot; the daemon retains no Event replay log.
 
+## Pane signals
+
+Applications report attention through terminal sequences. Each Pane retains the latest value of
+each signal, not a queue of occurrences:
+
+| Field | Source | Value |
+| --- | --- | --- |
+| `bells` | BEL | Cumulative count |
+| `notifications`, `notification` | OSC 9, OSC 777 `notify` | Count; latest `title`, `body`, and `truncated` |
+| `progress` | OSC 9;4 | Latest `state` (`normal`, `error`, `indeterminate`, `paused`) and `percent`; null once removed |
+| `commands`, `command` | OSC 133 shell integration | Completed-command count; latest `state` (`prompt`, `running`, `finished`) and `exit_code` |
+| `title_changes`, `cwd_changes` | OSC 0/2, OSC 7 | Cumulative counts; `pane.inspect` reports current values |
+
+Notification title and body share a 4 KiB bound (title at most 1 KiB); invalid UTF-8 and control
+characters become `?`. A command completes only when OSC 133;D follows OSC 133;C (`running`); that
+D increments `commands` and sets `exit_code`, which is null when the report omitted it. Shell
+integrations also send D to close a prompt: fish sends a bare D after `D;$status`, bash repeats the
+previous status after an empty Enter, and zsh sends a bare D. A D in any other state changes
+nothing. Each Pane tracks one command state, not nesting: markers from the innermost shell
+integration drive it. A nested shell started as a command (for example fish from bash) can end or
+hide the outer command, since its first prompt's bare D arrives while the outer command is running. Counters saturate. `generation` increases whenever a field changes, including each
+counted occurrence; an identical repeated progress report or prompt marker leaves it unchanged. It
+is zero for a Pane that never reported a signal.
+
+`pane.inspect` returns the complete record as `signals`; `pane.list` includes it without
+`notification`. A subscription with `"signals": true` (`lemma events --signals`) adds `pane.signal`
+Events for every Pane in its scope: the selected Session, all Sessions for a global feed, or only
+the listed Panes. After the snapshot, each in-scope Pane with a nonzero generation is reported
+once. Later changes coalesce: an observer that has not drained its output receives at most one
+record per changed Pane, containing current values, never a backlog. When selected Panes also
+produce terminal Events, the two kinds alternate, so a continuously changing Pane cannot withhold
+another Pane's signals. Detecting a signal does no per-byte work, and unchanged Sessions cost an
+observer no Pane scan.
+
+`pane.wait` with `until_command: true` (`--until-command`) completes at the next command
+completion after the wait starts, or after completion `after_commands` when supplied. When it
+directly follows another Command in a Proc, it starts with that Command, so input sent by the
+previous step cannot complete before the wait observes it. Its `completion` reports the `commands`
+count and `exit_code` of the latest completion; if several complete within one terminal read, the
+earlier ones are not reported separately. Process exit first is an `unexpected_exit`.
+Close-on-exit Panes report the actual exit status to pending waits even though the Pane itself is
+removed. [Usage](usage.md#sessions-tabs-and-panes) describes the readable CLI result.
+
 ## Direct connections
 
 The public integration endpoint is `/tmp/lemma-UID.sock`, owned by the current user with owner-only

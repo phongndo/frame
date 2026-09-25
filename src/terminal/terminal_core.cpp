@@ -566,6 +566,10 @@ auto Terminal::create(const TerminalOptions& options) noexcept -> std::expected<
         callback_pointer(static_cast<GhosttyTerminalProgressReportFn>(&Impl::progress_report)));
   }
   if (result == GHOSTTY_SUCCESS) {
+    // Local additive Ghostty hook; see third_party/ghostty-metadata/PATCHES.md.
+    result = ghostty_terminal_set_semantic_prompt_callback(impl->terminal, &Impl::semantic_prompt);
+  }
+  if (result == GHOSTTY_SUCCESS) {
     result = ghostty_terminal_set(
         impl->terminal, GHOSTTY_TERMINAL_OPT_UNKNOWN_SEQUENCE,
         callback_pointer(static_cast<GhosttyTerminalUnknownSequenceFn>(&Impl::unknown_sequence)));

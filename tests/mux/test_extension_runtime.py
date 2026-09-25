@@ -13,6 +13,8 @@ from threading import Event
 from typing import Any
 
 from benchmarks.mux_benchmark import attach_frame, connect_blocked_client
+from extensions.lemma_client import EVENT as CLIENT_EVENT
+from extensions.lemma_client import PROC as PROC_REQUEST
 from extensions.lemma_client import Client
 from tests.support.mux_harness import LemmaServer, Session, wait_until
 
@@ -118,6 +120,271 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             self.assertEqual(set(client.welcome["capabilities"]), {"observe", "proc"})
             self.assertTrue(client.proc({"command": "session.list"})["ok"])
             self.assertEqual(client.event()["event"], "snapshot")
+
+    def test_signal_observation_reports_latest_pane_attention(self) -> None:
+        # Each read gates one phase, so every observed record is a committed latest value.
+        script = (
+            r"printf '\033]133;A\007$ \033]133;B\007'; read step; "
+            r"printf '\033]133;C\007\033]9;4;1;40\033\\'; read step; "
+            r"printf '\007\033]777;notify;Agent;needs input\007\033]9;hello nine\007'; "
+            r"read step; "
+            r"printf '\033]9;4;0\033\\\033]133;D;3\007\033]133;A\007$ \033]133;B\007'; "
+            r"read step; "
+            r"printf '\033]133;C\007done\r\n\033]133;D;0\007\033]133;A\007$ '; sleep 30"
+        )
+        session = self.server.create_session(
+            "signals", attach=False, hold=True, command=("/bin/sh", "-c", script)
+        )
+        session_id = session.state().id
+        pane = "0:1"
+
+        def enter() -> dict[str, Any]:
+            return {
+                "command": "pane.input",
+                "session": {"id": session_id},
+                "pane": {"id": pane},
+                "events": [{"kind": "key", "key": "enter"}],
+            }
+
+        with (
+            Client(
+                str(self.server.socket_path),
+                name="agent-dashboard",
+                session=session_id,
+                signals=True,
+            ) as dashboard,
+            Client(
+                str(self.server.socket_path), name="no-signals", session=session_id
+            ) as quiet,
+        ):
+            self.assertEqual(dashboard.event()["event"], "snapshot")
+            self.assertEqual(quiet.event()["event"], "snapshot")
+
+            def signal(predicate: Any) -> dict[str, Any]:
+                deadline = time.monotonic() + 5.0
+                seen: list[dict[str, Any]] = []
+                while (remaining := deadline - time.monotonic()) > 0:
+                    event = dashboard.event(timeout=remaining)
+                    if event["event"] != "pane.signal":
+                        continue
+                    self.assertEqual(
+                        (event["session"], event["pane"]), (session_id, pane)
+                    )
+                    seen.append(event["signals"])
+                    if predicate(event["signals"]):
+                        return event["signals"]
+                self.fail(f"no matching pane.signal: {seen}\n{self.server.logs()}")
+
+            prompt = signal(lambda value: value["command"] is not None)
+            self.assertEqual(prompt["command"], {"state": "prompt", "exit_code": None})
+            self.assertEqual(prompt["commands"], 0)
+            self.assertIsNone(prompt["notification"])
+            self.assertIsNone(prompt["progress"])
+
+            self.assertTrue(dashboard.proc(enter())["ok"])
+            running = signal(lambda value: value["progress"] is not None)
+            self.assertEqual(
+                running["command"], {"state": "running", "exit_code": None}
+            )
+            self.assertEqual(running["progress"], {"state": "normal", "percent": 40})
+            self.assertGreater(running["generation"], prompt["generation"])
+
+            self.assertTrue(dashboard.proc(enter())["ok"])
+            waiting = signal(lambda value: value["notifications"] == 2)
+            self.assertEqual(waiting["bells"], 1)
+            self.assertEqual(
+                waiting["notification"],
+                {"title": "", "body": "hello nine", "truncated": False},
+            )
+
+            self.assertTrue(dashboard.proc(enter())["ok"])
+            failed = signal(lambda value: value["commands"] == 1)
+            self.assertEqual(failed["command"], {"state": "prompt", "exit_code": 3})
+            self.assertIsNone(failed["progress"])
+
+            completed = dashboard.proc(
+                enter(),
+                {
+                    "command": "pane.wait",
+                    "session": {"id": session_id},
+                    "pane": {"id": pane},
+                    "until_command": True,
+                    "timeout_ms": 5000,
+                },
+            )
+            self.assertTrue(completed["ok"], completed)
+            waited = completed["results"][1]["result"]
+            self.assertEqual(waited["condition"], "command")
+            self.assertEqual(waited["completion"], {"commands": 2, "exit_code": 0})
+            succeeded = signal(lambda value: value["commands"] == 2)
+            self.assertEqual(succeeded["command"], {"state": "prompt", "exit_code": 0})
+
+            inspected = dashboard.command(
+                "pane.inspect", session={"id": session_id}, pane={"id": pane}
+            )["pane_state"]["signals"]
+            self.assertEqual(inspected["commands"], 2)
+            self.assertEqual(inspected["notification"]["body"], "hello nine")
+            listed = dashboard.command("pane.list", session={"id": session_id})
+            summary = listed["panes"][0]["signals"]
+            self.assertNotIn("notification", summary)
+            self.assertEqual(
+                {key: summary[key] for key in ("bells", "notifications", "commands")},
+                {"bells": 1, "notifications": 2, "commands": 2},
+            )
+
+            # Signals are opt-in: the other observer received none of these records.
+            events: list[dict[str, Any]] = []
+            while True:
+                try:
+                    events.append(quiet.event(timeout=0.2))
+                except TimeoutError:
+                    break
+            self.assertNotIn("pane.signal", [event["event"] for event in events])
+
+    def test_signals_are_not_starved_by_a_streaming_selected_pane(self) -> None:
+        # Both Panes wait for one Proc. The streaming Pane then changes on every drain, and the
+        # other signals on its own because control Commands are slow behind a sustained flood.
+        session = self.server.create_session(
+            "signal-stream",
+            attach=False,
+            hold=True,
+            command=("/bin/sh", "-c", "read go; exec yes streaming"),
+        )
+        session_id = session.state().id
+        with Client(
+            str(self.server.socket_path), name="signal-control", session=session_id
+        ) as control:
+            signaling = control.command(
+                "pane.split",
+                session={"id": session_id},
+                pane={"id": "0:1"},
+                direction="right",
+                focus="preserve",
+                hold=True,
+                argv=[
+                    "/bin/sh",
+                    "-c",
+                    r"read go; sleep 1; printf '\007\033]9;attention\007'; sleep 30",
+                ],
+            )["pane"]
+        with Client(
+            str(self.server.socket_path),
+            name="signal-stream-observer",
+            session=session_id,
+            panes=("0:1", signaling),
+            signals=True,
+        ) as observer:
+            self.assertEqual(observer.event()["event"], "snapshot")
+            observer.send(
+                PROC_REQUEST,
+                {
+                    "schema": "lemma.proc/v1",
+                    "commands": [
+                        {
+                            "command": "pane.input",
+                            "session": {"id": session_id},
+                            "pane": {"id": pane},
+                            "events": [{"kind": "key", "key": "enter"}],
+                        }
+                        for pane in (signaling, "0:1")
+                    ],
+                },
+            )
+            deadline = time.monotonic() + 8.0
+            streamed = 0
+            signal: dict[str, Any] | None = None
+            while signal is None and time.monotonic() < deadline:
+                try:
+                    record = observer.receive(deadline)
+                except TimeoutError:
+                    break
+                event = record.document
+                if record.kind != CLIENT_EVENT:
+                    continue
+                streamed += event["event"] == "pane.terminal" and event["pane"] == "0:1"
+                if (
+                    event["event"] == "pane.signal"
+                    and event["pane"] == signaling
+                    and event["signals"]["notifications"] == 1
+                ):
+                    signal = event["signals"]
+            self.assertIsNotNone(
+                signal, f"signal starved behind {streamed} pane.terminal Events"
+            )
+            assert signal is not None
+            self.assertEqual(signal["bells"], 1)
+            self.assertGreater(streamed, 0)
+
+    def test_signal_turns_do_not_withhold_other_selected_pane_changes(self) -> None:
+        # The first selected Pane changes and rings BEL on every drain; the second has a pending
+        # change. Alternating with signals must not skip the second Pane's terminal Events.
+        session = self.server.create_session(
+            "signal-lockstep",
+            attach=False,
+            hold=True,
+            command=("/bin/sh", "-c", r"read go; exec yes \"$(printf '\007')signal\""),
+        )
+        session_id = session.state().id
+        with Client(
+            str(self.server.socket_path), name="lockstep-control", session=session_id
+        ) as control:
+            quiet = control.command(
+                "pane.split",
+                session={"id": session_id},
+                pane={"id": "0:1"},
+                direction="right",
+                focus="preserve",
+                hold=True,
+                argv=[
+                    "/bin/sh",
+                    "-c",
+                    "read go; while :; do echo stream; sleep 0.1; done",
+                ],
+            )["pane"]
+        with Client(
+            str(self.server.socket_path),
+            name="lockstep-observer",
+            session=session_id,
+            panes=("0:1", quiet),
+            signals=True,
+        ) as observer:
+            self.assertEqual(observer.event()["event"], "snapshot")
+            observer.send(
+                PROC_REQUEST,
+                {
+                    "schema": "lemma.proc/v1",
+                    "commands": [
+                        {
+                            "command": "pane.input",
+                            "session": {"id": session_id},
+                            "pane": {"id": pane},
+                            "events": [{"kind": "key", "key": "enter"}],
+                        }
+                        for pane in (quiet, "0:1")
+                    ],
+                },
+            )
+            required = {
+                ("pane.terminal", "0:1"),
+                ("pane.terminal", quiet),
+                ("pane.signal", "0:1"),
+            }
+            counts: dict[tuple[str, str], int] = {}
+            # Delivery is slow while a Pane floods, so allow a generous bounded deadline.
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline and not all(
+                counts.get(key, 0) >= 2 for key in required
+            ):
+                try:
+                    record = observer.receive(deadline)
+                except TimeoutError:
+                    break
+                if record.kind == CLIENT_EVENT and "pane" in record.document:
+                    key = (record.document["event"], record.document["pane"])
+                    counts[key] = counts.get(key, 0) + 1
+            self.assertTrue(
+                all(counts.get(key, 0) >= 2 for key in required), f"delivered: {counts}"
+            )
 
     def test_python_client_negotiates_explicit_session_scoped_surfaces(self) -> None:
         session = self.server.create_session("python-surface", command=("cat",))

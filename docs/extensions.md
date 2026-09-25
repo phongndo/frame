@@ -123,6 +123,11 @@ feedback, current message, and copy-search/history state. It never includes term
 [embedded schema](../schema/lemma-api-v1.schema.json) defines the fields. The NDJSON observer emits
 `attachment.changed` for presentation changes. Neither form schedules periodic refreshes.
 
+A subscription can also set `signals = true` (Python: `Client(..., signals=True)`) to receive
+`pane.signal` Events carrying each Pane's latest bell, notification, progress, and shell-integration
+command state; this is enough for a dashboard of long-running agents without screen captures. See
+[Pane signals](api.md#pane-signals) for fields and coalescing.
+
 Prompts expose state, not a rendered row; cursor offsets are byte offsets into the native editor
 buffer. `surface.configure` can change `focusable` along with placement. Making a focused Surface
 nonfocusable immediately returns keyboard input to the Pane. A nonfocusable Surface may display a
