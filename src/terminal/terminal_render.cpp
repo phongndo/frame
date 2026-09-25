@@ -13,6 +13,8 @@
 #include <expected>
 #include <iterator>
 #include <limits>
+#include <memory>
+#include <new>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -799,8 +801,8 @@ private:
   if (row_hash_count < 3) {
     return 0;
   }
-  const auto previous = std::span(row_hashes).first(row_hash_count);
-  const auto current = std::span(current_row_hashes).first(row_hash_count);
+  const auto previous = row_hashes();
+  const auto current = current_row_hashes();
   for (std::size_t amount = 1; amount + 1 < row_hash_count; ++amount) {
     const auto overlap = row_hash_count - amount;
     if (std::equal(current.first(overlap).begin(), current.first(overlap).end(),
@@ -821,7 +823,7 @@ void Terminal::Impl::apply_physical_scroll(const std::int32_t scroll) noexcept {
   const auto columns = static_cast<std::size_t>(options.size.columns);
   const auto shifted_cells = amount * columns;
   auto cells = std::span(physical_cell_hashes.get(), physical_cell_count);
-  auto hashes = std::span(row_hashes).first(row_hash_count);
+  auto hashes = row_hashes();
   if (scroll > 0) {
     std::memmove(cells.data(), cells.subspan(shifted_cells).data(),
                  (cells.size() - shifted_cells) * sizeof(std::uint64_t));
@@ -955,7 +957,7 @@ void Terminal::Impl::apply_physical_scroll(const std::int32_t scroll) noexcept {
     }
   }
 
-  std::span(row_hashes).subspan(row_index, 1).front() = row_hash;
+  row_hashes().subspan(row_index, 1).front() = row_hash;
   if (!span_started) {
     LEMMA_ASSERT(writer.size() == checkpoint);
     return false;
@@ -1049,6 +1051,26 @@ void Terminal::invalidate_ansi_render_state() noexcept {
   impl_->projected_cursor_valid = false;
 }
 
+void Terminal::release_render_cache() noexcept {
+  LEMMA_ASSERT(impl_ != nullptr);
+  LEMMA_ASSERT(impl_->render_state != nullptr);
+  std::uint16_t rows = 0;
+  if (ghostty_render_state_get(impl_->render_state, GHOSTTY_RENDER_STATE_DATA_ROWS, &rows) ==
+          GHOSTTY_SUCCESS &&
+      rows == 0) {
+    return;
+  }
+  GhosttyRenderState replacement{nullptr};
+  if (ghostty_render_state_new(impl_->allocator.native(), &replacement) != GHOSTTY_SUCCESS) {
+    return;
+  }
+  ghostty_render_state_free(impl_->render_state);
+  impl_->render_state = replacement;
+  impl_->physical_cell_hashes.reset();
+  impl_->physical_cell_capacity = 0;
+  invalidate_ansi_render_state();
+}
+
 void Terminal::invalidate_ansi_mode_projection() noexcept {
   LEMMA_ASSERT(impl_ != nullptr);
   impl_->mirrored_modes_valid = false;
@@ -1071,6 +1093,21 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
     -> std::expected<AnsiRenderResult, Error> {
   LEMMA_ASSERT(impl_ != nullptr);
   LEMMA_ASSERT(impl_->render_state != nullptr);
+  if (impl_->physical_cell_hashes == nullptr) {
+    // First presentation, or the first since the render cache was released: nothing is physically
+    // valid, so the shadow is rebuilt in full at the current geometry.
+    LEMMA_ASSERT(!impl_->ansi_physical_valid);
+    try {
+      // Runtime-sized cell storage cannot use std::array.
+      // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+      impl_->physical_cell_hashes =
+          std::make_unique_for_overwrite<std::uint64_t[]>(impl_->physical_cell_count);
+      // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+    } catch (const std::bad_alloc&) {
+      return std::unexpected(Error::out_of_memory);
+    }
+    impl_->physical_cell_capacity = impl_->physical_cell_count;
+  }
 
   auto result = ghostty_render_state_update(impl_->render_state, impl_->terminal);
   if (result != GHOSTTY_SUCCESS) {
@@ -1130,7 +1167,7 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
         impl_->ansi_physical_valid = false;
         return std::unexpected(hash.error());
       }
-      std::span(impl_->current_row_hashes).subspan(hash_index, 1).front() = *hash;
+      impl_->current_row_hashes().subspan(hash_index, 1).front() = *hash;
       ++hash_index;
     }
     LEMMA_ASSERT(hash_index == impl_->row_hash_count);
@@ -1160,10 +1197,12 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
     const auto encode_changed_row =
         [&](const std::size_t row_index) noexcept -> std::expected<void, Error> {
       // Retained row hashes describe the physical row after any applied scroll. A row whose
-      // current hash already matches needs no encoding pass, scrolled or not.
+      // current hash already matches needs no encoding pass, scrolled or not. Rows are hashed only
+      // for incremental frames; a full frame (including the first after a released render cache)
+      // re-encodes every row.
       const bool row_unchanged =
-          rows_hashed && std::span(impl_->row_hashes).subspan(row_index, 1).front() ==
-                             std::span(impl_->current_row_hashes).subspan(row_index, 1).front();
+          rows_hashed && impl_->row_hashes().subspan(row_index, 1).front() ==
+                             impl_->current_row_hashes().subspan(row_index, 1).front();
       if (row_unchanged) {
         return {};
       }

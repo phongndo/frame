@@ -1,3 +1,4 @@
+#include "lemma/limits.hpp"
 #include "lemma/terminal/terminal.hpp"
 
 #include <gmock/gmock.h>
@@ -310,6 +311,95 @@ TEST(TerminalTest, RendersOnlyChangedAnsiRows) {
   EXPECT_EQ(changed->rows, 1U);
   EXPECT_LT(changed->bytes, full->bytes);
   EXPECT_EQ(terminal.allocation_stats().allocations_total, allocations_before);
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(TerminalTest, ReleasedRenderCacheRebuildsTheSameFullFrame) {
+  TerminalOptions options;
+  options.size = {.columns = 20, .rows = 4};
+  auto terminal = make_terminal(options);
+  write_text(terminal, "first row\r\n\x1B[1;31msecond\x1B[0m row");
+
+  std::array<std::byte, std::size_t{16} * 1'024U> presented{};
+  const auto full = terminal.render_ansi(presented, true);
+  ASSERT_TRUE(full.has_value());
+  const auto retained = terminal.allocation_stats();
+
+  terminal.release_render_cache();
+  const auto released = terminal.allocation_stats();
+  EXPECT_LT(released.bytes_current, retained.bytes_current);
+  terminal.release_render_cache();
+  EXPECT_EQ(terminal.allocation_stats().allocations_total, released.allocations_total);
+
+  // Output while unpresented is still reported when the pane is presented again.
+  write_text(terminal, "\x1B[4;1Hhidden");
+  const auto update = terminal.update_render_state();
+  ASSERT_TRUE(update.has_value());
+  EXPECT_EQ(update->dirty, DirtyState::full);
+
+  auto expected_terminal = make_terminal(options);
+  write_text(expected_terminal, "first row\r\n\x1B[1;31msecond\x1B[0m row\x1B[4;1Hhidden");
+  std::array<std::byte, std::size_t{16} * 1'024U> expected{};
+  const auto expected_frame = expected_terminal.render_ansi(expected, true);
+  std::array<std::byte, std::size_t{16} * 1'024U> rebuilt{};
+  const auto rebuilt_frame = terminal.render_ansi(rebuilt);
+  ASSERT_TRUE(expected_frame.has_value());
+  ASSERT_TRUE(rebuilt_frame.has_value());
+  EXPECT_TRUE(rebuilt_frame->full);
+  EXPECT_EQ(rebuilt_frame->encoded_rows, options.size.rows);
+  EXPECT_TRUE(std::ranges::equal(std::span(rebuilt).first(rebuilt_frame->bytes),
+                                 std::span(expected).first(expected_frame->bytes)));
+
+  // Releasing an unchanged pane must not let unchanged-row skipping reuse the stale physical
+  // state: presenting it again re-encodes every row and reproduces the same frame.
+  terminal.release_render_cache();
+  std::array<std::byte, std::size_t{16} * 1'024U> represented{};
+  const auto represented_frame = terminal.render_ansi(represented);
+  ASSERT_TRUE(represented_frame.has_value());
+  EXPECT_TRUE(represented_frame->full);
+  EXPECT_EQ(represented_frame->encoded_rows, options.size.rows);
+  EXPECT_TRUE(std::ranges::equal(std::span(represented).first(represented_frame->bytes),
+                                 std::span(expected).first(expected_frame->bytes)));
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(TerminalTest, ReleasedRenderCacheIsRebuiltAtTheResizedGeometry) {
+  TerminalOptions options;
+  options.size = {.columns = 20, .rows = 4};
+  auto terminal = make_terminal(options);
+  write_text(terminal, "first row\r\nsecond row");
+  std::array<std::byte, std::size_t{16} * 1'024U> presented{};
+  ASSERT_TRUE(terminal.render_ansi(presented, true).has_value());
+
+  // A hidden pane is resized with its cache released, then presented at the larger geometry.
+  terminal.release_render_cache();
+  const TerminalSize grown{.columns = 30, .rows = 6};
+  ASSERT_TRUE(terminal.resize(grown).has_value());
+  write_text(terminal, "\x1B[6;21Hwide tail");
+
+  options.size = grown;
+  auto expected_terminal = make_terminal(options);
+  write_text(expected_terminal, "first row\r\nsecond row\x1B[6;21Hwide tail");
+  std::array<std::byte, std::size_t{16} * 1'024U> expected{};
+  const auto expected_frame = expected_terminal.render_ansi(expected, true);
+  std::array<std::byte, std::size_t{16} * 1'024U> rebuilt{};
+  const auto rebuilt_frame = terminal.render_ansi(rebuilt);
+  ASSERT_TRUE(expected_frame.has_value());
+  ASSERT_TRUE(rebuilt_frame.has_value());
+  EXPECT_TRUE(rebuilt_frame->full);
+  EXPECT_EQ(rebuilt_frame->rows, grown.rows);
+  EXPECT_EQ(rebuilt_frame->encoded_rows, grown.rows);
+  EXPECT_TRUE(std::ranges::equal(std::span(rebuilt).first(rebuilt_frame->bytes),
+                                 std::span(expected).first(expected_frame->bytes)));
+
+  // The shadow now covers every cell: a later incremental frame diffs the final row's tail.
+  write_text(terminal, "\x1B[6;21HWIDE");
+  const auto changed = terminal.render_ansi(rebuilt);
+  ASSERT_TRUE(changed.has_value());
+  EXPECT_FALSE(changed->full);
+  EXPECT_EQ(changed->rows, 1U);
 }
 
 // GoogleTest assertions inflate the measured branch count.
@@ -805,6 +895,62 @@ TEST(TerminalTest, PtyResponseOverflowIsStickyTerminalIntegrityFailure) {
   EXPECT_TRUE(terminal.take_effects().pty_response_overflowed);
   EXPECT_TRUE(terminal.pty_response_overflowed());
   EXPECT_TRUE(terminal.integrity_failed());
+}
+
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(TerminalTest, PtyResponsesHoldExactlyTheirPendingByteBound) {
+  auto terminal = make_terminal();
+  // Six-byte cursor-position replies plus four-byte status replies fill the bound exactly.
+  constexpr std::string_view position_query = "\x1B[6n";
+  constexpr std::string_view position_reply = "\x1B[1;1R";
+  constexpr std::string_view status_query = "\x1B[5n";
+  constexpr std::string_view status_reply = "\x1B[0n";
+  constexpr auto bytes_max = limits::terminal_pty_response_bytes_max;
+  constexpr auto positions = (bytes_max - status_reply.size()) / position_reply.size();
+  static_assert((positions * position_reply.size()) + status_reply.size() == bytes_max);
+  std::string queries;
+  queries.reserve((position_query.size() * positions) + status_query.size());
+  for (std::size_t count = 0; count < positions; ++count) {
+    queries.append(position_query);
+  }
+  queries.append(status_query);
+
+  write_text(terminal, queries);
+  EXPECT_EQ(terminal.pending_pty_response_bytes(), bytes_max);
+  EXPECT_FALSE(terminal.pty_response_overflowed());
+
+  // Draining returns the whole bound to later replies.
+  std::array<std::byte, 4'096> discarded{};
+  while (terminal.pending_pty_response_bytes() > 0) {
+    ASSERT_GT(terminal.read_pty_responses(discarded), 0U);
+  }
+  write_text(terminal, queries);
+  EXPECT_EQ(terminal.pending_pty_response_bytes(), bytes_max);
+  EXPECT_FALSE(terminal.pty_response_overflowed());
+
+  write_text(terminal, status_query);
+  EXPECT_TRUE(terminal.pty_response_overflowed());
+  EXPECT_TRUE(terminal.integrity_failed());
+}
+
+TEST(TerminalTest, PtyResponsesPreserveOrderAcrossPartialReads) {
+  auto terminal = make_terminal();
+  write_text(terminal, "\x1B[6n");
+  std::array<std::byte, 3> prefix{};
+  ASSERT_EQ(terminal.read_pty_responses(prefix), prefix.size());
+
+  write_text(terminal, "\x1B[5n");
+  std::array<std::byte, 32> rest{};
+  const auto count = terminal.read_pty_responses(rest);
+  std::string replies;
+  for (const auto byte : prefix) {
+    replies.push_back(std::to_integer<char>(byte));
+  }
+  for (const auto byte : std::span(rest).first(count)) {
+    replies.push_back(std::to_integer<char>(byte));
+  }
+  EXPECT_EQ(replies, "\x1B[1;1R\x1B[0n");
+  EXPECT_EQ(terminal.pending_pty_response_bytes(), 0U);
 }
 
 TEST(TerminalTest, ReportsInBandSizeWhenMode2048IsEnabled) {

@@ -88,6 +88,14 @@ struct WriteAudit final {
   return composition.has_value() ? composition->bytes : 0;
 }
 
+// Alternates width and height so audited resizes exercise both the presented cell-hash shadow and
+// the row-hash storage at capacities retained from warmup.
+[[nodiscard]] constexpr auto audited_resize(const std::size_t iteration) noexcept
+    -> lemma::vt::TerminalSize {
+  return iteration % 2U == 0 ? lemma::vt::TerminalSize{.columns = 100, .rows = 24}
+                             : lemma::vt::TerminalSize{.columns = 80, .rows = 30};
+}
+
 } // namespace
 
 // Define every replaceable throwing allocation and deallocation form. ASan observes sized
@@ -192,17 +200,22 @@ int main() {
     return 2;
   }
   auto resize_terminal = std::move(*resize_terminal_result);
-  if (!resize_terminal.resize({.columns = 81, .rows = 24}).has_value()) {
+  // Present the resized terminal so its lazily allocated cell-hash shadow exists; audited resizes
+  // must then reuse it rather than skip it.
+  lemma::render::FrameBuffer resize_frame;
+  if (!resize_frame.prepare({.columns = 100, .rows = 30}) ||
+      !resize_terminal.resize({.columns = 81, .rows = 24}).has_value() ||
+      !lemma::render::compose_retained_single_pane(resize_terminal, resize_frame, true)
+           .has_value()) {
     return 2;
   }
   for (std::size_t iteration = 0; iteration < warmup_iterations; ++iteration) {
     const auto routed = input_router.route_legacy(routed_input, routed_input.size());
     const auto bytes = write_and_compose(terminal, frame, iteration % 2U == 0 ? first : second);
-    const lemma::vt::TerminalSize resize = iteration % 2U == 0
-                                               ? lemma::vt::TerminalSize{.columns = 100, .rows = 24}
-                                               : lemma::vt::TerminalSize{.columns = 80, .rows = 24};
     if (routed.consumed != routed_input.size() || bytes == 0 ||
-        !resize_terminal.resize(resize).has_value()) {
+        !resize_terminal.resize(audited_resize(iteration)).has_value() ||
+        !lemma::render::compose_retained_single_pane(resize_terminal, resize_frame, true)
+             .has_value()) {
       return 2;
     }
   }
@@ -234,9 +247,6 @@ int main() {
     const auto routed = input_router.route_legacy(routed_input, routed_input.size());
     const auto frame_bytes =
         write_and_compose(terminal, frame, iteration % 2U == 0 ? first : second);
-    const lemma::vt::TerminalSize resize = iteration % 2U == 0
-                                               ? lemma::vt::TerminalSize{.columns = 100, .rows = 24}
-                                               : lemma::vt::TerminalSize{.columns = 80, .rows = 24};
     const auto extension_peer_view = extension_runtime->peer_views(extension_peers);
     const auto extension_surface_view = extension_runtime->collect_surfaces(
         extension_attachment, {.columns = 80, .rows = 24}, extension_surfaces);
@@ -247,11 +257,11 @@ int main() {
     readiness_descriptors.front().events = iteration % 2U == 0 ? POLLIN : POLLOUT;
     const auto ready = readiness.wait(readiness_descriptors, readiness_identities, 0);
     if (routed.consumed != routed_input.size() || frame_bytes == 0 ||
-        !resize_terminal.resize(resize).has_value() || extension_peer_view.size() != 1U ||
-        extension_surface_view.size() != 1U || !extension_viewport.has_value() ||
-        extension_accounting.peers != 1U || extension_accounting.surfaces != 1U ||
-        extension_accounting.input_bytes != 0 || extension_accounting.output_bytes != 0 ||
-        ready != (iteration % 2U == 0 ? 0 : 1)) {
+        !resize_terminal.resize(audited_resize(iteration)).has_value() ||
+        extension_peer_view.size() != 1U || extension_surface_view.size() != 1U ||
+        !extension_viewport.has_value() || extension_accounting.peers != 1U ||
+        extension_accounting.surfaces != 1U || extension_accounting.input_bytes != 0 ||
+        extension_accounting.output_bytes != 0 || ready != (iteration % 2U == 0 ? 0 : 1)) {
       audit_enabled.store(false, std::memory_order_release);
       return 2;
     }

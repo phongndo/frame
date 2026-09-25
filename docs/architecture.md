@@ -188,6 +188,8 @@ daemon-owned state; the client owns neither a second terminal grid nor a PTY rep
 
 Scene composes Pane projections and extension-owned retained Grids. Native code owns clipping,
 occlusion repair, damage, and cursor arbitration. Extension code never enters composition.
+Panes omitted from a full frame release their render rows and physical presentation shadow, so
+hidden Panes keep only canonical terminal state; presenting one again rebuilds them with full damage.
 
 ```text
 Attachment geometry -> Surface placement -> Core layout -> Pane geometry -> PTY size -> Ghostty size

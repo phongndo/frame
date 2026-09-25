@@ -20,6 +20,7 @@
 #include <span>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace lemma::vt {
 
@@ -119,12 +120,11 @@ namespace {
   return size.cell_width_px <= width_max && size.cell_height_px <= height_max;
 }
 
-[[nodiscard]] constexpr auto physical_cell_capacity(const std::size_t current,
-                                                    const std::size_t required) noexcept
+[[nodiscard]] constexpr auto grown_hash_capacity(const std::size_t current,
+                                                 const std::size_t required,
+                                                 const std::size_t maximum) noexcept
     -> std::size_t {
-  constexpr auto maximum =
-      static_cast<std::size_t>(limits::terminal_columns_hard_max) * limits::terminal_rows_hard_max;
-  LEMMA_ASSERT(required > current && required <= maximum);
+  LEMMA_ASSERT(current > 0 && required > current && required <= maximum);
   const auto geometric = current + std::max(current / 2U, std::size_t{1});
   return std::min(maximum, std::max(required, geometric));
 }
@@ -520,15 +520,10 @@ auto Terminal::create(const TerminalOptions& options) noexcept -> std::expected<
   }
 
   impl->row_hash_count = options.size.rows;
+  // The physical cell shadow is allocated by the first presentation.
   impl->physical_cell_count = static_cast<std::size_t>(options.size.columns) * options.size.rows;
-  impl->physical_cell_capacity = impl->physical_cell_count;
   try {
-    // Runtime-sized cell storage cannot use std::array.
-    // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
-    impl->physical_cell_hashes =
-        std::make_unique_for_overwrite<std::uint64_t[]>(impl->physical_cell_capacity);
-    // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
-    LEMMA_ASSERT(impl->physical_cell_capacity >= impl->physical_cell_count);
+    impl->row_hash_storage.resize(impl->row_hash_count * 2U);
   } catch (const std::bad_alloc&) {
     return std::unexpected(Error::out_of_memory);
   }
@@ -686,18 +681,25 @@ auto Terminal::resize(const TerminalSize& size) noexcept -> std::expected<void, 
 
   const auto physical_cell_count = static_cast<std::size_t>(size.columns) * size.rows;
   auto target_capacity = impl_->physical_cell_capacity;
+  const auto row_capacity = impl_->row_hash_storage.size() / 2U;
   detail::CellHashStorage physical_cell_hashes;
-  if (physical_cell_count > target_capacity) {
-    target_capacity = target_capacity == 0
-                          ? physical_cell_count
-                          : physical_cell_capacity(target_capacity, physical_cell_count);
-    try {
+  std::vector<std::uint64_t> row_hash_storage;
+  try {
+    // An unallocated shadow is sized by the next presentation instead.
+    if (impl_->physical_cell_hashes != nullptr && physical_cell_count > target_capacity) {
+      constexpr auto cells_max = static_cast<std::size_t>(limits::terminal_columns_hard_max) *
+                                 limits::terminal_rows_hard_max;
+      target_capacity = grown_hash_capacity(target_capacity, physical_cell_count, cells_max);
       // Runtime-sized cell storage cannot use std::array.
       // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
       physical_cell_hashes = std::make_unique_for_overwrite<std::uint64_t[]>(target_capacity);
-    } catch (const std::bad_alloc&) {
-      return std::unexpected(Error::out_of_memory);
     }
+    if (size.rows > row_capacity) {
+      row_hash_storage.resize(
+          grown_hash_capacity(row_capacity, size.rows, limits::terminal_rows_hard_max) * 2U);
+    }
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(Error::out_of_memory);
   }
 
   const auto result = ghostty_terminal_resize(impl_->terminal, size.columns, size.rows,
@@ -710,10 +712,15 @@ auto Terminal::resize(const TerminalSize& size) noexcept -> std::expected<void, 
     impl_->physical_cell_hashes = std::move(physical_cell_hashes);
     impl_->physical_cell_capacity = target_capacity;
   }
+  if (!row_hash_storage.empty()) {
+    impl_->row_hash_storage = std::move(row_hash_storage);
+  }
   impl_->physical_cell_count = physical_cell_count;
-  LEMMA_ASSERT(impl_->physical_cell_capacity >= impl_->physical_cell_count);
-  impl_->row_hashes.fill(0);
+  LEMMA_ASSERT(impl_->physical_cell_hashes == nullptr ||
+               impl_->physical_cell_capacity >= impl_->physical_cell_count);
   impl_->row_hash_count = size.rows;
+  LEMMA_ASSERT(impl_->row_hash_storage.size() / 2U >= impl_->row_hash_count);
+  std::ranges::fill(impl_->row_hashes(), std::uint64_t{0});
   impl_->mirrored_modes_valid = false;
   impl_->mirrored_mouse_modes_valid = false;
   impl_->ansi_physical_valid = false;

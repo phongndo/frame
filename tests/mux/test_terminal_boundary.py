@@ -190,6 +190,67 @@ time.sleep(60)
         left.expect_alive()
         right.expect_alive()
 
+    def test_output_while_unpresented_is_current_when_presented_again(self) -> None:
+        # Unpresented panes release their render rows; presenting them again must rebuild the
+        # complete pane, including content drawn before and output parsed while hidden.
+        session = self.server.create_session("unpresented_output")
+        pane = session.pane()
+        hidden_gate = self.server.root / "unpresented-tab.gate"
+        hidden_done = self.server.root / "unpresented-tab.done"
+        pane.send(
+            "r='__UNPRESENTED_'; "
+            'printf "\\033[1;32m${r}READY__\\033[0m\\n"; '
+            f"while [ ! -e {shlex.quote(str(hidden_gate))} ]; do sleep 0.01; done; "
+            'printf "\\033[1;35m${r}TAB__\\033[0m\\n"; '
+            f": > {shlex.quote(str(hidden_done))}\r"
+        )
+        pane.expect_output("__UNPRESENTED_READY__")
+        client = session.require_client()
+
+        client.prefix("c")
+        second = self.server.wait_for_state(
+            session.name,
+            lambda state: state.tabs == 2 and state.focused_pane != pane.id,
+            "a second tab to become active",
+        )
+        client.send("s='__SECOND_'; printf \"${s}TAB__\\n\"\r")
+        client.expect_output("__SECOND_TAB__")
+        self.assertNotIn("__UNPRESENTED_READY__", client.screen_text())
+        hidden_gate.touch()
+        wait_until(
+            "the hidden pane to emit output",
+            lambda: True if hidden_done.exists() else None,
+        )
+
+        client.prefix("p")
+        self.server.wait_for_state(
+            session.name,
+            lambda state: state.active_tab != second.active_tab,
+            "the first tab to become active again",
+        )
+        client.expect_output("__UNPRESENTED_TAB__")
+        client.expect_raw("38;5;5")
+        self.assertIn("__UNPRESENTED_READY__", client.screen_text())
+        self.assertNotIn("__SECOND_TAB__", client.screen_text())
+
+        # Zoom hides a sibling within the active tab; unzooming presents it again.
+        sibling = pane.split_right()
+        sibling.send("z='__ZOOM_'; printf \"${z}SIBLING__\\n\"\r")
+        sibling.expect_output("__ZOOM_SIBLING__")
+        pane.focus()
+        client.prefix("z")
+
+        def sibling_hidden() -> bool | None:
+            client.drain(0.01)
+            return True if "__ZOOM_SIBLING__" not in client.screen_text() else None
+
+        wait_until("the zoomed pane to hide its sibling", sibling_hidden)
+        client.prefix("z")
+        client.expect_output("__ZOOM_SIBLING__")
+        self.assertIn("__UNPRESENTED_TAB__", client.screen_text())
+        pane.expect_alive()
+        sibling.expect_alive()
+
     def test_synchronized_output_holds_one_pane_while_sibling_progresses(self) -> None:
         session = self.server.create_session("synchronized_output")
         left = session.pane()
