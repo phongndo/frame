@@ -295,10 +295,10 @@ points to that entry, including when running directly from a build tree. Keep th
 the executable when relocating an installation; copying only the binary is insufficient.
 
 The entry uses the xterm-256color base, adds direct-color and styled-underline declarations,
-keeps its cursor shape and color capabilities, and omits the application clipboard capability not
-provided by the current policy. A pane's cursor-style reset selects a steady block, independent of
-the outer terminal's configured default. Ghostty's terminal-name query reports the same identity as
-`TERM`.
+keeps its cursor shape and color capabilities, and omits the clipboard-write capability because
+[application clipboard](#application-clipboard) writes are denied by default. A pane's cursor-style
+reset selects a steady block, independent of the outer terminal's configured default. Ghostty's
+terminal-name query reports the same identity as `TERM`.
 
 An SSH destination also needs the entry to run terminfo-based applications under `TERM=lemma`.
 Install it on that destination rather than setting `TERM` to the outer terminal's name. For example,
