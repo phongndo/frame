@@ -180,7 +180,7 @@ struct PaneStatus final {
                                PaneId pane) -> PaneStatus;
 // Streams NDJSON observations until the daemon closes the subscription or the output fails.
 [[nodiscard]] auto events(const RuntimeEndpoint& endpoint, std::optional<std::string_view> session,
-                          std::span<const PaneId> panes, bool screen) -> int;
+                          std::span<const PaneId> panes, bool screen, bool signals) -> int;
 [[nodiscard]] auto rename_session_status(const RuntimeEndpoint& endpoint, std::string_view session,
                                          std::string_view new_name) -> OperationStatus;
 [[nodiscard]] auto rename_session(const RuntimeEndpoint& endpoint, std::string_view session,

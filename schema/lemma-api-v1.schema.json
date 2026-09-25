@@ -394,9 +394,66 @@
       },
       "additionalProperties": false
     },
+    "paneSignals": {
+      "description": "Latest-value application attention signals. Counters are cumulative for the Pane; notification text is omitted from pane.list.",
+      "type": "object",
+      "required": ["generation", "bells", "notifications", "progress", "commands", "command", "title_changes", "cwd_changes"],
+      "properties": {
+        "generation": { "type": "integer", "minimum": 0 },
+        "bells": { "type": "integer", "minimum": 0 },
+        "notifications": { "type": "integer", "minimum": 0 },
+        "notification": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["title", "body", "truncated"],
+              "properties": {
+                "title": { "type": "string", "maxLength": 1024 },
+                "body": { "type": "string", "maxLength": 4096 },
+                "truncated": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "progress": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["state", "percent"],
+              "properties": {
+                "state": { "enum": ["normal", "error", "indeterminate", "paused"] },
+                "percent": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0, "maximum": 100 }] }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "commands": { "type": "integer", "minimum": 0 },
+        "command": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["state", "exit_code"],
+              "properties": {
+                "state": { "enum": ["prompt", "running", "finished"] },
+                "exit_code": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }] }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "title_changes": { "type": "integer", "minimum": 0 },
+        "cwd_changes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
     "paneInspection": {
       "type": "object",
-      "required": ["pane", "process", "terminal"],
+      "required": ["pane", "process", "terminal", "signals"],
       "properties": {
         "pane": {
           "type": "object",
@@ -474,7 +531,8 @@
             "health": { "enum": ["ok", "failed"] }
           },
           "additionalProperties": false
-        }
+        },
+        "signals": { "$ref": "#/$defs/paneSignals", "required": ["notification"] }
       },
       "additionalProperties": false
     },
@@ -490,7 +548,7 @@
     },
     "paneListing": {
       "type": "object",
-      "required": ["id", "tab", "tab_position", "focused", "column", "row", "columns", "rows", "process", "terminal_generation", "observed_title"],
+      "required": ["id", "tab", "tab_position", "focused", "column", "row", "columns", "rows", "process", "terminal_generation", "observed_title", "signals"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "tab": { "$ref": "#/$defs/id" },
@@ -502,7 +560,8 @@
         "rows": { "type": "integer", "minimum": 0, "maximum": 65535 },
         "process": { "$ref": "#/$defs/paneProcess" },
         "terminal_generation": { "type": "integer", "minimum": 1 },
-        "observed_title": { "type": "string" }
+        "observed_title": { "type": "string" },
+        "signals": { "$ref": "#/$defs/paneSignals", "not": { "required": ["notification"] } }
       },
       "additionalProperties": false
     },
@@ -532,8 +591,17 @@
         "surface": { "$ref": "#/$defs/id" },
         "connection": { "$ref": "#/$defs/id" },
         "terminal_generation": { "type": "integer", "minimum": 1 },
-        "condition": { "enum": ["process-exit", "exit-code", "signal", "contains", "prompt"] },
+        "condition": { "enum": ["process-exit", "exit-code", "signal", "contains", "prompt", "command"] },
         "process": { "$ref": "#/$defs/eventProcess" },
+        "completion": {
+          "type": "object",
+          "required": ["commands", "exit_code"],
+          "properties": {
+            "commands": { "type": "integer", "minimum": 1 },
+            "exit_code": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }] }
+          },
+          "additionalProperties": false
+        },
         "daemon": { "$ref": "#/$defs/daemonInspection" },
         "session_state": { "$ref": "#/$defs/sessionInspection" },
         "tab_state": { "$ref": "#/$defs/tabInspection" },
@@ -886,7 +954,9 @@
             "signal": { "type": "integer", "minimum": 1, "maximum": 127 },
             "contains": { "type": "string", "minLength": 1, "maxLength": 65535 },
             "until_prompt": { "const": true },
+            "until_command": { "const": true },
             "after_generation": { "type": "integer", "minimum": 0 },
+            "after_commands": { "type": "integer", "minimum": 0 },
             "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 600000, "default": 30000 }
           },
           "allOf": [
@@ -896,15 +966,23 @@
                   { "required": ["exit_code", "signal"] },
                   { "required": ["exit_code", "contains"] },
                   { "required": ["exit_code", "until_prompt"] },
+                  { "required": ["exit_code", "until_command"] },
                   { "required": ["signal", "contains"] },
                   { "required": ["signal", "until_prompt"] },
-                  { "required": ["contains", "until_prompt"] }
+                  { "required": ["signal", "until_command"] },
+                  { "required": ["contains", "until_prompt"] },
+                  { "required": ["contains", "until_command"] },
+                  { "required": ["until_prompt", "until_command"] }
                 ]
               }
             },
             {
               "if": { "required": ["after_generation"] },
               "then": { "anyOf": [{ "required": ["contains"] }, { "required": ["until_prompt"] }] }
+            },
+            {
+              "if": { "required": ["after_commands"] },
+              "then": { "required": ["until_command"] }
             }
           ],
           "additionalProperties": false
@@ -1011,7 +1089,8 @@
           "items": { "$ref": "#/$defs/paneSelector" }
         },
         "screen": { "type": "boolean", "default": false },
-        "presentation": { "type": "boolean", "default": false }
+        "presentation": { "type": "boolean", "default": false },
+        "signals": { "type": "boolean", "default": false }
       },
       "dependentRequired": { "pane": ["session"], "panes": ["session"], "presentation": ["session"] },
       "allOf": [
@@ -1092,7 +1171,7 @@
       "properties": {
         "schema": { "const": "lemma.event/v1" },
         "sequence": { "type": "integer", "minimum": 0 },
-        "event": { "enum": ["snapshot", "state.changed", "attachment.changed", "pane.terminal", "pane.screen", "pane.process", "pane.closed", "surface.key", "surface.mouse", "surface.paste", "surface.resized", "surface.focused", "surface.blurred", "surface.closed"] },
+        "event": { "enum": ["snapshot", "state.changed", "attachment.changed", "pane.terminal", "pane.screen", "pane.process", "pane.closed", "pane.signal", "surface.key", "surface.mouse", "surface.paste", "surface.resized", "surface.focused", "surface.blurred", "surface.closed"] },
         "sessions": { "type": "array" },
         "presentation": { "$ref": "#/$defs/presentation" },
         "session": { "$ref": "#/$defs/id" },
@@ -1123,9 +1202,14 @@
         "text": { "type": "string" },
         "bytes_hex": { "type": "string", "pattern": "^(?:[0-9a-f]{2})*$", "maxLength": 16384 },
         "capture": { "$ref": "#/$defs/capture" },
-        "process": { "$ref": "#/$defs/eventProcess" }
+        "process": { "$ref": "#/$defs/eventProcess" },
+        "signals": { "$ref": "#/$defs/paneSignals", "required": ["notification"] }
       },
       "allOf": [
+        {
+          "if": { "properties": { "event": { "const": "pane.signal" } } },
+          "then": { "required": ["session", "pane", "signals"] }
+        },
         {
           "if": { "properties": { "event": { "const": "surface.key" } } },
           "then": { "oneOf": [

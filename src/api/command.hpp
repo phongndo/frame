@@ -87,6 +87,7 @@ enum class WaitCondition : std::uint8_t {
   signal,
   contains,
   prompt,
+  command,
 };
 
 inline constexpr std::uint32_t wait_timeout_default_milliseconds = 30'000;
@@ -246,6 +247,7 @@ struct Command final {
   CaptureWrap capture_wrap{CaptureWrap::rendered};
   WaitCondition wait_condition{WaitCondition::process_exit};
   std::uint64_t after_terminal_generation{0};
+  std::optional<std::uint64_t> after_commands;
   std::uint32_t wait_value{0};
   std::uint32_t wait_timeout_milliseconds{wait_timeout_default_milliseconds};
   std::uint16_t amount{0};
@@ -286,6 +288,7 @@ struct EventSubscription final {
   std::vector<PaneSelector> panes;
   bool screen{false};
   bool presentation{false};
+  bool signals{false};
 };
 
 struct EventSubscriptionDecodeResult final {

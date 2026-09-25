@@ -105,7 +105,8 @@ lemma swap --pane 0:1 1:1
 a process directly or press Enter automatically. `capture` prints terminal text, not an image, and
 does not send input or move the viewport. `wait` blocks until the Pane's process exits or a specified
 condition matches, with a default timeout of 30 seconds. Any process exit satisfies a conditionless
-wait; use `--exit-code 0` to require success. `--until-prompt` requires shell-integration markers.
+wait; use `--exit-code 0` to require success. `--until-prompt` requires shell-integration markers;
+`--until-command` waits for the next shell-integration command completion and reports its exit code.
 Terminal conditions can match existing state; use `--after-generation` when newer state is required.
 Waiting for an entire Session or Tab to end is not supported.
 
@@ -271,6 +272,7 @@ lemma send --json --session work --pane 0:1 --paste 'just test' --key enter
 lemma wait --json --session work --pane 0:1 --until-prompt --timeout 2m
 lemma proc --file proc.json
 lemma events --session work --pane 0:1 --screen
+lemma events --signals                     # bells, notifications, progress, command state
 lemma api schema --json
 ```
 

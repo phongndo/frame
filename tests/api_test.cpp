@@ -151,6 +151,63 @@ TEST(ApiTest, DecodesBoundedWaitCommandAndRejectsConflictingConditions) {
   EXPECT_FALSE(decode_command(*generation_document.value).command.has_value());
 }
 
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(ApiTest, DecodesCommandCompletionWait) {
+  constexpr std::string_view valid = R"({
+    "command":"pane.wait",
+    "session":{"id":"2:7"},
+    "pane":{"id":"4:9"},
+    "until_command":true,
+    "after_commands":3
+  })";
+  const auto document = parse_json(valid);
+  ASSERT_TRUE(document.value.has_value());
+  const auto decoded = decode_command(*document.value);
+  ASSERT_TRUE(decoded.command.has_value()) << decoded.error.reason;
+  EXPECT_EQ(decoded.command->wait_condition, WaitCondition::command);
+  EXPECT_EQ(decoded.command->after_commands, std::optional<std::uint64_t>{3});
+  EXPECT_EQ(wait_condition_name(WaitCondition::command), "command");
+  const auto encoded = encode_command(*decoded.command);
+  ASSERT_TRUE(encoded.has_value());
+  EXPECT_NE(encoded->find(R"("until_command":true,"after_commands":3)"), std::string::npos);
+
+  for (const std::string_view invalid : {
+           R"({"command":"pane.wait","session":{"id":"2:7"},"pane":{"id":"4:9"},
+               "until_command":true,"until_prompt":true})",
+           R"({"command":"pane.wait","session":{"id":"2:7"},"pane":{"id":"4:9"},
+               "until_command":false})",
+           R"({"command":"pane.wait","session":{"id":"2:7"},"pane":{"id":"4:9"},
+               "after_commands":1})",
+           R"({"command":"pane.wait","session":{"id":"2:7"},"pane":{"id":"4:9"},
+               "until_command":true,"after_generation":1})",
+       }) {
+    const auto rejected_document = parse_json(invalid);
+    ASSERT_TRUE(rejected_document.value.has_value());
+    EXPECT_FALSE(decode_command(*rejected_document.value).command.has_value()) << invalid;
+  }
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(ApiTest, DecodesSignalObservationForGlobalAndScopedFeeds) {
+  for (const std::string_view valid : {
+           R"({"schema":"lemma.events/v1","signals":true})",
+           R"({"schema":"lemma.events/v1","session":{"name":"work"},"signals":true})",
+       }) {
+    const auto document = parse_json(valid);
+    ASSERT_TRUE(document.value.has_value());
+    const auto decoded = decode_event_subscription(*document.value);
+    ASSERT_TRUE(decoded.subscription.has_value()) << decoded.error.reason;
+    EXPECT_TRUE(decoded.subscription->signals);
+  }
+  const auto invalid = parse_json(R"({"schema":"lemma.events/v1","signals":1})");
+  ASSERT_TRUE(invalid.value.has_value());
+  const auto rejected = decode_event_subscription(*invalid.value);
+  EXPECT_FALSE(rejected.subscription.has_value());
+  EXPECT_EQ(rejected.error.field, "signals");
+}
+
 TEST(ApiTest, DecodesBoundedMultiPaneObservation) {
   constexpr std::string_view valid = R"({
     "schema":"lemma.events/v1",

@@ -103,6 +103,9 @@ struct PaneRuntime final {
   std::uint64_t compression_activity{0};
   std::uint64_t mutation_generation{1};
   std::uint64_t observation_generation{1};
+  // PaneRuntimeStore::issue_signal_stamp() value of the latest terminal signal change; zero until
+  // the application reports one. The signal values themselves remain owned by the terminal.
+  std::uint64_t signal_stamp{0};
   std::size_t scrollback_bytes_reserved{0};
   std::chrono::steady_clock::time_point compression_deadline;
   bool compression_scheduled{false};
@@ -164,11 +167,16 @@ public:
   [[nodiscard]] auto can_reserve_scrollback(const std::size_t bytes) const noexcept -> bool {
     return bytes <= limits::terminal_scrollback_bytes_aggregate_max - scrollback_bytes_reserved_;
   }
+  // Daemon-wide monotonic stamps order Pane signal changes, so an observer retains one watermark
+  // and scans only Sessions and Panes stamped after it.
+  [[nodiscard]] auto issue_signal_stamp() noexcept -> std::uint64_t { return ++signal_clock_; }
+  [[nodiscard]] auto signal_clock() const noexcept -> std::uint64_t { return signal_clock_; }
 
 private:
   std::array<std::unique_ptr<SessionSlots>, limits::sessions_hard_max> sessions_{};
   std::size_t size_{0};
   std::size_t scrollback_bytes_reserved_{0};
+  std::uint64_t signal_clock_{0};
 };
 
 struct CopySearchTask final {
@@ -296,6 +304,8 @@ struct SessionRecord final : Session {
   input::InputRouter interaction_router;
   AttachmentRuntime attachment_runtime;
   vt::TerminalTheme theme;
+  // Newest signal stamp of any Pane in this Session; lets observers skip unchanged Sessions.
+  std::uint64_t signal_stamp{0};
 };
 
 class Sessions final {

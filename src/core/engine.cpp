@@ -340,6 +340,7 @@ struct PtyDrainResult final {
   bool damage_capture_failed{false};
   bool bell{false};
   bool title_changed{false};
+  bool signal{false};
 #ifdef LEMMA_ENABLE_LATENCY_TRACE
   std::uint64_t correlation{0};
 #endif
@@ -410,6 +411,10 @@ process_pty_output(const int pty, vt::Terminal& terminal, PresentationGate& pres
   drain.bell = drain.bell || effects.bells > 0 || effects.desktop_notifications > 0;
   drain.title_changed = drain.title_changed || effects.title_changes > 0 ||
                         effects.pwd_changes > 0 || effects.progress_reports > 0;
+  // Signal values stay in the terminal's latest-value record; the drain only notes a change.
+  drain.signal = drain.signal || effects.bells > 0 || effects.desktop_notifications > 0 ||
+                 effects.title_changes > 0 || effects.pwd_changes > 0 ||
+                 effects.progress_reports > 0 || effects.command_transitions > 0;
   drain.changed = true;
   return queue_terminal_responses(pending_writes, terminal);
 }
@@ -6867,21 +6872,43 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
   return result;
 }
 
-[[nodiscard]] auto begin_public_wait(api::Command request) -> ProcCommandWait {
-  const auto timeout = std::chrono::milliseconds(request.wait_timeout_milliseconds);
-  return {.request = std::move(request),
-          .deadline = reactor_now() + timeout,
-          .observed_terminal_generation = 0,
-          .observed = false,
-          .pane_was_present = false};
+[[nodiscard]] auto public_wait_target(const api::Command& request, Sessions& sessions,
+                                      PaneRuntimeStore& runtimes) noexcept -> ObservedPane {
+  auto* const session = public_session(sessions, request.session);
+  auto* const pane = session == nullptr ? nullptr : find_pane(*session, request.pane.id);
+  auto* const runtime = pane == nullptr ? nullptr : find_pane_runtime(runtimes, *session, *pane);
+  return {.session = session, .pane = pane, .runtime = runtime};
 }
 
 [[nodiscard]] auto public_wait_target(const ProcCommandWait& wait, Sessions& sessions,
                                       PaneRuntimeStore& runtimes) noexcept -> ObservedPane {
-  auto* const session = public_session(sessions, wait.request.session);
-  auto* const pane = session == nullptr ? nullptr : find_pane(*session, wait.request.pane.id);
-  auto* const runtime = pane == nullptr ? nullptr : find_pane_runtime(runtimes, *session, *pane);
-  return {.session = session, .pane = pane, .runtime = runtime};
+  return public_wait_target(wait.request, sessions, runtimes);
+}
+
+[[nodiscard]] auto begin_public_wait(api::Command request, Sessions& sessions,
+                                     PaneRuntimeStore& runtimes) -> ProcCommandWait {
+  const auto timeout = std::chrono::milliseconds(request.wait_timeout_milliseconds);
+  // The next completion is relative to Command execution, not to the first later poll.
+  std::uint64_t command_baseline = request.after_commands.value_or(0);
+  if (request.wait_condition == api::WaitCondition::command && !request.after_commands) {
+    const auto target = public_wait_target(request, sessions, runtimes);
+    if (target.runtime != nullptr) {
+      command_baseline = target.runtime->terminal.signals().commands;
+    }
+  }
+  return {.request = std::move(request),
+          .deadline = reactor_now() + timeout,
+          .observed_terminal_generation = 0,
+          .command_baseline = command_baseline,
+          .exit = std::nullopt,
+          .observed = false,
+          .pane_was_present = false};
+}
+
+[[nodiscard]] auto command_wait_ready(const ProcCommandWait& wait,
+                                      const PaneRuntime& runtime) noexcept -> bool {
+  return wait.request.wait_condition == api::WaitCondition::command &&
+         runtime.terminal.signals().commands > wait.command_baseline;
 }
 
 [[nodiscard]] constexpr auto is_terminal_wait(const api::Command& request) noexcept -> bool {
@@ -6900,7 +6927,7 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
   if (target.pane == nullptr || target.runtime == nullptr) {
     return wait.pane_was_present;
   }
-  if (target.pane->process_exit.has_value()) {
+  if (target.pane->process_exit.has_value() || command_wait_ready(wait, *target.runtime)) {
     return true;
   }
   return is_terminal_wait(wait.request) &&
@@ -6919,6 +6946,7 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
     return process.kind == ProcessExitKind::signaled && process.value == request.wait_value;
   case api::WaitCondition::contains:
   case api::WaitCondition::prompt:
+  case api::WaitCondition::command:
     return false;
   }
   return false;
@@ -6951,7 +6979,7 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
     result.status = CommandStatus::stale_target;
     return result;
   }
-  return complete_process_wait(std::move(result), wait.request, ProcessExit{});
+  return complete_process_wait(std::move(result), wait.request, wait.exit.value_or(ProcessExit{}));
 }
 
 [[nodiscard]] auto public_wait_result(const ObservedPane target) -> PublicCommandExecution {
@@ -7021,6 +7049,22 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
   wait.request.session.id = target.session->id;
   wait.request.session.name.clear();
   auto result = public_wait_result(target);
+  if (command_wait_ready(wait, *target.runtime)) {
+    const auto& signals = target.runtime->terminal.signals();
+    try {
+      result.value_field = "completion";
+      result.value_json = R"({"commands":)" + std::to_string(signals.commands) +
+                          R"(,"exit_code":)" +
+                          (signals.exit_code.has_value() ? std::to_string(*signals.exit_code)
+                                                         : std::string{"null"}) +
+                          "}";
+    } catch (...) {
+      result.status = CommandStatus::failed;
+      return result;
+    }
+    result.status = CommandStatus::applied;
+    return result;
+  }
   if (is_terminal_wait(wait.request)) {
     auto completed = complete_terminal_wait(wait, target, scratch, result);
     if (completed.has_value()) {
@@ -7255,6 +7299,26 @@ struct PublicProcSlot final {
 };
 
 using PublicProcExecutions = std::array<PublicProcSlot, limits::pending_connections_hard_max>;
+
+// Close-on-exit removes the Pane in the transition that publishes its exit. Pending waits retain
+// the outcome first so they report it rather than an unknown exit.
+void record_public_wait_exit(PublicProcExecutions& executions, const SessionRecord& session,
+                             const PaneId pane, const ProcessExit exit) noexcept {
+  for (auto& slot : executions) {
+    if (slot.execution == nullptr || !slot.execution->wait.has_value()) {
+      continue;
+    }
+    auto& wait = *slot.execution->wait;
+    const auto& selector = wait.request.session;
+    const bool same_session = selector.id.is_valid() ? selector.id == session.id
+                                                     : selector.name == session.session_name();
+    if (same_session && wait.request.pane.id == pane) {
+      wait.exit = exit;
+      wait.observed = true;
+      wait.pane_was_present = true;
+    }
+  }
+}
 
 [[nodiscard]] auto mutable_json_member(api::JsonValue& object, const std::string_view key) noexcept
     -> api::JsonValue* {
@@ -7761,7 +7825,7 @@ execute_public_proc_step(ProcExecutionState& state, Sessions& sessions, PaneRunt
   } else {
     request = concrete_proc_command(step, state.outputs);
     if (request.has_value() && request->kind == api::CommandKind::pane_wait) {
-      state.wait = begin_public_wait(std::move(*request));
+      state.wait = begin_public_wait(std::move(*request), sessions, runtimes);
       return std::nullopt;
     }
     if (request.has_value()) {
@@ -9380,8 +9444,8 @@ void process_extension_read(PendingConnections& connections, Sessions& sessions,
       observations.at(admitted->slot()) = {.owner = *admitted,
                                            .panes = pending->observed_panes,
                                            .semantic_hash = pending->observed_semantic_hash,
-                                           .presentation_hash =
-                                               pending->observed_presentation_hash};
+                                           .presentation_hash = pending->observed_presentation_hash,
+                                           .signal_stamp = pending->observed_signal_stamp};
     }
     close_pending(connections, slot, sessions);
   } catch (...) {
@@ -9945,6 +10009,10 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
     runtime.fail(*drained.failure);
   }
   session.attachment_runtime.bell_pending = session.attachment_runtime.bell_pending || drained.bell;
+  if (drained.signal) {
+    runtime.signal_stamp = runtimes.issue_signal_stamp();
+    session.signal_stamp = runtime.signal_stamp;
+  }
   if (drained.title_changed) {
     session.attachment_runtime.status_valid = false;
   }
@@ -10499,7 +10567,8 @@ void apply_pane_runtime_outcome(SessionRecord& session, Tab& tab, PaneRuntimeSto
 
 // Removal may rewrite tab and pane ownership while traversing fixed Session pane slots.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void reclaim_dead_panes(SessionRecord& session, PaneRuntimeStore& runtimes) noexcept {
+void reclaim_dead_panes(SessionRecord& session, PaneRuntimeStore& runtimes,
+                        PublicProcExecutions& executions) noexcept {
   for (std::size_t index = 0; index < session.panes.size() && session.active; ++index) {
     // index is bounded by the fixed Session pane capacity.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
@@ -10529,6 +10598,9 @@ void reclaim_dead_panes(SessionRecord& session, PaneRuntimeStore& runtimes) noex
         }
       }
       const auto address = pane_address(session, *pane_owner);
+      if (failure == PaneRuntimeFailure::child_exit && runtime->observed_exit.has_value()) {
+        record_public_wait_exit(executions, session, pane_owner->id, *runtime->observed_exit);
+      }
       apply_pane_runtime_outcome(
           session, *tab, runtimes,
           {.pane = address, .process_exit = runtime->observed_exit, .failure = failure});
@@ -11357,7 +11429,7 @@ run_server_impl(const int listener, const EndpointRelease release_endpoint,
     }
     for (auto& session : sessions) {
       if (session != nullptr && session->active) {
-        reclaim_dead_panes(*session, runtimes);
+        reclaim_dead_panes(*session, runtimes, public_procs);
         service_copy_input_timeout(*session, runtimes, reactor_now());
       }
     }
@@ -11552,7 +11624,7 @@ run_server_impl(const int listener, const EndpointRelease release_endpoint,
     }
     for (auto& session : sessions) {
       if (session != nullptr && session->active) {
-        reclaim_dead_panes(*session, runtimes);
+        reclaim_dead_panes(*session, runtimes, public_procs);
       }
     }
     // Capacity may have become available without new client socket readiness.

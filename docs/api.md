@@ -179,6 +179,37 @@ PTY replay.
 Observers cannot mutate state and are not terminal Attachments. A slow observer cannot block PTY
 progress. Reconnecting creates a fresh snapshot; the daemon retains no Event replay log.
 
+## Pane signals
+
+Applications report attention through terminal sequences. Each Pane retains the latest value of
+each signal, not a queue of occurrences:
+
+| Field | Source | Value |
+| --- | --- | --- |
+| `bells` | BEL | Cumulative count |
+| `notifications`, `notification` | OSC 9, OSC 777 `notify` | Count; latest `title`, `body`, and `truncated` |
+| `progress` | OSC 9;4 | Latest `state` (`normal`, `error`, `indeterminate`, `paused`) and `percent`; null once removed |
+| `commands`, `command` | OSC 133 shell integration | OSC 133;D count; latest `state` (`prompt`, `running`, `finished`) and `exit_code` |
+| `title_changes`, `cwd_changes` | OSC 0/2, OSC 7 | Cumulative counts; `pane.inspect` reports current values |
+
+Notification title and body share a 4 KiB bound (title at most 1 KiB); invalid UTF-8 and control
+characters become `?`. `exit_code` belongs to the latest OSC 133;D and is null when that report
+omitted it. Counters saturate. `generation` increases whenever any field changes and is zero for a
+Pane that never reported a signal.
+
+`pane.inspect` returns the complete record as `signals`; `pane.list` includes it without
+`notification`. A subscription with `"signals": true` (`lemma events --signals`) adds `pane.signal`
+Events for every Pane in its scope: the selected Session, all Sessions for a global feed, or only
+the listed Panes. After the snapshot, each in-scope Pane with a nonzero generation is reported
+once. Later changes coalesce: an observer that has not drained its output receives at most one
+record per changed Pane, containing current values, never a backlog. Detecting a signal does no
+per-byte work, and unchanged Sessions cost an observer no Pane scan.
+
+`pane.wait` with `until_command: true` (`--until-command`) completes at the next OSC 133;D after
+the wait starts, or after completion `after_commands` when supplied. Its `completion` reports the
+`commands` count and `exit_code`. Process exit first is an `unexpected_exit`. Close-on-exit Panes
+report the actual exit status to pending waits even though the Pane itself is removed.
+
 ## Direct connections
 
 The public integration endpoint is `/tmp/lemma-UID.sock`, owned by the current user with owner-only

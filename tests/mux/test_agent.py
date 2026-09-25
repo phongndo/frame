@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import select
 import socket
 import subprocess
@@ -853,7 +854,103 @@ class AgentInterfaceMuxTest(unittest.TestCase):
         )
         self.assertEqual(status, 0, closed)
         self.assertEqual(closed["status"], "applied")
-        self.assertEqual(closed["process"], {"state": "exited_unknown"})
+        self.assertEqual(closed["process"], {"state": "exited", "code": 4})
+
+    def test_global_signal_events_and_close_on_exit_wait(self) -> None:
+        # The daemon exits with its last Session; keep one beyond the closing Pane's Session.
+        self.server.require_command(
+            "proc",
+            "session",
+            "start",
+            "signal-keeper",
+            "--",
+            "/bin/sh",
+            "-c",
+            "sleep 30",
+        )
+        process = subprocess.Popen(
+            [
+                str(self.server.cli_path),
+                str(self.server.socket_path),
+                "events",
+                "--signals",
+            ],
+            env=self.server.environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=0,
+        )
+
+        def stop() -> None:
+            process.kill()
+            process.communicate(timeout=1.0)
+
+        self.addCleanup(stop)
+        assert process.stdout is not None
+        stream = process.stdout.fileno()
+        pending = bytearray()
+
+        def next_event(deadline: float) -> dict[str, Any] | None:
+            while b"\n" not in pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                ready, _, _ = select.select([stream], [], [], remaining)
+                if ready:
+                    chunk = os.read(stream, 65536)
+                    if not chunk:
+                        return None
+                    pending.extend(chunk)
+            line, _, rest = bytes(pending).partition(b"\n")
+            pending[:] = rest
+            return json.loads(line)
+
+        snapshot = next_event(time.monotonic() + 2.0)
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot["event"], "snapshot")
+        status, started = self.json_command(
+            "proc",
+            "session",
+            "start",
+            "signal-feed",
+            "--",
+            "/bin/sh",
+            "-c",
+            r"printf '\033]9;4;3\033\\\033]777;notify;Job;finished\007'; sleep 1; exit 5",
+        )
+        self.assertEqual(status, 0, started)
+        status, waited = self.json_command(
+            "proc",
+            "pane",
+            "wait",
+            started["pane"],
+            "--session",
+            "signal-feed",
+            "--timeout",
+            "5s",
+        )
+        # Close-on-exit retains the exit status for the pending wait.
+        self.assertEqual(status, 0, waited)
+        self.assertEqual(waited["process"], {"state": "exited", "code": 5})
+
+        deadline = time.monotonic() + 5.0
+        seen: list[dict[str, Any]] = []
+        signals: dict[str, Any] | None = None
+        while signals is None and (event := next_event(deadline)) is not None:
+            seen.append(event)
+            if (
+                event["event"] == "pane.signal"
+                and event["session"] == started["session"]["id"]
+                and event["signals"]["notifications"] == 1
+            ):
+                signals = event["signals"]
+        self.assertIsNotNone(signals, (seen, self.server.logs()))
+        assert signals is not None
+        self.assertEqual(
+            signals["progress"], {"state": "indeterminate", "percent": None}
+        )
+        self.assertEqual(signals["notification"]["title"], "Job")
 
     def test_legacy_action_and_op_interfaces_are_rejected(self) -> None:
         cli = self.server.command("action", "daemon", "inspect")

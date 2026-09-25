@@ -84,6 +84,7 @@ class Client:
         session: str | None = None,
         capabilities: tuple[str, ...] = ("observe", "proc"),
         presentation: bool = False,
+        signals: bool = False,
         timeout: float = 3.0,
     ) -> None:
         if timeout <= 0:
@@ -109,6 +110,8 @@ class Client:
                 subscription["session"] = {"id": session}
             if presentation:
                 subscription["presentation"] = True
+            if signals:
+                subscription["signals"] = True
             hello["events"] = subscription
         try:
             deadline = time.monotonic() + timeout

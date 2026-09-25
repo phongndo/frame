@@ -119,6 +119,126 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             self.assertTrue(client.proc({"command": "session.list"})["ok"])
             self.assertEqual(client.event()["event"], "snapshot")
 
+    def test_signal_observation_reports_latest_pane_attention(self) -> None:
+        # Each read gates one phase, so every observed record is a committed latest value.
+        script = (
+            r"printf '\033]133;A\007$ \033]133;B\007'; read step; "
+            r"printf '\033]133;C\007\033]9;4;1;40\033\\'; read step; "
+            r"printf '\007\033]777;notify;Agent;needs input\007\033]9;hello nine\007'; "
+            r"read step; "
+            r"printf '\033]9;4;0\033\\\033]133;D;3\007\033]133;A\007$ \033]133;B\007'; "
+            r"read step; "
+            r"printf '\033]133;C\007done\r\n\033]133;D;0\007\033]133;A\007$ '; sleep 30"
+        )
+        session = self.server.create_session(
+            "signals", attach=False, hold=True, command=("/bin/sh", "-c", script)
+        )
+        session_id = session.state().id
+        pane = "0:1"
+
+        def enter() -> dict[str, Any]:
+            return {
+                "command": "pane.input",
+                "session": {"id": session_id},
+                "pane": {"id": pane},
+                "events": [{"kind": "key", "key": "enter"}],
+            }
+
+        with (
+            Client(
+                str(self.server.socket_path),
+                name="agent-dashboard",
+                session=session_id,
+                signals=True,
+            ) as dashboard,
+            Client(
+                str(self.server.socket_path), name="no-signals", session=session_id
+            ) as quiet,
+        ):
+            self.assertEqual(dashboard.event()["event"], "snapshot")
+            self.assertEqual(quiet.event()["event"], "snapshot")
+
+            def signal(predicate: Any) -> dict[str, Any]:
+                deadline = time.monotonic() + 5.0
+                seen: list[dict[str, Any]] = []
+                while (remaining := deadline - time.monotonic()) > 0:
+                    event = dashboard.event(timeout=remaining)
+                    if event["event"] != "pane.signal":
+                        continue
+                    self.assertEqual(
+                        (event["session"], event["pane"]), (session_id, pane)
+                    )
+                    seen.append(event["signals"])
+                    if predicate(event["signals"]):
+                        return event["signals"]
+                self.fail(f"no matching pane.signal: {seen}\n{self.server.logs()}")
+
+            prompt = signal(lambda value: value["command"] is not None)
+            self.assertEqual(prompt["command"], {"state": "prompt", "exit_code": None})
+            self.assertEqual(prompt["commands"], 0)
+            self.assertIsNone(prompt["notification"])
+            self.assertIsNone(prompt["progress"])
+
+            self.assertTrue(dashboard.proc(enter())["ok"])
+            running = signal(lambda value: value["progress"] is not None)
+            self.assertEqual(
+                running["command"], {"state": "running", "exit_code": None}
+            )
+            self.assertEqual(running["progress"], {"state": "normal", "percent": 40})
+            self.assertGreater(running["generation"], prompt["generation"])
+
+            self.assertTrue(dashboard.proc(enter())["ok"])
+            waiting = signal(lambda value: value["notifications"] == 2)
+            self.assertEqual(waiting["bells"], 1)
+            self.assertEqual(
+                waiting["notification"],
+                {"title": "", "body": "hello nine", "truncated": False},
+            )
+
+            self.assertTrue(dashboard.proc(enter())["ok"])
+            failed = signal(lambda value: value["commands"] == 1)
+            self.assertEqual(failed["command"], {"state": "prompt", "exit_code": 3})
+            self.assertIsNone(failed["progress"])
+
+            completed = dashboard.proc(
+                enter(),
+                {
+                    "command": "pane.wait",
+                    "session": {"id": session_id},
+                    "pane": {"id": pane},
+                    "until_command": True,
+                    "timeout_ms": 5000,
+                },
+            )
+            self.assertTrue(completed["ok"], completed)
+            waited = completed["results"][1]["result"]
+            self.assertEqual(waited["condition"], "command")
+            self.assertEqual(waited["completion"], {"commands": 2, "exit_code": 0})
+            succeeded = signal(lambda value: value["commands"] == 2)
+            self.assertEqual(succeeded["command"], {"state": "prompt", "exit_code": 0})
+
+            inspected = dashboard.command(
+                "pane.inspect", session={"id": session_id}, pane={"id": pane}
+            )["pane_state"]["signals"]
+            self.assertEqual(inspected["commands"], 2)
+            self.assertEqual(inspected["notification"]["body"], "hello nine")
+            listed = dashboard.command("pane.list", session={"id": session_id})
+            summary = listed["panes"][0]["signals"]
+            self.assertNotIn("notification", summary)
+            self.assertEqual(
+                {key: summary[key] for key in ("bells", "notifications", "commands")},
+                {"bells": 1, "notifications": 2, "commands": 2},
+            )
+
+            # Signals are opt-in: the other observer received none of these records.
+            events: list[dict[str, Any]] = []
+            while True:
+                try:
+                    events.append(quiet.event(timeout=0.2))
+                except TimeoutError:
+                    break
+            self.assertNotIn("pane.signal", [event["event"] for event in events])
+
     def test_python_client_negotiates_explicit_session_scoped_surfaces(self) -> None:
         session = self.server.create_session("python-surface", command=("cat",))
         with Client(
