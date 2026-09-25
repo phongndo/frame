@@ -565,6 +565,12 @@ public:
 
   // Invalidates retained ANSI output state after a composed frame is discarded.
   void invalidate_ansi_render_state() noexcept;
+
+  // Releases the retained render rows and physical presentation shadow of a pane that is no longer
+  // presented. The next render rebuilds both and reports full damage, as presenting a newly visible
+  // pane requires. Terminal contents are unaffected; allocation failure retains the existing rows.
+  void release_render_cache() noexcept;
+
   // The compositor sometimes overrides child modes or cursor presentation after pane rendering.
   // These targeted invalidations repair only the affected outer-terminal projection on the next
   // frame.

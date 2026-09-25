@@ -1,6 +1,5 @@
 #include "core/copy_mode.hpp"
 #include "core/session.hpp"
-#include "lemma/bounded_byte_queue.hpp"
 #include "lemma/command.hpp"
 #include "lemma/generational_store.hpp"
 #include "lemma/id.hpp"
@@ -478,74 +477,6 @@ TEST(BoundedGenerationalStoreTest, RejectsStaleIdsAndReportsCapacity) {
   EXPECT_NE(replacement_id.generation(), first_id.generation());
   EXPECT_EQ(store.get(replacement_id)->number, 11);
   EXPECT_FALSE(store.erase(first_id));
-}
-
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-
-TEST(BoundedByteQueueTest, PreservesOrderAcrossWraparound) {
-  BoundedByteQueue<5> queue;
-  const std::array first{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
-  ASSERT_TRUE(queue.append(first));
-
-  std::array<std::byte, 3> first_output{};
-  EXPECT_EQ(queue.read(first_output), first_output.size());
-  EXPECT_THAT(first_output, testing::ElementsAre(std::byte{1}, std::byte{2}, std::byte{3}));
-
-  const std::array second{std::byte{5}, std::byte{6}, std::byte{7}};
-  ASSERT_TRUE(queue.append(second));
-
-  std::array<std::byte, 4> second_output{};
-  EXPECT_EQ(queue.read(second_output), second_output.size());
-  EXPECT_THAT(second_output,
-              testing::ElementsAre(std::byte{4}, std::byte{5}, std::byte{6}, std::byte{7}));
-  EXPECT_TRUE(queue.empty());
-}
-
-TEST(BoundedByteQueueTest, ExposesAndConsumesContiguousReadableSegments) {
-  BoundedByteQueue<5> queue;
-  const std::array first{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
-  ASSERT_TRUE(queue.append(first));
-  ASSERT_TRUE(queue.consume(3));
-  const std::array second{std::byte{5}, std::byte{6}, std::byte{7}};
-  ASSERT_TRUE(queue.append(second));
-
-  EXPECT_THAT(queue.readable_span(), testing::ElementsAre(std::byte{4}, std::byte{5}));
-  EXPECT_FALSE(queue.consume(5));
-  EXPECT_EQ(queue.size(), 4U);
-  ASSERT_TRUE(queue.consume(2));
-  EXPECT_THAT(queue.readable_span(), testing::ElementsAre(std::byte{6}, std::byte{7}));
-  ASSERT_TRUE(queue.consume(2));
-  EXPECT_TRUE(queue.empty());
-  EXPECT_TRUE(queue.readable_span().empty());
-}
-
-TEST(BoundedByteQueueTest, ReusesFullStorageAfterPartialConsumption) {
-  BoundedByteQueue<3> queue;
-  const std::array full{std::byte{1}, std::byte{2}, std::byte{3}};
-  ASSERT_TRUE(queue.append(full));
-  EXPECT_EQ(queue.readable_span().size(), full.size());
-  ASSERT_TRUE(queue.consume(2));
-  const std::array reused{std::byte{4}, std::byte{5}};
-  ASSERT_TRUE(queue.append(reused));
-
-  std::array<std::byte, 3> output{};
-  EXPECT_EQ(queue.read(output), output.size());
-  EXPECT_THAT(output, testing::ElementsAre(std::byte{3}, std::byte{4}, std::byte{5}));
-}
-
-TEST(BoundedByteQueueTest, RejectsInputWithoutPartiallyAppending) {
-  BoundedByteQueue<3> queue;
-  const std::array first{std::byte{1}, std::byte{2}};
-  const std::array too_large{std::byte{3}, std::byte{4}};
-
-  ASSERT_TRUE(queue.append(first));
-  EXPECT_FALSE(queue.append(too_large));
-  EXPECT_EQ(queue.size(), first.size());
-
-  std::array<std::byte, 3> output{};
-  EXPECT_EQ(queue.read(output), first.size());
-  EXPECT_THAT(std::span(output).first(first.size()),
-              testing::ElementsAre(std::byte{1}, std::byte{2}));
 }
 
 } // namespace

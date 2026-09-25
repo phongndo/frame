@@ -1,8 +1,6 @@
 #ifndef LEMMA_TERMINAL_TERMINAL_IMPL_HPP
 #define LEMMA_TERMINAL_TERMINAL_IMPL_HPP
 
-#include "lemma/bounded_byte_queue.hpp"
-#include "lemma/limits.hpp"
 #include "lemma/terminal/terminal.hpp"
 
 #include <ghostty/vt.h>
@@ -12,6 +10,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace lemma::vt {
@@ -137,13 +136,28 @@ struct Terminal::Impl final {
   std::array<GhosttySelectionGestureEvent, 5> selection_events{};
   GhosttyTrackedGridRef selection_checkpoint_start{nullptr};
   GhosttyTrackedGridRef selection_checkpoint_end{nullptr};
+  // Presented physical-row hashes followed by the scroll-detection hashes of the next render.
+  [[nodiscard]] auto row_hashes() noexcept -> std::span<std::uint64_t> {
+    return std::span(row_hash_storage).first(row_hash_count);
+  }
+  [[nodiscard]] auto row_hashes() const noexcept -> std::span<const std::uint64_t> {
+    return std::span(row_hash_storage).first(row_hash_count);
+  }
+  [[nodiscard]] auto current_row_hashes() noexcept -> std::span<std::uint64_t> {
+    return std::span(row_hash_storage).subspan(row_hash_storage.size() / 2U, row_hash_count);
+  }
+  [[nodiscard]] auto current_row_hashes() const noexcept -> std::span<const std::uint64_t> {
+    return std::span(row_hash_storage).subspan(row_hash_storage.size() / 2U, row_hash_count);
+  }
+
   GhosttyRenderStateColors render_colors{};
-  std::array<std::uint64_t, limits::terminal_rows_hard_max> row_hashes{};
-  std::array<std::uint64_t, limits::terminal_rows_hard_max> current_row_hashes{};
+  // Two equal halves sized to the current geometry, grown only on resize. Idle panes therefore do
+  // not keep hard-maximum row arrays resident.
+  std::vector<std::uint64_t> row_hash_storage;
+  std::size_t row_hash_count{0};
   detail::CellHashStorage physical_cell_hashes;
   std::size_t physical_cell_count{0};
   std::size_t physical_cell_capacity{0};
-  std::size_t row_hash_count{0};
   std::array<bool, 12> mirrored_mode_values{};
   GhosttyColorRgb projected_cursor_color{};
   std::uint8_t projected_cursor_code{0};
@@ -155,7 +169,10 @@ struct Terminal::Impl final {
   bool projected_cursor_valid{false};
   bool ansi_physical_valid{false};
   bool selection_checkpoint_rectangle{false};
-  BoundedByteQueue<limits::terminal_pty_response_bytes_max> pty_responses;
+  // At most limits::terminal_pty_response_bytes_max pending bytes. Capacity grows only when replies
+  // need it and is retained after draining, so the bound is not resident for every pane.
+  std::vector<std::byte> pty_responses;
+  std::size_t pty_response_offset{0};
   EffectBatch effects{};
   std::unique_ptr<ClipboardPending> clipboard;
   std::vector<std::byte> clipboard_responses;

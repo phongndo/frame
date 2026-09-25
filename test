@@ -168,7 +168,7 @@ def main() -> int:
             "ConfigurationTest.*:ConfigurationHostTest.*:InputMapTest.*:InputRouterTest.*:HostInputParserTest.*"
         )
     elif tier == "queues":
-        run_unit("BoundedByteQueueTest.*:ConnectionOutputTest.*")
+        run_unit("ConnectionOutputTest.*")
         run_terminal("PtyWriterTest.*")
     elif tier == "terminal":
         run_terminal()

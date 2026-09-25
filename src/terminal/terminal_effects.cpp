@@ -12,8 +12,27 @@
 #include <limits>
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace lemma::vt {
+namespace {
+
+// Copies pending bytes in order and retains capacity once drained, so repeated replies reuse it.
+auto drain_responses(std::vector<std::byte>& responses, std::size_t& offset,
+                     const std::span<std::byte> output) noexcept -> std::size_t {
+  LEMMA_ASSERT(offset <= responses.size());
+  const auto available = std::span(responses).subspan(offset);
+  const auto count = std::min(output.size(), available.size());
+  std::ranges::copy(available.first(count), output.begin());
+  offset += count;
+  if (offset == responses.size()) {
+    responses.clear();
+    offset = 0;
+  }
+  return count;
+}
+
+} // namespace
 
 void Terminal::Impl::write_pty([[maybe_unused]] GhosttyTerminal terminal_handle, void* userdata,
                                const std::uint8_t* data, const std::size_t length) noexcept {
@@ -29,8 +48,27 @@ void Terminal::Impl::write_pty([[maybe_unused]] GhosttyTerminal terminal_handle,
       // Callback boundary: allocation failure means reply integrity is lost, never success.
       impl.pty_response_integrity_failed = true;
     }
-  } else if (impl.pty_responses.append(bytes)) {
-    return;
+  } else {
+    constexpr auto bytes_max = limits::terminal_pty_response_bytes_max;
+    auto& responses = impl.pty_responses;
+    // Reclaim a partially read prefix before growing, so the bound applies to pending bytes.
+    responses.erase(responses.begin(),
+                    responses.begin() + static_cast<std::ptrdiff_t>(impl.pty_response_offset));
+    impl.pty_response_offset = 0;
+    try {
+      if (bytes.size() <= bytes_max - responses.size()) {
+        const auto required = responses.size() + bytes.size();
+        if (required > responses.capacity()) {
+          // Geometric growth, capped so retained capacity never exceeds the pending-byte bound.
+          responses.reserve(std::min(bytes_max, std::max(required, responses.capacity() * 2U)));
+        }
+        responses.insert(responses.end(), bytes.begin(), bytes.end());
+        return;
+      }
+    } catch (...) {
+      // Callback boundary: allocation failure loses the reply, exactly like exceeding the bound.
+      impl.pty_response_integrity_failed = true;
+    }
   }
   impl.effects.pty_response_overflowed = true;
   impl.pty_response_integrity_failed = true;
@@ -184,8 +222,8 @@ auto Terminal::take_effects() noexcept -> EffectBatch {
 auto Terminal::pending_pty_response_bytes() const noexcept -> std::size_t {
   LEMMA_ASSERT(impl_ != nullptr);
   LEMMA_ASSERT(impl_->terminal != nullptr);
-  return impl_->pty_responses.size() + impl_->clipboard_responses.size() -
-         impl_->clipboard_response_offset;
+  return impl_->pty_responses.size() - impl_->pty_response_offset +
+         impl_->clipboard_responses.size() - impl_->clipboard_response_offset;
 }
 
 auto Terminal::pty_response_overflowed() const noexcept -> bool {
@@ -197,18 +235,9 @@ auto Terminal::pty_response_overflowed() const noexcept -> bool {
 auto Terminal::read_pty_responses(const std::span<std::byte> output) noexcept -> std::size_t {
   LEMMA_ASSERT(impl_ != nullptr);
   LEMMA_ASSERT(impl_->terminal != nullptr);
-  auto used = impl_->pty_responses.read(output);
-  const auto available =
-      std::span(impl_->clipboard_responses).subspan(impl_->clipboard_response_offset);
-  const auto count = std::min(output.size() - used, available.size());
-  std::ranges::copy(available.first(count), output.subspan(used).begin());
-  used += count;
-  impl_->clipboard_response_offset += count;
-  if (impl_->clipboard_response_offset == impl_->clipboard_responses.size()) {
-    impl_->clipboard_responses.clear();
-    impl_->clipboard_response_offset = 0;
-  }
-  return used;
+  const auto used = drain_responses(impl_->pty_responses, impl_->pty_response_offset, output);
+  return used + drain_responses(impl_->clipboard_responses, impl_->clipboard_response_offset,
+                                output.subspan(used));
 }
 
 } // namespace lemma::vt

@@ -107,6 +107,29 @@ struct MessageViewStorage final {
   return {.lines = std::span(storage.lines).first(storage.size), .active = true};
 }
 
+// The one presentation predicate for Pane surfaces of an Attachment's active Tab.
+[[nodiscard]] auto pane_presented(const Tab& active, const Pane& pane) noexcept -> bool {
+  return !active.layout_suspended && pane.tab == active.id &&
+         (!active.zoomed || pane.id == active.focused_pane);
+}
+
+// A full frame redraws every presented Pane. Panes absent from it keep no retained render rows;
+// presenting one again rebuilds them with the full damage its first frame needs anyway.
+void release_unpresented_render_caches(SessionRecord& session,
+                                       PaneRuntimeStore& runtimes) noexcept {
+  const auto* const tab = active_tab(session);
+  for (const auto& pane_slot : session.panes) {
+    const auto* const pane = pane_slot.pane.get();
+    if (pane == nullptr || (tab != nullptr && pane_presented(*tab, *pane))) {
+      continue;
+    }
+    auto* const runtime = find_pane_runtime(runtimes, session, *pane);
+    if (runtime != nullptr) {
+      runtime->terminal.release_render_cache();
+    }
+  }
+}
+
 // Surface projection combines bounded semantic and runtime state without retaining either.
 [[nodiscard]] auto
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -120,7 +143,7 @@ collect_surfaces(SessionRecord& session, PaneRuntimeStore& runtimes,
   std::size_t count = 0;
   for (auto& pane_slot : session.panes) {
     auto& pane = pane_slot.pane;
-    if (pane == nullptr || pane->tab != tab->id || (tab->zoomed && pane->id != tab->focused_pane)) {
+    if (pane == nullptr || !pane_presented(*tab, *pane)) {
       continue;
     }
     auto* const runtime = find_pane_runtime(runtimes, session, *tab, *pane);
@@ -514,6 +537,9 @@ struct StatusPromptProjection final {
   session.attachment_runtime.full_redraw_generation = generation;
   session.attachment_runtime.outer_modes = rendered->outer_modes;
   session.attachment_runtime.bell_pending = false;
+  if (rendered->full) {
+    release_unpresented_render_caches(session, runtimes);
+  }
   return true;
 }
 
