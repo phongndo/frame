@@ -70,8 +70,14 @@ subjects, with direct controls bracketing each supported block.
 A workload's `comparison_sampling` makes the comparison run several independently launched blocks,
 each with scaled repetitions, shuffled among the other workload blocks. Reports pool the raw
 samples, add p90 and per-block medians, and keep block-varying CPU and resource snapshots per block.
-A failed block fails the pooled result and retains every block. Gate and extension captures ignore
-`comparison_sampling` and use the sample policy's repetitions.
+Samples within a block are correlated, so the direct-baseline confidence interval resamples whole
+blocks, and direct-control drift pairs each block's own before and after controls. A block that
+crashes or fails is recorded with its error, fragment, and stderr tail; its subject's pooled result
+fails, and the remaining blocks and workloads still run. The comparison then writes the report and
+validates it, so an unreviewed failure exits nonzero after the evidence is saved. Other workloads
+still stop at their first unreviewed failure. Validation requires every declared block in pooled
+results and direct after-controls. Gate and extension captures ignore `comparison_sampling` and
+keep one repetition count per report.
 
 `interactive_open_loop` uses this because each 120 Hz key arrives after the probe, client, daemon,
 and peer have idled for about 8 ms, so every sample includes wake-from-idle costs. They grow with the
