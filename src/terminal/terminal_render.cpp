@@ -1047,7 +1047,7 @@ void Terminal::invalidate_ansi_render_state() noexcept {
   LEMMA_ASSERT(impl_ != nullptr);
   impl_->ansi_physical_valid = false;
   impl_->mirrored_modes_valid = false;
-  impl_->mirrored_mouse_modes_valid = false;
+  impl_->mirrored_compositor_modes_valid = false;
   impl_->projected_cursor_valid = false;
 }
 
@@ -1074,7 +1074,7 @@ void Terminal::release_render_cache() noexcept {
 void Terminal::invalidate_ansi_mode_projection() noexcept {
   LEMMA_ASSERT(impl_ != nullptr);
   impl_->mirrored_modes_valid = false;
-  impl_->mirrored_mouse_modes_valid = false;
+  impl_->mirrored_compositor_modes_valid = false;
 }
 
 void Terminal::invalidate_ansi_cursor_projection() noexcept {
@@ -1291,31 +1291,31 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
   struct MirroredMode final {
     GhosttyMode mode;
     std::uint16_t number;
-    bool mouse{false};
+    bool compositor_owned{false};
   };
   const std::array mirrored_modes{
       MirroredMode{.mode = GHOSTTY_MODE_DECCKM, .number = 1},
-      MirroredMode{.mode = GHOSTTY_MODE_X10_MOUSE, .number = 9, .mouse = true},
-      MirroredMode{.mode = GHOSTTY_MODE_NORMAL_MOUSE, .number = 1000, .mouse = true},
-      MirroredMode{.mode = GHOSTTY_MODE_BUTTON_MOUSE, .number = 1002, .mouse = true},
-      MirroredMode{.mode = GHOSTTY_MODE_ANY_MOUSE, .number = 1003, .mouse = true},
-      MirroredMode{.mode = GHOSTTY_MODE_FOCUS_EVENT, .number = 1004},
-      MirroredMode{.mode = GHOSTTY_MODE_UTF8_MOUSE, .number = 1005, .mouse = true},
-      MirroredMode{.mode = GHOSTTY_MODE_SGR_MOUSE, .number = 1006, .mouse = true},
+      MirroredMode{.mode = GHOSTTY_MODE_X10_MOUSE, .number = 9, .compositor_owned = true},
+      MirroredMode{.mode = GHOSTTY_MODE_NORMAL_MOUSE, .number = 1000, .compositor_owned = true},
+      MirroredMode{.mode = GHOSTTY_MODE_BUTTON_MOUSE, .number = 1002, .compositor_owned = true},
+      MirroredMode{.mode = GHOSTTY_MODE_ANY_MOUSE, .number = 1003, .compositor_owned = true},
+      MirroredMode{.mode = GHOSTTY_MODE_FOCUS_EVENT, .number = 1004, .compositor_owned = true},
+      MirroredMode{.mode = GHOSTTY_MODE_UTF8_MOUSE, .number = 1005, .compositor_owned = true},
+      MirroredMode{.mode = GHOSTTY_MODE_SGR_MOUSE, .number = 1006, .compositor_owned = true},
       MirroredMode{.mode = GHOSTTY_MODE_ALT_SCROLL, .number = 1007},
-      MirroredMode{.mode = GHOSTTY_MODE_URXVT_MOUSE, .number = 1015, .mouse = true},
-      MirroredMode{.mode = GHOSTTY_MODE_SGR_PIXELS_MOUSE, .number = 1016, .mouse = true},
+      MirroredMode{.mode = GHOSTTY_MODE_URXVT_MOUSE, .number = 1015, .compositor_owned = true},
+      MirroredMode{.mode = GHOSTTY_MODE_SGR_PIXELS_MOUSE, .number = 1016, .compositor_owned = true},
       MirroredMode{.mode = GHOSTTY_MODE_BRACKETED_PASTE, .number = 2004},
   };
   static_assert(mirrored_modes.size() == 12);
   if (!composed || focused) {
     std::size_t mode_index = 0;
     for (const auto mode : mirrored_modes) {
-      // A composed frame receives normalized physical mouse input for both Lemma and the child.
-      // The compositor owns that outer capture policy; only standalone rendering mirrors the
-      // child's mouse modes directly.
-      if (composed && mode.mouse) {
-        impl_->mirrored_mouse_modes_valid = false;
+      // A composed frame receives normalized physical mouse input for both Lemma and the child,
+      // and outer focus reports stay enabled so Lemma can derive per-Pane focus changes. The
+      // compositor owns those outer modes; only standalone rendering mirrors them directly.
+      if (composed && mode.compositor_owned) {
+        impl_->mirrored_compositor_modes_valid = false;
         ++mode_index;
         continue;
       }
@@ -1326,7 +1326,7 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
       }
       auto& physical_value = std::span(impl_->mirrored_mode_values).subspan(mode_index, 1).front();
       const bool must_emit = full || !impl_->mirrored_modes_valid ||
-                             (mode.mouse && !impl_->mirrored_mouse_modes_valid) ||
+                             (mode.compositor_owned && !impl_->mirrored_compositor_modes_valid) ||
                              physical_value != *enabled;
       if (must_emit && (!writer.append("\x1B[?") || !writer.append_integer(mode.number) ||
                         !writer.append(*enabled ? "h" : "l"))) {
@@ -1338,7 +1338,7 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
     }
     impl_->mirrored_modes_valid = true;
     if (!composed) {
-      impl_->mirrored_mouse_modes_valid = true;
+      impl_->mirrored_compositor_modes_valid = true;
     }
   }
 

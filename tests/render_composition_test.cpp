@@ -736,6 +736,43 @@ TEST(PaneCompositionTest, ProjectsOuterMouseModesOnlyWhenTheyChange) {
   EXPECT_THAT(changed_text, testing::HasSubstr("\x1B[5 q"));
 }
 
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(PaneCompositionTest, KeepsOuterFocusReportingIndependentOfPaneModes) {
+  auto terminal = make_terminal(12, 2);
+  const PaneSurface pane{
+      .terminal = &terminal,
+      .rectangle = {.columns = 12, .rows = 2},
+      .focused = true,
+  };
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  std::optional<OuterModeProjection> modes;
+  for (const std::string_view mode : {"\x1B[?1004h", "\x1B[?1004l"}) {
+    write_text(terminal, mode);
+    for (const bool full : {true, false}) {
+      const auto composed =
+          compose_frame(std::span(&pane, 1), {.columns = 12, .rows = 2}, output, full, {}, modes);
+      ASSERT_TRUE(composed.has_value());
+      modes = composed->outer_modes;
+      const auto encoded = as_text(std::span(output).first(composed->bytes));
+      EXPECT_THAT(encoded, testing::Not(testing::HasSubstr("\x1B[?1004"))) << mode;
+    }
+  }
+  const auto neutral = compose_frame(std::span(&pane, 1), {.columns = 12, .rows = 2}, output, true,
+                                     {}, modes, {.lines = {}, .active = true});
+  ASSERT_TRUE(neutral.has_value());
+  EXPECT_EQ(neutral->outer_modes, OuterModeProjection::neutral);
+  EXPECT_THAT(as_text(std::span(output).first(neutral->bytes)),
+              testing::Not(testing::HasSubstr("\x1B[?1004")));
+
+  // Standalone projection still mirrors the canonical mode.
+  write_text(terminal, "\x1B[?1004h");
+  const auto standalone = terminal.render_ansi(output, true);
+  ASSERT_TRUE(standalone.has_value());
+  EXPECT_THAT(as_text(std::span(output).first(standalone->bytes)),
+              testing::HasSubstr("\x1B[?1004h"));
+}
+
 TEST(PaneCompositionTest, DrawsDeclaredPaneSeparators) {
   auto terminal = make_terminal(4, 2);
   const PaneSurface pane{

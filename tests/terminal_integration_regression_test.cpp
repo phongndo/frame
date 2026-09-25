@@ -399,6 +399,8 @@ TEST(SynchronizedOutputBoundaryTest, ReleasedFocusedPaneRestoresCanonicalInputMo
   vt::TerminalOptions outer_options;
   outer_options.size = {.columns = 12, .rows = 2};
   auto outer = make_terminal(outer_options);
+  // The attached client enables outer focus reports for its lifetime; composition must keep them.
+  write_terminal(outer, "\x1B[?1004h");
   std::array<std::byte, std::size_t{32} * 1'024U> output{};
   std::array panes{
       render::PaneSurface{

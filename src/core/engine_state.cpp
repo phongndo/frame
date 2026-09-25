@@ -162,6 +162,7 @@ void AttachmentRuntime::reset_connection() noexcept {
   status_signature = 0;
   outer_modes.reset();
   status_valid = false;
+  outer_focused = true;
   bell_pending = false;
   input_backpressured = false;
   client_work_pending = false;

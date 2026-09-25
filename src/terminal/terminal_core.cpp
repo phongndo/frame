@@ -726,7 +726,7 @@ auto Terminal::resize(const TerminalSize& size) noexcept -> std::expected<void, 
   LEMMA_ASSERT(impl_->row_hash_storage.size() / 2U >= impl_->row_hash_count);
   std::ranges::fill(impl_->row_hashes(), std::uint64_t{0});
   impl_->mirrored_modes_valid = false;
-  impl_->mirrored_mouse_modes_valid = false;
+  impl_->mirrored_compositor_modes_valid = false;
   impl_->ansi_physical_valid = false;
   ghostty_mouse_encoder_reset(impl_->mouse_encoder);
   impl_->options.size = size;

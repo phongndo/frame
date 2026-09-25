@@ -109,6 +109,9 @@ struct PaneRuntime final {
   std::size_t scrollback_bytes_reserved{0};
   std::chrono::steady_clock::time_point compression_deadline;
   bool compression_scheduled{false};
+  // Last focus state queued to (or, without mode 1004, assumed by) the child. Reconciliation
+  // derives the desired state from committed Session and Attachment state.
+  bool focus_reported{false};
 #ifdef LEMMA_ENABLE_LATENCY_TRACE
   diagnostic::LatencyTraceMarkerMatcher input_trace_matcher;
   diagnostic::LatencyTraceMarkerMatcher output_trace_matcher;
@@ -269,6 +272,9 @@ struct AttachmentRuntime final {
   std::optional<render::OuterModeProjection> outer_modes;
   int client{-1};
   bool status_valid{false};
+  // Outer-terminal focus from mode 1004 reports. A new connection assumes the user is typing into
+  // it.
+  bool outer_focused{true};
   bool bell_pending{false};
   bool input_backpressured{false};
   bool client_work_pending{false};

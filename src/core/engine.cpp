@@ -3923,6 +3923,51 @@ struct SessionCommandContext final {
   return false;
 }
 
+// Queues one focus transition for a Pane whose child can still receive input. A full queue keeps
+// the previous state so a later reconciliation retries without duplicating a delivered report.
+void report_pane_focus(PaneRuntime& runtime, const bool focused) noexcept {
+  if (runtime.focus_reported == focused) {
+    return;
+  }
+  if (runtime.accepts_input()) {
+    const auto queued_bytes_before = runtime.pending_writes.size();
+    const auto queued = queue_focus_input(runtime.pending_writes, runtime.terminal,
+                                          focused ? vt::FocusEvent::gained : vt::FocusEvent::lost);
+    if (queued == InputQueueResult::full) {
+      return;
+    }
+    if (runtime.pending_writes.size() > queued_bytes_before) {
+      runtime.interactive_damage.await_write(queued_bytes_before, runtime.pending_writes.size());
+    }
+  }
+  runtime.focus_reported = focused;
+}
+
+// Focus reports derive from committed state rather than from individual transitions: only the
+// active Tab's focused Pane of an attached Session with a focused outer terminal has focus.
+[[nodiscard]] auto derived_focused_pane(const SessionRecord& session) noexcept -> PaneId {
+  const auto* const tab =
+      session.attachment_runtime.client >= 0 && session.attachment_runtime.outer_focused
+          ? active_tab(session)
+          : nullptr;
+  return tab == nullptr ? PaneId{} : tab->focused_pane;
+}
+
+// Each Pane sees alternating gained/lost reports, queued in order with its other input.
+void reconcile_focus_reports(SessionRecord& session, PaneRuntimeStore& runtimes) noexcept {
+  if (!session.active) {
+    return;
+  }
+  const auto focused = derived_focused_pane(session);
+  for (auto& pane_slot : session.panes) {
+    auto* const runtime =
+        pane_slot.pane == nullptr ? nullptr : find_pane_runtime(runtimes, session, *pane_slot.pane);
+    if (runtime != nullptr) {
+      report_pane_focus(*runtime, pane_slot.pane->id == focused);
+    }
+  }
+}
+
 // Target completion is the single bounded bridge from implicit client commands to stable IDs.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] auto dispatch_session_command(SessionRecord& session, PaneRuntimeStore& runtimes,
@@ -3966,6 +4011,8 @@ struct SessionCommandContext final {
   if (result.status == CommandStatus::applied && !session_lifecycle_command(resolved.kind)) {
     record_session_mutation(session);
   }
+  // Report focus before any later input in the same batch reaches the newly focused Pane.
+  reconcile_focus_reports(session, runtimes);
   return result;
 }
 
@@ -4732,12 +4779,31 @@ static_assert(input::key_modifier_num_lock == protocol::key_input_modifier_num_l
   return pane == nullptr ? nullptr : find_pane_runtime(runtimes, session, *tab, *pane);
 }
 
+// Input to a Pane must follow its focus report. A report deferred by a full queue retries here, and
+// the input waits as backpressure until the report fits; a smaller input cannot overtake it.
+[[nodiscard]] auto focus_report_outstanding(SessionRecord& session, PaneRuntimeStore& runtimes,
+                                            PaneRuntime& runtime) noexcept -> bool {
+  if (!session.active) {
+    return false;
+  }
+  const auto focused = derived_focused_pane(session);
+  auto* const tab = focused.is_valid() ? active_tab(session) : nullptr;
+  auto* const pane = tab == nullptr ? nullptr : find_pane(session, *tab, focused);
+  const bool desired =
+      pane != nullptr && find_pane_runtime(runtimes, session, *tab, *pane) == &runtime;
+  report_pane_focus(runtime, desired);
+  return runtime.focus_reported != desired;
+}
+
 [[nodiscard]] auto queue_application_bytes_to(SessionRecord& session, PaneRuntimeStore& runtimes,
                                               PaneRuntime& runtime,
                                               const std::span<const std::byte> bytes) noexcept
     -> InputQueueResult {
   if (!runtime.accepts_input()) {
     return InputQueueResult::encoding_failed;
+  }
+  if (focus_report_outstanding(session, runtimes, runtime)) {
+    return InputQueueResult::full;
   }
   const auto queued_bytes_before = runtime.pending_writes.size();
   const auto queued = queue_normalized_input(runtime.pending_writes, runtime.terminal, bytes);
@@ -4800,6 +4866,9 @@ static_assert(input::key_modifier_num_lock == protocol::key_input_modifier_num_l
     -> InputQueueResult {
   if (!runtime.accepts_input() || events.empty()) {
     return InputQueueResult::encoding_failed;
+  }
+  if (focus_report_outstanding(session, runtimes, runtime)) {
+    return InputQueueResult::full;
   }
   PanePtyWriteQueue staged;
   for (const auto& event : events) {
@@ -4871,6 +4940,9 @@ static_assert(input::key_modifier_num_lock == protocol::key_input_modifier_num_l
   auto* const runtime = focused_input_runtime(session, runtimes);
   if (runtime == nullptr || !runtime->accepts_input()) {
     return InputQueueResult::encoding_failed;
+  }
+  if (focus_report_outstanding(session, runtimes, *runtime)) {
+    return InputQueueResult::full;
   }
   const auto queued_bytes_before = runtime->pending_writes.size();
   const auto queued =
@@ -5643,6 +5715,9 @@ process_routed_key_input(SessionRecord& session, PaneRuntimeStore& runtimes,
       if (runtime == nullptr) {
         return ParseResult::error;
       }
+      if (focus_report_outstanding(session, runtimes, *runtime)) {
+        return ParseResult::backpressure;
+      }
       const auto queued_bytes_before = runtime->pending_writes.size();
       const auto queued =
           queue_paste_input(runtime->pending_writes, runtime->terminal, message.input);
@@ -5661,33 +5736,10 @@ process_routed_key_input(SessionRecord& session, PaneRuntimeStore& runtimes,
       }
       break;
     }
-    case protocol::ClientMessageKind::focus: {
-      auto* const tab = active_tab(session);
-      auto* const pane = tab == nullptr ? nullptr : find_pane(session, *tab, tab->focused_pane);
-      if (pane == nullptr) {
-        return ParseResult::error;
-      }
-      auto* const runtime = find_pane_runtime(runtimes, session, *tab, *pane);
-      if (runtime == nullptr) {
-        return ParseResult::error;
-      }
-      const auto queued_bytes_before = runtime->pending_writes.size();
-      const auto queued =
-          queue_focus_input(runtime->pending_writes, runtime->terminal,
-                            message.focus == protocol::FocusInput::gained ? vt::FocusEvent::gained
-                                                                          : vt::FocusEvent::lost);
-      if (queued == InputQueueResult::full) {
-        return ParseResult::backpressure;
-      }
-      if (queued == InputQueueResult::encoding_failed) {
-        return ParseResult::error;
-      }
-      if (runtime->pending_writes.size() > queued_bytes_before) {
-        runtime->interactive_damage.await_write(queued_bytes_before,
-                                                runtime->pending_writes.size());
-      }
+    case protocol::ClientMessageKind::focus:
+      session.attachment_runtime.outer_focused = message.focus == protocol::FocusInput::gained;
+      reconcile_focus_reports(session, runtimes);
       break;
-    }
     case protocol::ClientMessageKind::mouse: {
       if (message.mouse.geometry.columns != session.attachment.columns ||
           message.mouse.geometry.rows != session.attachment.rows) {
@@ -5875,6 +5927,9 @@ process_routed_key_input(SessionRecord& session, PaneRuntimeStore& runtimes,
               return ParseResult::error;
             }
             if (*alternate_scroll) {
+              if (focus_report_outstanding(session, runtimes, *runtime)) {
+                return ParseResult::backpressure;
+              }
               clear_mouse_selection(session, runtimes);
               const auto queued_bytes_before = runtime->pending_writes.size();
               const auto queued = queue_alternate_scroll_input(
@@ -5954,6 +6009,9 @@ process_routed_key_input(SessionRecord& session, PaneRuntimeStore& runtimes,
           .geometry = {.screen_width = rectangle.columns, .screen_height = rectangle.rows},
           .any_button_pressed = message.mouse.any_button_pressed,
       };
+      if (focus_report_outstanding(session, runtimes, *runtime)) {
+        return ParseResult::backpressure;
+      }
       const auto queued_bytes_before = runtime->pending_writes.size();
       const auto queued = queue_mouse_input(runtime->pending_writes, runtime->terminal, event);
       if (queued == InputQueueResult::full) {
@@ -9630,6 +9688,7 @@ void handoff_attached_connection(PendingConnections& connections, const std::siz
     detach_attachment(*session, runtimes);
     return;
   }
+  reconcile_focus_reports(*session, runtimes);
   auto message_budget = client_messages_per_turn_max;
   auto geometry_budget = client_geometry_messages_per_turn_max;
   auto input_budget = client_input_steps_per_turn_max;
@@ -10119,6 +10178,9 @@ void process_client_events(SessionRecord& session, PaneRuntimeStore& runtimes,
       (session.attachment_runtime.input_backpressured ||
        session.attachment_runtime.client_work_pending ||
        (events.revents & (POLLIN | POLLHUP | POLLERR)) != 0)) {
+    // Deferred focus reports claim freed queue capacity before retried or newly received input,
+    // including focus moved by Pane exit earlier in this turn.
+    reconcile_focus_reports(session, runtimes);
     handle_client_parse_result(session, runtimes,
                                receive_client(session, runtimes, extensions, message_budget,
                                               geometry_budget, input_budget, name_conflict,
@@ -10358,6 +10420,7 @@ void finish_command_line_error(SessionRecord& session, const std::string_view me
   const auto surface_paste = source_runtime.surface_paste;
   const auto kitty_clipboard_supported = source_runtime.kitty_clipboard_supported;
   const bool osc52_read_retired = source_runtime.osc52_read_retired;
+  const bool outer_focused = source_runtime.outer_focused;
   const int client = std::exchange(source_runtime.client, -1);
   auto decoder = std::move(source_runtime.decoder);
   auto graphics = std::move(source_runtime.graphics);
@@ -10378,6 +10441,7 @@ void finish_command_line_error(SessionRecord& session, const std::string_view me
   target_runtime.surface_paste = surface_paste;
   target_runtime.kitty_clipboard_supported = kitty_clipboard_supported;
   target_runtime.osc52_read_retired = osc52_read_retired;
+  target_runtime.outer_focused = outer_focused;
   target_runtime.connection_id = sessions.allocate_connection(target.id);
   target_runtime.status_valid = false;
   target_runtime.client_close_state = ConnectionCloseState::none;
@@ -10392,6 +10456,8 @@ void finish_command_line_error(SessionRecord& session, const std::string_view me
     target.activity_order = ++activity_order;
   }
   schedule_frame(target, FrameUrgency::state_change, true);
+  reconcile_focus_reports(source, runtimes);
+  reconcile_focus_reports(target, runtimes);
   return AttachmentTransferResult::transferred;
 }
 
@@ -11209,6 +11275,13 @@ run_server_impl(const int listener, const EndpointRelease release_endpoint,
       const auto& pending = std::span(pending_connections).subspan(slot, 1).front();
       if (pending != nullptr && !pending->active()) {
         close_pending(pending_connections, slot, sessions);
+      }
+    }
+    // Detach, Pane exit, and queue backpressure change focus outside command dispatch. Queue
+    // their reports before descriptor interest is collected so the writes are polled this turn.
+    for (auto& session : sessions) {
+      if (session != nullptr) {
+        reconcile_focus_reports(*session, runtimes);
       }
     }
     std::size_t descriptor_count = 2;

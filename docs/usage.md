@@ -315,6 +315,15 @@ rows/columns and pixel dimensions, and take precedence over stale or pixel-less 
 Other terminals use the PTY window size. Lemma restores the parent's reporting mode on exit.
 Font-size changes update Pane pixel geometry even when the character grid stays unchanged.
 
+Lemma keeps outer focus reporting (mode 1004) enabled while attached and disables it on exit. A Pane
+that enables focus reporting receives `CSI I` when it becomes focused and `CSI O` when it stops
+being focused. A Pane is focused while it is the focused Pane of the active Tab in an attached
+Session and the outer terminal has focus; Pane focus changes, Tab and Session switches, detach,
+reattach, and Pane exit therefore report focus, and a new attachment assumes the outer terminal is
+focused. Each change is reported once, in order with the Pane's other input: while a Pane's input
+queue is too full for its report, later input to that Pane waits behind it. A Pane that enables
+focus reporting learns its state at the next change rather than immediately.
+
 Mouse reports outside the current grid are discarded, never typed into the shell. Recognized
 partial mouse, size, and clipboard reports have a fixed 30-second transport deadline, independent
 of Escape-key timing; progress does not renew it. Bracketed paste remains opaque.

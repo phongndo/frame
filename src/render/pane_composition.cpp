@@ -692,8 +692,8 @@ struct CompositionPolicy final {
                                 const OuterModeProjection outer_modes,
                                 const bool project_outer_modes) noexcept -> bool {
   constexpr std::string_view neutral_modes =
-      "\x1B[?1l\x1B[?9l\x1B[?1000l\x1B[?1002l\x1B[?1003l\x1B[?1004l"
-      "\x1B[?1005l\x1B[?1006l\x1B[?1007l\x1B[?1015l\x1B[?1016l\x1B[?2004l";
+      "\x1B[?1l\x1B[?9l\x1B[?1000l\x1B[?1002l\x1B[?1003l\x1B[?1005l"
+      "\x1B[?1006l\x1B[?1007l\x1B[?1015l\x1B[?1016l\x1B[?2004l";
   // Mouse event and encoding modes are each mutually exclusive. Disable competing modes before
   // enabling the desired one: a later reset would otherwise replace the active mode with `none`
   // or the legacy X10 encoding in terminals such as Ghostty.

@@ -167,7 +167,7 @@ struct Terminal::Impl final {
       GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK};
   bool render_cursor_blinking{false};
   bool mirrored_modes_valid{false};
-  bool mirrored_mouse_modes_valid{false};
+  bool mirrored_compositor_modes_valid{false};
   bool projected_cursor_valid{false};
   bool ansi_physical_valid{false};
   bool selection_checkpoint_rectangle{false};
