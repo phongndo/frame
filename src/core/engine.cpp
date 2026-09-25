@@ -9462,7 +9462,8 @@ void process_client_events(SessionRecord& session, PaneRuntimeStore& runtimes,
                            extension::Runtime& extensions, const pollfd& events,
                            std::size_t& message_budget, std::size_t& geometry_budget,
                            std::size_t& input_budget, const SessionNameConflict name_conflict,
-                           void* const name_conflict_context) noexcept {
+                           void* const name_conflict_context,
+                           const bool retry_backpressured) noexcept {
   // Consume resizes before flushing queued output so resize_session can discard bytes composed
   // for the previous physical viewport. Decoder-held work is retried without socket readiness on a
   // later bounded turn or after destination capacity becomes available. A closed peer cannot
@@ -9476,7 +9477,7 @@ void process_client_events(SessionRecord& session, PaneRuntimeStore& runtimes,
   }
   if (session.attachment_runtime.client >= 0 &&
       session.attachment_runtime.client_close_state == ConnectionCloseState::none &&
-      (session.attachment_runtime.input_backpressured ||
+      ((session.attachment_runtime.input_backpressured && retry_backpressured) ||
        session.attachment_runtime.client_work_pending ||
        (events.revents & (POLLIN | POLLHUP | POLLERR)) != 0)) {
     // Deferred focus reports claim freed queue capacity before retried or newly received input,
@@ -10853,8 +10854,10 @@ run_server_impl(const int listener, const EndpointRelease release_endpoint,
         auto& geometry_budget =
             std::span(client_geometry_budgets).subspan(session->id.slot(), 1).front();
         auto& input_budget = std::span(client_input_budgets).subspan(session->id.slot(), 1).front();
+        // Held backpressured input waits for the retry after this turn's PTY writes.
         process_client_events(*session, runtimes, extension_runtime, events, message_budget,
-                              geometry_budget, input_budget, &session_name_conflict, &sessions);
+                              geometry_budget, input_budget, &session_name_conflict, &sessions,
+                              false);
       }
     }
     service_attachment_command_lines(sessions, runtimes, activity_order, extensions,
@@ -11030,7 +11033,8 @@ run_server_impl(const int listener, const EndpointRelease release_endpoint,
             std::span(client_geometry_budgets).subspan(session->id.slot(), 1).front();
         auto& input_budget = std::span(client_input_budgets).subspan(session->id.slot(), 1).front();
         process_client_events(*session, runtimes, extension_runtime, no_events, message_budget,
-                              geometry_budget, input_budget, &session_name_conflict, &sessions);
+                              geometry_budget, input_budget, &session_name_conflict, &sessions,
+                              true);
       }
     }
 

@@ -288,8 +288,27 @@ template <typename Visitor>
 [[nodiscard]] auto visit_normalized_input(vt::Terminal& terminal,
                                           const std::span<const std::byte> input,
                                           Visitor visitor) noexcept -> bool {
+  // Printable bytes and UTF-8 pass through unchanged. Visiting a whole run at once keeps measuring
+  // and queueing proportional to the special keys in it; a backpressured retry re-measures its
+  // complete held message.
+  const auto passes_through = [](const std::byte byte) noexcept {
+    const auto value = std::to_integer<std::uint8_t>(byte);
+    return value >= 0x20U && value != 0x7FU;
+  };
   std::size_t input_offset = 0;
   while (input_offset < input.size()) {
+    if (passes_through(input.subspan(input_offset, 1).front())) {
+      std::size_t run = 1;
+      while (input_offset + run < input.size() &&
+             passes_through(input.subspan(input_offset + run, 1).front())) {
+        ++run;
+      }
+      if (!visitor(input.subspan(input_offset, run))) {
+        return false;
+      }
+      input_offset += run;
+      continue;
+    }
     vt::KeyEvent event{};
     std::array<char, 1> event_text{};
     std::size_t consumed = 0;
