@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -224,6 +225,213 @@ TEST(PaneCompositionTest, StatusControlHitTestMatchesRenderedLabelsAndOverflow) 
   auto modal = status;
   modal.input_context = "RESIZE";
   EXPECT_EQ(status_target_at_column(modal, {.columns = 40, .rows = 3}, 17), std::nullopt);
+}
+
+TEST(PaneCompositionTest, InactiveTabAttentionIsEmphasizedPartOfItsLabel) {
+  auto terminal = make_terminal(40, 2);
+  const PaneSurface pane{
+      .terminal = &terminal,
+      .rectangle = {.columns = 40, .rows = 2},
+      .focused = true,
+  };
+  const std::array tabs{
+      StatusTab{.number = 1, .title = "zsh", .attention = "42%!"},
+      StatusTab{.number = 2, .title = "nvim", .active = true},
+  };
+  const StatusLine status{.session_name = {},
+                          .tabs = tabs,
+                          .prompt_target = StatusPromptTarget::none,
+                          .prompt_feedback = StatusPromptFeedback::none,
+                          .prompt_value = {},
+                          .input_context = {},
+                          .prompt_cursor = 0,
+                          .dirty = true};
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+
+  const auto result =
+      compose_frame(std::span(&pane, 1), {.columns = 40, .rows = 3}, output, true, status);
+
+  ASSERT_TRUE(result.has_value());
+  const auto encoded = as_text(std::span(output).first(result->bytes));
+  EXPECT_THAT(encoded,
+              testing::HasSubstr("\x1B[0m1:zsh \x1B[0;1m42%!\x1B[0m  \x1B[0;1m[ 2:nvim ]"));
+  // "1:zsh 42%!" occupies columns 0-9; the marker selects its Tab like the title does.
+  EXPECT_EQ(status_target_at_column(status, {.columns = 40, .rows = 3}, 9),
+            (StatusTarget{.kind = StatusTargetKind::tab, .tab_position = 0}));
+  EXPECT_EQ(status_target_at_column(status, {.columns = 40, .rows = 3}, 13),
+            (StatusTarget{.kind = StatusTargetKind::tab, .tab_position = 1}));
+}
+
+struct ProjectedStatus final {
+  bool projected{false};
+  std::string text;
+  std::vector<std::string> cells;
+  std::vector<bool> bold;
+  std::uint16_t cursor{0};
+};
+
+[[nodiscard]] auto plain_status(const std::span<const StatusTab> tabs) -> StatusLine {
+  return {.session_name = {},
+          .tabs = tabs,
+          .prompt_target = StatusPromptTarget::none,
+          .prompt_feedback = StatusPromptFeedback::none,
+          .prompt_value = {},
+          .input_context = {},
+          .prompt_cursor = 0,
+          .dirty = true};
+}
+
+[[nodiscard]] auto project_line(const StatusLine status, const std::uint16_t columns)
+    -> ProjectedStatus {
+  std::array<ui::Cell, limits::terminal_columns_hard_max> storage{};
+  const auto cells = std::span(storage).first(columns);
+  ProjectedStatus projected;
+  projected.projected =
+      project_status_cells(status, {.columns = columns, .rows = 3}, cells, projected.cursor);
+  for (const auto& cell : cells) {
+    projected.cells.push_back(cell.text_size == 0 ? std::string(" ")
+                                                  : std::string(cell.text.data(), cell.text_size));
+    projected.text += projected.cells.back();
+    projected.bold.push_back((cell.style.attributes & ui::attribute_bold) != 0);
+  }
+  return projected;
+}
+
+[[nodiscard]] auto project_status(const std::span<const StatusTab> tabs,
+                                  const std::uint16_t columns) -> ProjectedStatus {
+  auto projected = project_line(plain_status(tabs), columns);
+  EXPECT_TRUE(projected.projected);
+  return projected;
+}
+
+[[nodiscard]] auto cell_index(const ProjectedStatus& projected, const std::string_view text)
+    -> std::size_t {
+  const auto found = std::ranges::find(projected.cells, std::string(text));
+  EXPECT_NE(found, projected.cells.end()) << text;
+  return static_cast<std::size_t>(found - projected.cells.begin());
+}
+
+// Eight 12-column titles in 80 columns show only four Tabs beside the active one's end.
+[[nodiscard]] auto eight_tabs(const std::size_t active) -> std::array<StatusTab, 8> {
+  std::array<StatusTab, 8> tabs{};
+  for (std::size_t index = 0; index < tabs.size(); ++index) {
+    tabs.at(index) = {.number = static_cast<std::uint16_t>(index + 1U),
+                      .title = "agent-worker",
+                      .active = index == active};
+  }
+  return tabs;
+}
+
+TEST(PaneCompositionTest, TrailingOverflowEmphasizesHiddenAttention) {
+  auto tabs = eight_tabs(0);
+  tabs.at(6).attention = "!";
+  const auto alerted = project_status(tabs, 80);
+  EXPECT_THAT(alerted.text, testing::HasSubstr("4:agent-worker …!  +"));
+  const auto ellipsis = std::ranges::find(alerted.cells, std::string("…"));
+  ASSERT_NE(ellipsis, alerted.cells.end());
+  const auto glyph = static_cast<std::size_t>(ellipsis - alerted.cells.begin()) + 1U;
+  EXPECT_EQ(alerted.cells.at(glyph), "!");
+  EXPECT_FALSE(alerted.bold.at(glyph - 1U));
+  EXPECT_TRUE(alerted.bold.at(glyph));
+}
+
+TEST(PaneCompositionTest, OverflowShowsTheMostUrgentHiddenAttention) {
+  auto tabs = eight_tabs(0);
+  tabs.at(5).attention = "40%x";
+  tabs.at(6).attention = "!";
+  EXPECT_THAT(project_status(tabs, 80).text, testing::HasSubstr("4:agent-worker …x  +"));
+  tabs.at(5).attention = {};
+  tabs.at(6).attention = "40%";
+  EXPECT_THAT(project_status(tabs, 80).text, testing::HasSubstr("4:agent-worker …%  +"));
+}
+
+TEST(PaneCompositionTest, LeadingOverflowSummarizesOnlyTabsHiddenBeforeTheRange) {
+  auto tabs = eight_tabs(7);
+  tabs.at(1).attention = "!";
+  EXPECT_TRUE(project_status(tabs, 80).text.starts_with("…! 5:agent-worker"));
+  // Attention on a visible Tab leaves the plain ellipsis in the reserved width.
+  tabs.at(1).attention = {};
+  tabs.at(4).attention = "!";
+  EXPECT_TRUE(project_status(tabs, 80).text.starts_with("…  5:agent-worker !"));
+}
+
+TEST(PaneCompositionTest, MarkerOverflowWidthMovesHitTargetsAndCreateButton) {
+  auto tabs = eight_tabs(7);
+  tabs.at(1).attention = "!";
+  const auto projected = project_status(tabs, 80);
+  ASSERT_TRUE(projected.text.starts_with("…! 5:agent-worker"));
+  const auto status = plain_status(tabs);
+  constexpr Viewport viewport{.columns = 80, .rows = 3};
+  // Columns 0-2 are the three-column overflow indicator; Tab 5 starts at column 3.
+  EXPECT_EQ(status_target_at_column(status, viewport, 2), std::nullopt);
+  EXPECT_EQ(status_target_at_column(status, viewport, 3),
+            (StatusTarget{.kind = StatusTargetKind::tab, .tab_position = 4}));
+  const auto active_end = cell_index(projected, "]");
+  EXPECT_EQ(status_target_at_column(status, viewport, static_cast<std::uint16_t>(active_end)),
+            (StatusTarget{.kind = StatusTargetKind::tab, .tab_position = 7}));
+  const auto create = cell_index(projected, "+");
+  EXPECT_EQ(create, active_end + 3U);
+  EXPECT_EQ(status_target_at_column(status, viewport, static_cast<std::uint16_t>(create)),
+            (StatusTarget{.kind = StatusTargetKind::create_tab, .tab_position = 0}));
+}
+
+TEST(PaneCompositionTest, RenamePromptCursorFollowsMarkerOverflowWidth) {
+  auto tabs = eight_tabs(7);
+  tabs.at(1).attention = "!";
+  auto status = plain_status(tabs);
+  status.prompt_target = StatusPromptTarget::active_tab;
+  status.prompt_value = "agent-worker";
+  status.prompt_cursor = status.prompt_value.size();
+  const auto projected = project_line(status, 80);
+  ASSERT_TRUE(projected.projected);
+  ASSERT_TRUE(projected.text.starts_with("…! "));
+  // The cursor follows the edited title, on the space before the closing bracket.
+  EXPECT_EQ(projected.cursor, cell_index(projected, "]") - 1U);
+  EXPECT_EQ(status_cursor_column(status, {.columns = 80, .rows = 3}), projected.cursor + 1U);
+}
+
+TEST(PaneCompositionTest, RenamePromptKeepsTheFieldWithinMarkerOverflow) {
+  // " a  | " leaves ten columns; `[ 2:ab ]` fits alone but not after a three-column `…! `.
+  const std::array tabs{
+      StatusTab{.number = 1, .title = "zsh", .attention = "!"},
+      StatusTab{.number = 2, .title = "nvim", .active = true},
+  };
+  auto status = plain_status(tabs);
+  status.session_name = "a";
+  status.prompt_target = StatusPromptTarget::active_tab;
+  status.prompt_value = "ab";
+  status.prompt_cursor = status.prompt_value.size();
+  const auto projected = project_line(status, 16);
+  ASSERT_TRUE(projected.projected) << projected.text;
+  EXPECT_TRUE(projected.text.starts_with(" a  | …! [ 2:b ]")) << projected.text;
+  EXPECT_EQ(projected.cursor, cell_index(projected, "]") - 1U);
+}
+
+TEST(PaneCompositionTest, StatusRejectsActiveControlAndOverlongAttention) {
+  const std::array tabs{
+      StatusTab{.number = 1, .title = "zsh", .attention = "!"},
+      StatusTab{.number = 2, .title = "nvim", .active = true},
+  };
+  const StatusLine status{.session_name = {},
+                          .tabs = tabs,
+                          .prompt_target = StatusPromptTarget::none,
+                          .prompt_feedback = StatusPromptFeedback::none,
+                          .prompt_value = {},
+                          .input_context = {},
+                          .prompt_cursor = 0,
+                          .dirty = true};
+  EXPECT_TRUE(valid_status(status));
+  auto active_marker = tabs;
+  active_marker.at(1).attention = "!";
+  auto control_marker = tabs;
+  control_marker.at(0).attention = "\x1B";
+  auto long_marker = tabs;
+  long_marker.at(0).attention = "1234567890123";
+  for (const auto& invalid : {active_marker, control_marker, long_marker}) {
+    auto rejected = status;
+    rejected.tabs = invalid;
+    EXPECT_FALSE(valid_status(rejected));
+  }
 }
 
 TEST(PaneCompositionTest, ActiveInputContextReplacesStatusRowWithoutABadge) {

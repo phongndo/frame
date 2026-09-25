@@ -91,6 +91,122 @@ class UserExtensionsMuxTest(unittest.TestCase):
         client.send("__AFTER_DRAG__\r")
         client.expect_output("__AFTER_DRAG__")
 
+    def test_status_marks_inactive_tabs_needing_attention_until_visited(
+        self,
+    ) -> None:
+        server = self.server()
+        # A rendered status row proves lemma-ui has discovered Sessions, so "attn" below is
+        # observed from its creation, like a background agent started detached.
+        server.create_session("boot", command=("cat",)).require_client().expect_output(
+            "boot  |"
+        )
+        session = server.create_session("attn", attach=False, command=("cat",))
+        home = session.state().active_tab
+        server.require_command(
+            "proc", "tab", "rename", "--session", "attn", "--tab", home, "home"
+        )
+        # Each read gates one phase; the first bell predates the first attachment.
+        script = (
+            r"printf '\007'; read step; "
+            r"printf '\007'; read step; "
+            r"printf '\033]9;agent done\007'; read step; "
+            r"printf '\033]9;4;1;40\033\\'; read step; "
+            r"printf '\033]9;4;0\033\\\033]133;A\007\033]133;B\007"
+            r"\033]133;C\007\033]133;D;3\007'; read step; "
+            r"printf '\007'; sleep 30"
+        )
+        created = server.require_command(
+            "proc",
+            "tab",
+            "new",
+            "--session",
+            "attn",
+            "--title",
+            "work",
+            "--focus",
+            "preserve",
+            "--",
+            "/bin/sh",
+            "-c",
+            script,
+        )
+        result = json.loads(created.output)["results"][0]["result"]
+        work, pane = result["tab"], result["pane"]
+
+        def bells() -> int:
+            listed = server.require_command("proc", "pane", "list", "--session", "attn")
+            panes = json.loads(listed.output)["results"][0]["result"]["panes"]
+            return next(item for item in panes if item["id"] == pane)["signals"][
+                "bells"
+            ]
+
+        wait_until("pre-attach bell", lambda: True if bells() == 1 else None)
+        session.attach()
+
+        def row(description: str, expected: str) -> None:
+            attached = session.require_client()
+
+            def observe() -> str | None:
+                attached.drain()
+                line = attached.screen_text().splitlines()[0]
+                return line if expected in line.split("|", 1)[-1] else None
+
+            wait_until(description, observe, diagnostics=lambda: attached.screen_text())
+
+        def advance() -> None:
+            server.require_command(
+                "proc",
+                "pane",
+                "input",
+                "--session",
+                "attn",
+                "--pane",
+                pane,
+                "--key",
+                "enter",
+            )
+
+        def select(tab: str) -> None:
+            server.require_command(
+                "proc", "tab", "select", "--session", "attn", "--tab", tab
+            )
+
+        row(
+            "a bell before the first attachment marks the tab",
+            "[ 1:home ]  2:work !  +",
+        )
+        select(work)
+        row("visiting clears the marker", "1:home  [ 2:work ]  +")
+        select(home)
+        row("a visited bell stays seen", "[ 1:home ]  2:work  +")
+        advance()
+        row("bell marks the inactive tab", "[ 1:home ]  2:work !  +")
+        select(work)
+        row("visiting clears the bell", "1:home  [ 2:work ]  +")
+        select(home)
+        advance()
+        row("notification marks the inactive tab", "[ 1:home ]  2:work !  +")
+        select(work)
+        row("visiting clears the notification", "1:home  [ 2:work ]  +")
+        # Signals while a Tab is active stay seen; StatusAttentionTest covers that directly,
+        # because any Tab switch here relists Panes and would mask a missed signal.
+        select(home)
+        advance()
+        row("progress marks the inactive tab", "[ 1:home ]  2:work 40%  +")
+        advance()
+        row("a failed command marks the inactive tab", "[ 1:home ]  2:work x  +")
+        select(work)
+        row("visiting clears the failure", "1:home  [ 2:work ]  +")
+        select(home)
+        row("a visited failure stays seen", "[ 1:home ]  2:work  +")
+
+        # Seen state survives detach, so reattaching marks what happened while detached.
+        session.detach()
+        advance()
+        wait_until("detached bell", lambda: True if bells() == 3 else None)
+        session.attach()
+        row("a bell while detached marks the tab", "[ 1:home ]  2:work !  +")
+
     def test_status_recovers_after_tiny_resize_and_reattach(self) -> None:
         server = self.server()
         session = server.create_session("geometry", command=("cat",))

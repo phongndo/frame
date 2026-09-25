@@ -78,10 +78,36 @@ neither captures terminal screens nor subscribes to screen contents. These behav
 replaceable external helper, not Core.
 
 The status helper uses one global discovery connection and one scoped connection for each attached
-Session. It observes presentation state without subscribing to terminal screens and sleeps when
-nothing changes. These connections and Surfaces count against the advertised public limits;
-exhaustion can leave a Session without status UI while native terminal input continues. Detaching
-releases that Session's status connection and dock. The session manager runs only while open.
+Session. The scoped connection observes presentation state and [Pane signals](api.md#pane-signals)
+without subscribing to terminal screens. It learns Pane-to-Tab membership from `pane.list`, once per
+Session revision and when an unlisted Pane reports a signal. It polls nothing, repaints for
+presentation or marker changes, and otherwise sleeps. These connections and Surfaces count against
+the advertised public limits; exhaustion can leave a Session without status UI while native
+terminal input continues. Detaching releases that Session's status connection and dock. The session
+manager runs only while open.
+
+The statusline marks inactive Tabs that need attention, from the signals of the Panes they contain.
+A marker follows the Tab title in bold, for example `2:build 40%x!`:
+
+| Marker | Meaning |
+| --- | --- |
+| `40%`, `%` | Progress in flight, with its percent when reported; `=` follows paused progress |
+| `x` | Something failed: progress is in error, or a command completed since the Tab was last active and the latest completion failed (nonzero exit code) |
+| `!` | A bell or notification arrived since the Tab was last active |
+
+The active Tab never shows markers. Bells, notifications, and command completions count as seen
+when their Tab becomes active or while it is active. Progress is current state, so it shows again
+after leaving a Tab whose progress is still in flight. Among several Panes reporting progress, a
+Tab shows an error first, then paused progress, then the first listed Pane's progress. When Tabs
+do not fit, the `…` on each side is followed by the most urgent hidden marker: `x`, then `!`,
+then `%`.
+
+Seen state belongs to each Session for as long as `lemma-ui` runs, so it survives detach and a
+reattached statusline marks what happened in between. Signals in Sessions that already existed
+when `lemma-ui` started count as seen when it first lists their Panes. Sessions created later, such
+as background agents started detached, and Panes created later count every signal since their
+creation. Restarting `lemma-ui` resets this baseline. Markers follow their Panes and disappear
+when those Panes close.
 
 ## Managed programs
 

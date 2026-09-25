@@ -245,9 +245,14 @@ add_library(lemma_extension_client STATIC src/extension/client.cpp)
 lemma_internal_target(lemma_extension_client)
 target_link_libraries(lemma_extension_client PRIVATE lemma_api lemma_extension_contract lemma_platform)
 
+# Statusline attention policy is pure user-layer state, separated so unit tests can link it.
+add_library(lemma_ui_attention STATIC src/user/attention.cpp)
+lemma_internal_target(lemma_ui_attention)
+target_link_libraries(lemma_ui_attention PRIVATE lemma_api)
+
 add_executable(lemma-ui src/user/main.cpp src/user/session_manager.cpp)
 lemma_internal_target(lemma-ui)
-target_link_libraries(lemma-ui PRIVATE lemma_extension_client lemma_api lemma_status)
+target_link_libraries(lemma-ui PRIVATE lemma_extension_client lemma_api lemma_status lemma_ui_attention)
 install(TARGETS lemma-ui RUNTIME DESTINATION bin)
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -408,6 +413,7 @@ if(LEMMA_BUILD_TESTS)
     tests/layout_test.cpp
     tests/protocol_test.cpp
     tests/reactor_environment_test.cpp
+    tests/status_attention_test.cpp
   )
   lemma_internal_target(lemma_unit_tests)
   target_link_libraries(
@@ -422,6 +428,7 @@ if(LEMMA_BUILD_TESTS)
       lemma_input
       lemma_protocol
       lemma_runtime
+      lemma_ui_attention
       GTest::gtest_main
       GTest::gmock
   )

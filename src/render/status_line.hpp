@@ -15,11 +15,14 @@ namespace lemma::render {
 
 inline constexpr std::size_t status_tabs_max = 16;
 inline constexpr std::size_t status_context_bytes_max = limits::search_query_bytes_max + 64U;
+inline constexpr std::size_t status_attention_bytes_max = 12;
 
 struct StatusTab final {
   std::uint16_t number{0};
   std::string_view title;
   bool active{false};
+  // Printable ASCII drawn emphasized after an inactive Tab's title. The active Tab carries none.
+  std::string_view attention{}; // NOLINT(readability-redundant-member-init)
 };
 
 enum class StatusPromptTarget : std::uint8_t {
