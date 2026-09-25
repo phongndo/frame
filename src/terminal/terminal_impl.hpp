@@ -147,6 +147,8 @@ struct Terminal::Impl final {
   std::array<bool, 12> mirrored_mode_values{};
   GhosttyColorRgb projected_cursor_color{};
   std::uint8_t projected_cursor_code{0};
+  GhosttyRenderStateCursorVisualStyle render_cursor_style{
+      GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK};
   bool render_cursor_blinking{false};
   bool mirrored_modes_valid{false};
   bool mirrored_mouse_modes_valid{false};

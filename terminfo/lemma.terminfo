@@ -1,10 +1,11 @@
 # Lemma's virtual terminal, not the terminal hosting an attached client.
 # The base matches the existing xterm-compatible Ghostty input/VT contract.
-# Cursor shape and application clipboard capabilities are intentionally absent
-# until the native presentation/clipboard policy supports those contracts.
+# Cursor shape (Ss/Se) and color (Cs/Cr) are inherited because Lemma presents
+# the focused Pane's canonical cursor. Application clipboard writes remain absent
+# until the native clipboard policy supports that contract.
 lemma|Lemma terminal multiplexer,
 	Tc, RGB,
-	Ss@, Se@, Cs@, Cr@, Ms@,
+	Ms@,
 	Smulx=\E[4:%p1%dm,
 	Setulc=\E[58:2::%p1%{65536}%/%d:%p1%{256}%/%{255}%&%d:%p1%{255}%&%dm,
 	use=xterm-256color,

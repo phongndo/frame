@@ -733,8 +733,7 @@ TEST(PaneCompositionTest, ProjectsOuterMouseModesOnlyWhenTheyChange) {
   const auto changed_text = as_text(std::span(output).first(changed->bytes));
   EXPECT_THAT(changed_text, testing::HasSubstr("\x1B[?1003h"));
   EXPECT_THAT(changed_text, testing::HasSubstr("\x1B[?2004h"));
-  EXPECT_THAT(changed_text, testing::HasSubstr("\x1B[1 q"));
-  EXPECT_THAT(changed_text, testing::Not(testing::HasSubstr("\x1B[5 q")));
+  EXPECT_THAT(changed_text, testing::HasSubstr("\x1B[5 q"));
 }
 
 TEST(PaneCompositionTest, DrawsDeclaredPaneSeparators) {
@@ -1284,6 +1283,33 @@ public:
   std::array<std::byte, 8192> output{};
   std::optional<OuterModeProjection> modes;
 };
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(PaneCursorOcclusionTest, FocusedSurfaceBlockYieldsToPaneCursorShape) {
+  write_text(child, "\x1b[6 q");
+  GridPatch cursor;
+  cursor.cursor = GridCursor{.column = 1, .visible = true};
+  ASSERT_TRUE(grid.apply(std::move(cursor)).has_value());
+  const auto present = [this](const bool surface_focused, const bool full) {
+    pane.focused = !surface_focused;
+    grids.front().focused = surface_focused;
+    const auto composed = compose_scene({.panes = std::span(&pane, 1), .grids = grids},
+                                        {.columns = 12, .rows = 5}, output, full, {}, modes);
+    EXPECT_TRUE(composed.has_value());
+    modes = composed.value_or(CompositionResult{}).outer_modes;
+    oracle.write(std::span(output).first(composed.value_or(CompositionResult{}).bytes));
+    oracle.invalidate_ansi_render_state();
+    const auto projected = oracle.render_ansi(output, true);
+    EXPECT_TRUE(projected.has_value());
+    return std::string(as_text(std::span(output).first(projected.value_or({}).bytes)));
+  };
+
+  EXPECT_THAT(present(false, true), testing::HasSubstr("\x1b[6 q"));
+  EXPECT_THAT(present(true, false), testing::HasSubstr("\x1b[2 q"));
+  EXPECT_THAT(present(true, false), testing::HasSubstr("\x1b[2 q"));
+  EXPECT_THAT(present(false, false), testing::HasSubstr("\x1b[6 q"));
+}
 
 TEST_F(PaneCursorOcclusionTest, OpaquePartialOverlayHidesCursorWithoutTakingFocus) {
   frame(true, false, 6, 2, "ijkTOPop");

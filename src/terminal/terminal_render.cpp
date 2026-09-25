@@ -375,6 +375,28 @@ struct SelectedColumns final {
          writer.append_integer(color.blue);
 }
 
+constexpr std::uint8_t decscusr_steady_block = 2;
+
+// DECSCUSR pairs each shape as blinking/steady: block 1/2, underline 3/4, bar 5/6. A hollow block
+// is an emulator default rather than a DECSCUSR shape; present it as the nearest outer block.
+[[nodiscard]] constexpr auto decscusr_code(const GhosttyRenderStateCursorVisualStyle style,
+                                           const bool blinking) noexcept -> std::uint8_t {
+  const auto steady = [style]() noexcept -> std::uint8_t {
+    switch (style) {
+    case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE:
+      return 4;
+    case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR:
+      return 6;
+    case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK:
+    case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW:
+    case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_MAX_VALUE:
+      break;
+    }
+    return decscusr_steady_block;
+  }();
+  return blinking ? static_cast<std::uint8_t>(steady - 1U) : steady;
+}
+
 [[nodiscard]] auto append_cursor_color(AnsiWriter& writer, const GhosttyColorRgb color,
                                        const RgbColor configured) noexcept -> bool {
   if (same_color(color, configured)) {
@@ -733,6 +755,7 @@ private:
   update.cursor_in_viewport = cursor.viewport_has_value;
   update.cursor_column = cursor.viewport_has_value ? cursor.viewport_x : std::uint16_t{0};
   update.cursor_row = cursor.viewport_has_value ? cursor.viewport_y : std::uint16_t{0};
+  render_cursor_style = cursor.visual_style;
   render_cursor_blinking = cursor.blinking;
   return {};
 }
@@ -1201,8 +1224,10 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
     return std::unexpected(Error::out_of_space);
   }
   if (!composed || focused) {
-    const bool cursor_blinking = !cursor_override && impl_->render_cursor_blinking;
-    const auto cursor_code = static_cast<std::uint8_t>(cursor_blinking ? 1U : 2U);
+    // Native copy-mode cursors use Lemma's steady block; child cursors keep their DECSCUSR shape.
+    const auto cursor_code =
+        cursor_override ? decscusr_steady_block
+                        : decscusr_code(impl_->render_cursor_style, impl_->render_cursor_blinking);
     const auto cursor_color = impl_->render_colors.cursor_has_value
                                   ? impl_->render_colors.cursor
                                   : impl_->render_colors.foreground;
