@@ -82,6 +82,8 @@ struct Terminal::Impl final {
                                    const GhosttyTerminalDesktopNotification* notification) noexcept;
   static void progress_report(GhosttyTerminal terminal_handle, void* userdata,
                               const GhosttyTerminalProgressReport* report) noexcept;
+  static void semantic_prompt(GhosttyTerminal terminal_handle, void* userdata,
+                              const GhosttyTerminalSemanticPrompt* prompt) noexcept;
   static void unknown_sequence(GhosttyTerminal terminal_handle, void* userdata,
                                const GhosttyTerminalUnknownSequence* sequence) noexcept;
   static auto enquiry(GhosttyTerminal terminal_handle, void* userdata) noexcept -> GhosttyString;
@@ -174,6 +176,7 @@ struct Terminal::Impl final {
   std::vector<std::byte> pty_responses;
   std::size_t pty_response_offset{0};
   EffectBatch effects{};
+  TerminalSignals signals{};
   std::unique_ptr<ClipboardPending> clipboard;
   std::vector<std::byte> clipboard_responses;
   std::size_t clipboard_response_offset{0};

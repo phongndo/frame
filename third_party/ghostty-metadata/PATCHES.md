@@ -66,6 +66,26 @@ store source is modified.
 - Removal condition: upstream exposes native placeholder projection and animation deadlines, and
   Lemma's graphics regressions pass using those interfaces without the patch.
 
+## Semantic prompt command transitions
+
+- Patch: [`patches/semantic-prompt.patch`](patches/semantic-prompt.patch).
+- Affected/revalidated pin: `b0c421fcd2e290629d4285c181b52fe2f2095f06`.
+- Upstream tracking: none. The maintainer explicitly approved this local patch without an upstream
+  issue or PR.
+- Reason: the C API exposes OSC 133 only as per-row/cursor prompt state. Command start and the
+  OSC 133;D exit status, which Ghostty already parses, are otherwise discarded, and Lemma must not
+  reparse PTY bytes as a second VT authority to expose them as Pane signals.
+- Behavior: an additive `ghostty_terminal_set_semantic_prompt_callback` installs a callback that
+  receives each parsed OSC 133 action and its optional exit code after Ghostty applies the command
+  to terminal state, including when that application fails. Terminal state, parser behavior,
+  child-visible capabilities, allocation, and existing callbacks are unchanged; no option enum value
+  is added.
+- Regression coverage: `TerminalTest.ReportsSemanticPromptCommandStateThroughLocalHook` and the
+  extension-runtime `pane.signal` mux test.
+- Owner: Lemma terminal maintainers.
+- Removal condition: upstream exposes semantic prompt command transitions with exit status through
+  the C API, and the regressions pass using that interface without this patch.
+
 ## Requirements for future patches
 
 Record each patch before applying it, including the affected commit and patch file, upstream issue

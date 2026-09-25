@@ -1,0 +1,244 @@
+--- a/include/ghostty/vt/terminal.h
++++ b/include/ghostty/vt/terminal.h
+@@ -938,6 +938,76 @@
+     const GhosttyTerminalProgressReport* report);
+ 
+ /**
++ * Lemma extension: literal OSC 133 semantic prompt action.
++ *
++ * @ingroup terminal
++ */
++typedef enum GHOSTTY_ENUM_TYPED {
++  /** OSC 133;L fresh line. */
++  GHOSTTY_TERMINAL_SEMANTIC_PROMPT_FRESH_LINE = 0,
++  /** OSC 133;A fresh line and new prompt. */
++  GHOSTTY_TERMINAL_SEMANTIC_PROMPT_NEW_PROMPT = 1,
++  /** OSC 133;N new command. */
++  GHOSTTY_TERMINAL_SEMANTIC_PROMPT_NEW_COMMAND = 2,
++  /** OSC 133;P prompt start. */
++  GHOSTTY_TERMINAL_SEMANTIC_PROMPT_PROMPT_START = 3,
++  /** OSC 133;B end of prompt, start of input. */
++  GHOSTTY_TERMINAL_SEMANTIC_PROMPT_INPUT_START = 4,
++  /** OSC 133;I end of prompt, start of input terminated by end of line. */
++  GHOSTTY_TERMINAL_SEMANTIC_PROMPT_INPUT_START_EOL = 5,
++  /** OSC 133;C end of input, start of command output. */
++  GHOSTTY_TERMINAL_SEMANTIC_PROMPT_OUTPUT_START = 6,
++  /** OSC 133;D end of command. */
++  GHOSTTY_TERMINAL_SEMANTIC_PROMPT_COMMAND_END = 7,
++  GHOSTTY_TERMINAL_SEMANTIC_PROMPT_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
++} GhosttyTerminalSemanticPromptAction;
++
++/**
++ * Lemma extension: one parsed OSC 133 semantic prompt command.
++ *
++ * This is a sized struct. `has_exit_code` is true only for an end-of-command
++ * action whose first option is a decimal exit status.
++ *
++ * @ingroup terminal
++ */
++typedef struct {
++  /** Size of this struct in bytes. */
++  size_t size;
++
++  /** Literal action reported by the running program. */
++  GhosttyTerminalSemanticPromptAction action;
++
++  /** True when exit_code was reported. */
++  bool has_exit_code;
++
++  /** Reported command exit status. */
++  int32_t exit_code;
++} GhosttyTerminalSemanticPrompt;
++
++/**
++ * Lemma extension: callback for OSC 133 semantic prompt commands.
++ *
++ * Called synchronously after the terminal applies the command to its own
++ * state, including when that application fails. Terminal state changes are
++ * unchanged by installing this callback.
++ *
++ * @ingroup terminal
++ */
++typedef void (*GhosttyTerminalSemanticPromptFn)(
++    GhosttyTerminal terminal,
++    void* userdata,
++    const GhosttyTerminalSemanticPrompt* prompt);
++
++/**
++ * Lemma extension: install or clear (NULL) the semantic prompt callback.
++ * Uses the userdata set via GHOSTTY_TERMINAL_OPT_USERDATA.
++ *
++ * @ingroup terminal
++ */
++GHOSTTY_API GhosttyResult ghostty_terminal_set_semantic_prompt_callback(
++    GhosttyTerminal terminal, GhosttyTerminalSemanticPromptFn callback);
++
++/**
+  * Callback function type for color scheme queries (CSI ? 996 n).
+  *
+  * Called when the terminal receives a color scheme device status report
+--- a/src/lib_vt.zig
++++ b/src/lib_vt.zig
+@@ -322,6 +322,7 @@
+         @export(&c.terminal_reset, .{ .name = "ghostty_terminal_reset" });
+         @export(&c.terminal_resize, .{ .name = "ghostty_terminal_resize" });
+         @export(&c.terminal_set, .{ .name = "ghostty_terminal_set" });
++        @export(&c.terminal_set_semantic_prompt_callback, .{ .name = "ghostty_terminal_set_semantic_prompt_callback" });
+         @export(&c.terminal_vt_write, .{ .name = "ghostty_terminal_vt_write" });
+         @export(&c.terminal_vt_write_until_ground, .{ .name = "ghostty_terminal_vt_write_until_ground" });
+         @export(&c.terminal_scroll_viewport, .{ .name = "ghostty_terminal_scroll_viewport" });
+--- a/src/terminal/c/main.zig
++++ b/src/terminal/c/main.zig
+@@ -190,6 +190,7 @@
+ pub const terminal_reset = terminal.reset;
+ pub const terminal_resize = terminal.resize;
+ pub const terminal_set = terminal.set;
++pub const terminal_set_semantic_prompt_callback = terminal.set_semantic_prompt_callback;
+ pub const terminal_vt_write = terminal.vt_write;
+ pub const terminal_vt_write_until_ground = terminal.vt_write_until_ground;
+ pub const terminal_scroll_viewport = terminal.scroll_viewport;
+--- a/src/terminal/c/terminal.zig
++++ b/src/terminal/c/terminal.zig
+@@ -223,6 +223,27 @@
+     progress: i8,
+ };
+ 
++/// Lemma extension. C: GhosttyTerminalSemanticPromptAction
++pub const SemanticPromptAction = enum(c_int) {
++    fresh_line = 0,
++    new_prompt = 1,
++    new_command = 2,
++    prompt_start = 3,
++    input_start = 4,
++    input_start_eol = 5,
++    output_start = 6,
++    command_end = 7,
++    _,
++};
++
++/// Lemma extension. C: GhosttyTerminalSemanticPrompt
++pub const SemanticPrompt = extern struct {
++    size: usize,
++    action: SemanticPromptAction,
++    has_exit_code: bool,
++    exit_code: i32,
++};
++
+ /// A borrowed unsupported string sequence.
+ ///
+ /// C: GhosttyTerminalUnknownStringSequence
+@@ -287,6 +308,7 @@
+     pwd_changed: ?PwdChangedFn = null,
+     progress_report: ?ProgressReportFn = null,
+     size_cb: ?SizeFn = null,
++    semantic_prompt: ?SemanticPromptFn = null,
+     clipboard_write: ?ClipboardWriteFn = null,
+     clipboard_read: ?ClipboardReadFn = null,
+     unknown_sequence: ?UnknownSequenceFn = null,
+@@ -343,6 +365,9 @@
+     /// C function pointer type for the progress_report callback.
+     pub const ProgressReportFn = *const fn (Terminal, ?*anyopaque, *const ProgressReport) callconv(lib.calling_conv) void;
+ 
++    /// Lemma extension: C function pointer type for the semantic_prompt callback.
++    pub const SemanticPromptFn = *const fn (Terminal, ?*anyopaque, *const SemanticPrompt) callconv(lib.calling_conv) void;
++
+     /// C function pointer type for the unknown_sequence callback. The request
+     /// and its content are borrowed for the callback duration.
+     pub const UnknownSequenceFn = *const fn (Terminal, ?*anyopaque, *const UnknownSequence.C) callconv(lib.calling_conv) void;
+@@ -652,6 +677,34 @@
+         func(@ptrCast(wrapper), wrapper.effects.userdata, &c_report);
+     }
+ 
++    fn semanticPromptTrampoline(
++        handler: *Handler,
++        command: osc.Command.SemanticPrompt,
++    ) void {
++        const wrapper = TerminalWrapper.fromHandler(handler);
++        const func = wrapper.effects.semantic_prompt orelse return;
++        const exit_code: ?i32 = if (command.action == .end_command)
++            command.readOption(.exit_code)
++        else
++            null;
++        const c_prompt: SemanticPrompt = .{
++            .size = @sizeOf(SemanticPrompt),
++            .action = switch (command.action) {
++                .fresh_line => .fresh_line,
++                .fresh_line_new_prompt => .new_prompt,
++                .new_command => .new_command,
++                .prompt_start => .prompt_start,
++                .end_prompt_start_input => .input_start,
++                .end_prompt_start_input_terminate_eol => .input_start_eol,
++                .end_input_start_output => .output_start,
++                .end_command => .command_end,
++            },
++            .has_exit_code = exit_code != null,
++            .exit_code = exit_code orelse 0,
++        };
++        func(@ptrCast(wrapper), wrapper.effects.userdata, &c_prompt);
++    }
++
+     fn unknownSequenceTrampoline(
+         handler: *Handler,
+         sequence: Handler.UnknownSequence,
+@@ -780,6 +833,16 @@
+ /// C: GhosttyTerminal
+ pub const Terminal = ?*TerminalWrapper;
+ 
++/// Lemma extension: install or clear the OSC 133 semantic prompt callback.
++pub fn set_semantic_prompt_callback(
++    terminal_: Terminal,
++    callback: ?Effects.SemanticPromptFn,
++) callconv(lib.calling_conv) Result {
++    const wrapper = terminal_ orelse return .invalid_value;
++    wrapper.effects.semantic_prompt = callback;
++    return .success;
++}
++
+ /// C: GhosttyTerminalCompressionMode
+ pub const CompressionMode = ZigTerminal.CompressionMode;
+ 
+@@ -817,6 +880,7 @@
+         .pwd_changed = &Effects.pwdChangedTrampoline,
+         .progress_report = &Effects.progressReportTrampoline,
+         .size = &Effects.sizeTrampoline,
++        .semantic_prompt = &Effects.semanticPromptTrampoline,
+ 
+         // Installed dynamically when the callback is set; see Effects.
+         .clipboard_write = null,
+--- a/src/terminal/stream_terminal.zig
++++ b/src/terminal/stream_terminal.zig
+@@ -166,6 +166,10 @@
+         /// Called when the running program reports progress via OSC 9;4.
+         progress_report: ?*const fn (*Handler, osc.Command.ProgressReport) void,
+ 
++        /// Lemma extension: called after an OSC 133 semantic prompt command
++        /// is applied to terminal state, including when application fails.
++        semantic_prompt: ?*const fn (*Handler, osc.Command.SemanticPrompt) void = null,
++
+         /// Called when the running program writes to a clipboard.
+         clipboard_write: ?*const fn (*Handler, clipboard.Write) void,
+ 
+@@ -462,7 +466,10 @@
+             },
+             .start_hyperlink => try self.terminal.screens.active.startHyperlink(value.uri, value.id),
+             .end_hyperlink => self.terminal.screens.active.endHyperlink(),
+-            .semantic_prompt => try self.terminal.semanticPrompt(value),
++            .semantic_prompt => {
++                defer self.semanticPrompt(value);
++                try self.terminal.semanticPrompt(value);
++            },
+             .mouse_shape => self.terminal.mouse_shape = value,
+             .color_operation => self.colorOperation(
+                 &value.requests,
+@@ -626,6 +633,11 @@
+         func(self, report);
+     }
+ 
++    fn semanticPrompt(self: *Handler, command: osc.Command.SemanticPrompt) void {
++        const func = self.effects.semantic_prompt orelse return;
++        func(self, command);
++    }
++
+     fn clipboardContents(
+         self: *Handler,
+         kind: u8,
