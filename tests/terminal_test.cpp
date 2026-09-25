@@ -347,7 +347,19 @@ TEST(TerminalTest, ReleasedRenderCacheRebuildsTheSameFullFrame) {
   ASSERT_TRUE(expected_frame.has_value());
   ASSERT_TRUE(rebuilt_frame.has_value());
   EXPECT_TRUE(rebuilt_frame->full);
+  EXPECT_EQ(rebuilt_frame->encoded_rows, options.size.rows);
   EXPECT_TRUE(std::ranges::equal(std::span(rebuilt).first(rebuilt_frame->bytes),
+                                 std::span(expected).first(expected_frame->bytes)));
+
+  // Releasing an unchanged pane must not let unchanged-row skipping reuse the stale physical
+  // state: presenting it again re-encodes every row and reproduces the same frame.
+  terminal.release_render_cache();
+  std::array<std::byte, std::size_t{16} * 1'024U> represented{};
+  const auto represented_frame = terminal.render_ansi(represented);
+  ASSERT_TRUE(represented_frame.has_value());
+  EXPECT_TRUE(represented_frame->full);
+  EXPECT_EQ(represented_frame->encoded_rows, options.size.rows);
+  EXPECT_TRUE(std::ranges::equal(std::span(represented).first(represented_frame->bytes),
                                  std::span(expected).first(expected_frame->bytes)));
 }
 
@@ -378,6 +390,7 @@ TEST(TerminalTest, ReleasedRenderCacheIsRebuiltAtTheResizedGeometry) {
   ASSERT_TRUE(rebuilt_frame.has_value());
   EXPECT_TRUE(rebuilt_frame->full);
   EXPECT_EQ(rebuilt_frame->rows, grown.rows);
+  EXPECT_EQ(rebuilt_frame->encoded_rows, grown.rows);
   EXPECT_TRUE(std::ranges::equal(std::span(rebuilt).first(rebuilt_frame->bytes),
                                  std::span(expected).first(expected_frame->bytes)));
 
