@@ -510,6 +510,88 @@ TEST(TerminalTest, ScrollHashPassSkipsRowsAlreadyMatchingPhysicalState) {
   EXPECT_THAT(encoded, testing::HasSubstr("\x1B[3;1H\x1B[0mnext"));
 }
 
+TEST(TerminalTest, RedrawWithoutTerminalScrollSkipsUnchangedPlainRows) {
+  TerminalOptions options;
+  options.size = {.columns = 20, .rows = 4};
+  auto terminal = make_terminal(options);
+  write_text(terminal, "same\r\nsame\r\nsame\r\n");
+
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  ASSERT_TRUE(terminal.render_pane_ansi(output, {.force_full = true, .focused = true}).has_value());
+  // A pane that cannot scroll the terminal redraws every dirty row. Identical output lines leave
+  // all but one row unchanged, and plain rows prove that without visiting their cells.
+  write_text(terminal, "same\r\n");
+  const auto repeated = terminal.render_pane_ansi(output, {.focused = true});
+  ASSERT_TRUE(repeated.has_value());
+  EXPECT_EQ(repeated->scrolled_rows, 0);
+  EXPECT_EQ(repeated->rows, 0U);
+  EXPECT_EQ(repeated->encoded_rows, 0U);
+
+  write_text(terminal, "next\r\n");
+  const auto changed = terminal.render_pane_ansi(output, {.focused = true});
+  ASSERT_TRUE(changed.has_value());
+  EXPECT_EQ(changed->rows, 1U);
+  EXPECT_EQ(changed->encoded_rows, 1U);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const std::string_view encoded(reinterpret_cast<const char*>(output.data()), changed->bytes);
+  EXPECT_THAT(encoded, testing::HasSubstr("\x1B[3;1H\x1B[0mnext"));
+}
+
+TEST(TerminalTest, ScrollDetectionMatchesPlainAndStyledRowsTogether) {
+  TerminalOptions options;
+  options.size = {.columns = 12, .rows = 4};
+  auto canonical = make_terminal(options);
+  auto projected = make_terminal(options);
+  // Plain rows are fingerprinted from raw cells and styled rows from decoded cells; one scroll must
+  // align both kinds, and only the new row may be encoded.
+  write_text(canonical,
+             "plain-one\r\n\x1B[1;31mstyled\x1B[0m-two\r\nplain-three\r\n\x1B[44mfour\x1B[0m");
+
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  const auto initial = canonical.render_ansi(output, true);
+  ASSERT_TRUE(initial.has_value());
+  projected.write(std::span(output).first(initial->bytes));
+
+  write_text(canonical, "\r\nplain-five");
+  const auto changed = canonical.render_ansi(output);
+  ASSERT_TRUE(changed.has_value());
+  EXPECT_EQ(changed->scrolled_rows, 1);
+  EXPECT_EQ(changed->encoded_rows, 1U);
+  EXPECT_EQ(changed->rows, 1U);
+  projected.write(std::span(output).first(changed->bytes));
+
+  canonical.invalidate_ansi_render_state();
+  projected.invalidate_ansi_render_state();
+  std::array<std::byte, std::size_t{16} * 1'024U> canonical_output{};
+  std::array<std::byte, std::size_t{16} * 1'024U> projected_output{};
+  const auto canonical_full = canonical.render_ansi(canonical_output, true);
+  const auto projected_full = projected.render_ansi(projected_output, true);
+  ASSERT_TRUE(canonical_full.has_value());
+  ASSERT_TRUE(projected_full.has_value());
+  EXPECT_TRUE(std::ranges::equal(std::span(canonical_output).first(canonical_full->bytes),
+                                 std::span(projected_output).first(projected_full->bytes)));
+}
+
+TEST(TerminalTest, PlainRowsRepaintWhenTheirProjectedColorsChange) {
+  TerminalOptions options;
+  options.size = {.columns = 6, .rows = 4};
+  auto terminal = make_terminal(options);
+  // Erasing with a background leaves unstyled background-color cells whose raw values name a
+  // palette entry. Their raw values do not change when that entry does, but their projection must.
+  write_text(terminal, "\x1B[41m\x1B[2K\x1B[0m\r\nplain\r\nrows\r\nhere");
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  ASSERT_TRUE(terminal.render_ansi(output, true).has_value());
+
+  write_text(terminal, "\x1B]4;1;rgb:0a/14/1e\x1B\\");
+  const auto recolored = terminal.render_ansi(output);
+  ASSERT_TRUE(recolored.has_value());
+  EXPECT_EQ(recolored->scrolled_rows, 0);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const std::string_view encoded(reinterpret_cast<const char*>(output.data()), recolored->bytes);
+  EXPECT_THAT(encoded, testing::HasSubstr("48;2;10;20;30"));
+  EXPECT_THAT(encoded, testing::Not(testing::HasSubstr("plain")));
+}
+
 TEST(TerminalTest, ScrollDetectionHashesCompleteGraphemes) {
   TerminalOptions options;
   options.size = {.columns = 2, .rows = 4};

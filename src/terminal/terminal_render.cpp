@@ -477,6 +477,53 @@ static_assert(fingerprint_initial != fingerprint_state_secret &&
   return static_cast<std::uint64_t>(product) ^ static_cast<std::uint64_t>(product >> 64U);
 }
 
+// A plain row (see RowCellDecoder::plain) projects as a function of its raw cells and the frame's
+// colors and theme alone, so its fingerprint folds the raw values instead of decoding every cell:
+// a scroll frame then costs a few multiplies per unchanged cell rather than a full decode. Plain
+// and decoded fingerprints use distinct seeds, and the color epoch retires plain fingerprints taken
+// under other colors. Rows that render alike but differ in raw metadata (for example
+// semantic-prompt bits) or in plainness compare unequal; that can only turn a terminal scroll into
+// row repaints. Four independent lanes keep the multiply chain off the per-cell critical path.
+// Column c folds into lane c % 4, so the whole-row and cell-by-cell forms agree.
+class PlainRowFingerprint final {
+public:
+  void add(const std::size_t column, const GhosttyCell raw) noexcept {
+    auto& lane = std::span(lanes_).subspan(column % lanes_.size(), 1).front();
+    lane = fingerprint_mix(lane, raw);
+  }
+
+  [[nodiscard]] auto finish(const std::size_t columns,
+                            const std::uint64_t color_epoch) const noexcept -> std::uint64_t {
+    const auto [first, second, third, fourth] = lanes_;
+    auto hash = fingerprint_mix(fingerprint_mix(first, second), fingerprint_mix(third, fourth));
+    hash = fingerprint_mix(hash, columns);
+    return fingerprint_mix(hash, color_epoch);
+  }
+
+  [[nodiscard]] static auto of(const std::span<const GhosttyCell> cells,
+                               const std::uint64_t color_epoch) noexcept -> std::uint64_t {
+    PlainRowFingerprint fingerprint;
+    auto [first, second, third, fourth] = fingerprint.lanes_;
+    const auto whole = cells.size() - (cells.size() % fingerprint.lanes_.size());
+    // Named lanes stay in registers; the per-cell form is used where decoding dominates anyway.
+    for (std::size_t column = 0; column < whole; column += fingerprint.lanes_.size()) {
+      first = fingerprint_mix(first, cells.subspan(column, 1).front());
+      second = fingerprint_mix(second, cells.subspan(column + 1U, 1).front());
+      third = fingerprint_mix(third, cells.subspan(column + 2U, 1).front());
+      fourth = fingerprint_mix(fourth, cells.subspan(column + 3U, 1).front());
+    }
+    fingerprint.lanes_ = {first, second, third, fourth};
+    for (std::size_t column = whole; column < cells.size(); ++column) {
+      fingerprint.add(column, cells.subspan(column, 1).front());
+    }
+    return fingerprint.finish(cells.size(), color_epoch);
+  }
+
+private:
+  std::array<std::uint64_t, 4> lanes_{0x1D8E'4E27'C47D'124FULL, 0x9C0F'3A53'5E2B'64B1ULL,
+                                      0x5A0B'C8D7'0E71'98C3ULL, 0xE703'7ED1'A0B4'28DBULL};
+};
+
 [[nodiscard]] constexpr auto color_word(const AnsiColor& color) noexcept -> std::uint64_t {
   return static_cast<std::uint64_t>(color.tag) | (static_cast<std::uint64_t>(color.index) << 8U) |
          (static_cast<std::uint64_t>(color.red) << 16U) |
@@ -580,8 +627,13 @@ public:
     if (!selection.has_value()) {
       return std::unexpected(selection.error());
     }
+    const auto plain = plain_row(row, *selection);
+    if (!plain.has_value()) {
+      return std::unexpected(plain.error());
+    }
     raw_ = std::span(view.ptr, view.len);
     selection_ = *selection;
+    plain_ = *plain;
     cursor_.reset(cells);
     // Style IDs are page-local; never carry a projection into another row.
     styles_ = {};
@@ -590,6 +642,11 @@ public:
   }
 
   [[nodiscard]] auto columns() const noexcept -> std::size_t { return raw_.size(); }
+  [[nodiscard]] auto raw() const noexcept -> std::span<const GhosttyCell> { return raw_; }
+  // Ghostty's row flags have no false negatives: without styled or grapheme cells, every cell uses
+  // style ID 0 and keeps its complete content in the raw value. Without selection, nothing else
+  // row-specific enters its projection.
+  [[nodiscard]] auto plain() const noexcept -> bool { return plain_; }
 
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] auto decode(const std::size_t column) noexcept
@@ -641,6 +698,29 @@ public:
   }
 
 private:
+  [[nodiscard]] static auto plain_row(const GhosttyRenderStateRowIterator row,
+                                      const SelectedColumns selection) noexcept
+      -> std::expected<bool, Error> {
+    if (selection.begin != selection.end) {
+      return false;
+    }
+    GhosttyRow raw_row = 0;
+    auto result = ghostty_render_state_row_get(row, GHOSTTY_RENDER_STATE_ROW_DATA_RAW, &raw_row);
+    if (result != GHOSTTY_SUCCESS) {
+      return std::unexpected(detail::map_error(result));
+    }
+    // Most redrawn rows of styled applications are styled; ask for graphemes only when needed.
+    bool flag = true;
+    result = ghostty_row_get(raw_row, GHOSTTY_ROW_DATA_STYLED, &flag);
+    if (result == GHOSTTY_SUCCESS && !flag) {
+      result = ghostty_row_get(raw_row, GHOSTTY_ROW_DATA_GRAPHEME, &flag);
+    }
+    if (result != GHOSTTY_SUCCESS) {
+      return std::unexpected(detail::map_error(result));
+    }
+    return !flag;
+  }
+
   [[nodiscard]] auto graphemes(const std::size_t column, const GhosttyCellContentTag content_tag,
                                const std::uint32_t codepoint) noexcept
       -> std::expected<std::span<const std::uint8_t>, Error> {
@@ -677,6 +757,7 @@ private:
   const TerminalTheme* theme_;
   std::span<const GhosttyCell> raw_;
   SelectedColumns selection_{};
+  bool plain_{false};
   RowCellCursor cursor_;
   RowStyleProjection styles_;
   RenderedCellHasher hasher_;
@@ -786,6 +867,9 @@ private:
     return std::unexpected(opened.error());
   }
   LEMMA_ASSERT(decoder.columns() == options.size.columns);
+  if (decoder.plain()) {
+    return PlainRowFingerprint::of(decoder.raw(), plain_row_color_epoch);
+  }
   std::uint64_t row_hash = fingerprint_initial;
   for (std::size_t column = 0; column < decoder.columns(); ++column) {
     const auto decoded = decoder.decode(column);
@@ -842,12 +926,12 @@ void Terminal::Impl::apply_physical_scroll(const std::int32_t scroll) noexcept {
 }
 
 // Encode the minimal prefix/suffix-differing span while refreshing bounded physical state.
+[[nodiscard]] auto
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] auto Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index,
-                                              const bool force, const std::uint16_t origin_column,
-                                              const std::uint16_t origin_row,
-                                              const bool erase_line_tail) noexcept
-    -> std::expected<bool, Error> {
+Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, const bool force,
+                           const bool probe_unchanged, const std::uint16_t origin_column,
+                           const std::uint16_t origin_row, const bool erase_line_tail) noexcept
+    -> std::expected<detail::RowEncoding, Error> {
   LEMMA_ASSERT(row_index < row_hash_count);
   LEMMA_ASSERT(physical_cell_hashes != nullptr);
   const auto checkpoint = writer.size();
@@ -858,7 +942,18 @@ void Terminal::Impl::apply_physical_scroll(const std::int32_t scroll) noexcept {
   }
   LEMMA_ASSERT(decoder.columns() == options.size.columns);
 
+  const bool plain = decoder.plain();
+  // A redraw marks every row dirty even when most are unchanged, for example when a pane that does
+  // not fill the viewport scrolls identical lines. A plain row proves that without its cells.
+  std::optional<std::uint64_t> probed;
+  if (plain && probe_unchanged && !force) {
+    probed = PlainRowFingerprint::of(decoder.raw(), plain_row_color_epoch);
+    if (*probed == row_hashes().subspan(row_index, 1).front()) {
+      return detail::RowEncoding::matched;
+    }
+  }
   std::uint64_t row_hash = fingerprint_initial;
+  PlainRowFingerprint plain_fingerprint;
   AnsiStyle active_style{};
   bool active_style_valid = false;
   bool span_started = false;
@@ -879,7 +974,11 @@ void Terminal::Impl::apply_physical_scroll(const std::int32_t scroll) noexcept {
     const auto content_tag = cell.content_tag;
     const auto grapheme_bytes = cell.grapheme;
     const auto cell_hash = cell.hash;
-    row_hash = fingerprint_mix(row_hash, cell_hash);
+    if (!plain) {
+      row_hash = fingerprint_mix(row_hash, cell_hash);
+    } else if (!probed.has_value()) {
+      plain_fingerprint.add(cell_count, decoder.raw().subspan(cell_count, 1).front());
+    }
     const auto physical_index = (row_index * options.size.columns) + cell_count;
     LEMMA_ASSERT(physical_index < physical_cell_count);
     auto physical_cells = std::span(physical_cell_hashes.get(), physical_cell_count);
@@ -957,10 +1056,15 @@ void Terminal::Impl::apply_physical_scroll(const std::int32_t scroll) noexcept {
     }
   }
 
+  if (plain) {
+    row_hash = probed.has_value()
+                   ? *probed
+                   : plain_fingerprint.finish(decoder.columns(), plain_row_color_epoch);
+  }
   row_hashes().subspan(row_index, 1).front() = row_hash;
   if (!span_started) {
     LEMMA_ASSERT(writer.size() == checkpoint);
-    return false;
+    return detail::RowEncoding::unchanged;
   }
   if (erase_line_tail && trailing_blank_start != std::numeric_limits<std::size_t>::max() &&
       trailing_blank_changed) {
@@ -984,7 +1088,7 @@ void Terminal::Impl::apply_physical_scroll(const std::int32_t scroll) noexcept {
   } else {
     writer.rewind(changed_end);
   }
-  return true;
+  return detail::RowEncoding::emitted;
 }
 
 auto Terminal::update_render_state() noexcept -> std::expected<RenderUpdate, Error> {
@@ -1134,14 +1238,35 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
   // Cursor/default colors can change without cell damage, so every frame acquires the scalar
   // prefix. Ghostty guarantees palette mutations force redraw; clean frames can therefore avoid
   // copying the 256-entry suffix while retaining the previously acquired palette.
-  impl_->render_colors.size = full || *dirty != DirtyState::clean
-                                  ? sizeof(impl_->render_colors)
-                                  : offsetof(GhosttyRenderStateColors, palette);
+  const bool palette_acquired = full || *dirty != DirtyState::clean;
+  // Only a redraw can carry a palette change, so partial frames need not compare it.
+  const bool palette_may_change = full || *dirty == DirtyState::full;
+  const auto previous_foreground = impl_->render_colors.foreground;
+  const auto previous_background = impl_->render_colors.background;
+  // Only read after being copied below; clearing it would cost every partial frame.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+  std::array<GhosttyColorRgb, std::size(GhosttyRenderStateColors{}.palette)> previous_palette;
+  if (palette_may_change) {
+    std::ranges::copy(impl_->render_colors.palette, previous_palette.begin());
+  }
+  impl_->render_colors.size =
+      palette_acquired ? sizeof(impl_->render_colors) : offsetof(GhosttyRenderStateColors, palette);
   result = ghostty_render_state_get(impl_->render_state, GHOSTTY_RENDER_STATE_DATA_COLORS,
                                     &impl_->render_colors);
   if (result != GHOSTTY_SUCCESS) {
     impl_->ansi_physical_valid = false;
     return std::unexpected(detail::map_error(result));
+  }
+  const auto same_rgb = [](const GhosttyColorRgb left, const GhosttyColorRgb right) noexcept {
+    return left.r == right.r && left.g == right.g && left.b == right.b;
+  };
+  // Default and palette colors are the only frame inputs to a plain cell's projection besides
+  // the theme, whose changes force a full frame that re-encodes every row.
+  if (!same_rgb(previous_foreground, impl_->render_colors.foreground) ||
+      !same_rgb(previous_background, impl_->render_colors.background) ||
+      (palette_may_change &&
+       !std::ranges::equal(previous_palette, impl_->render_colors.palette, same_rgb))) {
+    ++impl_->plain_row_color_epoch;
   }
 
   AnsiWriter writer(output);
@@ -1199,7 +1324,8 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
       // Retained row hashes describe the physical row after any applied scroll. A row whose
       // current hash already matches needs no encoding pass, scrolled or not. Rows are hashed only
       // for incremental frames; a full frame (including the first after a released render cache)
-      // re-encodes every row.
+      // re-encodes every row. A redraw that cannot scroll the terminal instead probes each plain
+      // row the same way inside encode_row.
       const bool row_unchanged =
           rows_hashed && impl_->row_hashes().subspan(row_index, 1).front() ==
                              impl_->current_row_hashes().subspan(row_index, 1).front();
@@ -1207,12 +1333,13 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
         return {};
       }
       const auto encoded =
-          impl_->encode_row(writer, row_index, full, origin_column, origin_row, !composed);
+          impl_->encode_row(writer, row_index, full, !rows_hashed && *dirty == DirtyState::full,
+                            origin_column, origin_row, !composed);
       if (!encoded.has_value()) {
         return std::unexpected(encoded.error());
       }
-      ++encoded_rows;
-      rendered_rows += static_cast<std::size_t>(*encoded);
+      encoded_rows += static_cast<std::size_t>(*encoded != detail::RowEncoding::matched);
+      rendered_rows += static_cast<std::size_t>(*encoded == detail::RowEncoding::emitted);
       return {};
     };
 

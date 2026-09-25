@@ -630,6 +630,104 @@ void benchmark_terminal_ansi_scroll_operations(benchmark::State& state) {
       benchmark::Counter(static_cast<double>(output_bytes), benchmark::Counter::kAvgIterations);
 }
 
+// Streaming command output: every frame scrolls one full-width line of distinct text. Unlike
+// benchmark_terminal_ansi_scroll_operations, rows are dense, so per-cell work is not hidden by
+// repeated blank cells.
+void benchmark_terminal_ansi_text_scroll_frames(benchmark::State& state) {
+  vt::TerminalOptions options;
+  options.size = {.columns = 80, .rows = 24};
+  auto result = vt::Terminal::create(options);
+  if (!result.has_value()) {
+    state.SkipWithError("failed to create terminal");
+    return;
+  }
+  auto terminal = std::move(result).value();
+  constexpr std::string_view alphabet =
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_=+;:,./?!@#$%^&*()[]{}";
+  std::string line;
+  std::size_t sequence = 0;
+  const auto write_line = [&]() {
+    line.assign("\r\n");
+    for (std::size_t column = 0; column < 79; ++column) {
+      line.push_back(alphabet.at((sequence + (column * 7U)) % alphabet.size()));
+    }
+    ++sequence;
+    terminal.write(std::as_bytes(std::span(line.data(), line.size())));
+  };
+  for (std::size_t row = 0; row < 24; ++row) {
+    write_line();
+  }
+  std::array<std::byte, std::size_t{256} * 1'024U> frame{};
+  if (!terminal.render_ansi(frame, true).has_value()) {
+    state.SkipWithError("failed to render initial frame");
+    return;
+  }
+  std::uint64_t output_bytes = 0;
+
+  for ([[maybe_unused]] const auto iteration : state) {
+    write_line();
+    const auto rendered = terminal.render_ansi(frame);
+    if (!rendered.has_value() || rendered->scrolled_rows != 1) {
+      state.SkipWithError("failed to encode text scroll");
+      break;
+    }
+    output_bytes += rendered->bytes;
+  }
+  state.counters["frame_bytes"] =
+      benchmark::Counter(static_cast<double>(output_bytes), benchmark::Counter::kAvgIterations);
+}
+
+// A focused 80x23 pane above the native status row, as in the interactive-under-output workload:
+// the pane does not fill the viewport, so its output cannot use a terminal scroll and each frame
+// is a redraw of every row. Argument 0 repeats one line (the workload's background output);
+// argument 1 writes distinct lines, which repaint the whole pane.
+void benchmark_terminal_pane_output_frames(benchmark::State& state) {
+  const bool distinct = state.range(0) != 0;
+  vt::TerminalOptions options;
+  options.size = {.columns = 80, .rows = 23};
+  auto result = vt::Terminal::create(options);
+  if (!result.has_value()) {
+    state.SkipWithError("failed to create terminal");
+    return;
+  }
+  auto terminal = std::move(result).value();
+  constexpr std::string_view alphabet =
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_=+;:,./?!@#$%^&*()[]{}";
+  std::string line;
+  std::size_t sequence = 0;
+  const auto write_line = [&]() {
+    line.clear();
+    for (std::size_t column = 0; column < 79; ++column) {
+      line.push_back(alphabet.at((sequence + (column * 7U)) % alphabet.size()));
+    }
+    line.append("\r\n");
+    sequence += distinct ? 1U : 0U;
+    terminal.write(std::as_bytes(std::span(line.data(), line.size())));
+  };
+  for (std::size_t row = 0; row < 23; ++row) {
+    write_line();
+  }
+  const vt::PaneRenderOptions pane{.force_full = false, .focused = true};
+  std::array<std::byte, std::size_t{256} * 1'024U> frame{};
+  if (!terminal.render_pane_ansi(frame, {.force_full = true, .focused = true}).has_value()) {
+    state.SkipWithError("failed to render initial frame");
+    return;
+  }
+  std::uint64_t output_bytes = 0;
+
+  for ([[maybe_unused]] const auto iteration : state) {
+    write_line();
+    const auto rendered = terminal.render_pane_ansi(frame, pane);
+    if (!rendered.has_value()) {
+      state.SkipWithError("failed to render pane output");
+      break;
+    }
+    output_bytes += rendered->bytes;
+  }
+  state.counters["frame_bytes"] =
+      benchmark::Counter(static_cast<double>(output_bytes), benchmark::Counter::kAvgIterations);
+}
+
 void benchmark_terminal_viewport_wheel_frames(benchmark::State& state) {
   vt::TerminalOptions options;
   options.size = {.columns = 80, .rows = 23};
@@ -915,6 +1013,8 @@ BENCHMARK(benchmark_terminal_ansi_damage_frames);
 BENCHMARK(benchmark_terminal_ansi_single_row);
 BENCHMARK(benchmark_terminal_ansi_clean_frame);
 BENCHMARK(benchmark_terminal_ansi_scroll_operations);
+BENCHMARK(benchmark_terminal_ansi_text_scroll_frames);
+BENCHMARK(benchmark_terminal_pane_output_frames)->Arg(0)->Arg(1);
 BENCHMARK(benchmark_terminal_viewport_wheel_frames);
 BENCHMARK(benchmark_terminal_visible_capture)->Arg(23)->Arg(200);
 BENCHMARK(benchmark_terminal_multiple_panes)->Arg(1)->Arg(4)->Arg(16)->Arg(64);
