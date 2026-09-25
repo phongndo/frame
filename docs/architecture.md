@@ -206,10 +206,12 @@ geometry only after dependent runtime work succeeds. Attached clients also repor
 that geometry follows the connection during Session transfer and participates in native resize.
 
 The client sends an outer-terminal size change immediately. While a window drag continues, it
-coalesces changes into at most one geometry per 16 ms display interval, so daemon reflow work scales
-with drag duration rather than with signal count; the final size follows the last change by at most
-one interval. Pending geometry is always sent before later input from that client, and in-band
-size reports (mode 2048), once observed, take precedence over the PTY size ioctl.
+coalesces SIGWINCH and in-band size reports (mode 2048) into at most one geometry per 16 ms display
+interval; the final size follows the last change by at most one interval. Once observed, in-band
+reports take precedence over the PTY size ioctl. Reflow cost grows with history, so geometry can
+still queue at the daemon. Consecutive queued geometry messages supersede one another, and the
+daemon applies only the newest, as one budgeted step per reactor turn. Pending geometry is sent
+and applied before any later input from the same client.
 
 Kitty image pixels, placements, placeholders, and animation frames stay in Ghostty-owned canonical
 state. The terminal adapter exposes bounded borrowed projections using the

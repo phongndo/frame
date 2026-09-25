@@ -932,8 +932,8 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
     auto observed_size = size;
     bool in_band_geometry = false;
     bool attached = terminal_setup_succeeded;
-    // Sends the latest pending geometry regardless of pacing. Later input calls this first so it
-    // cannot overtake the geometry that the user observed before typing.
+    // Sends the latest pending geometry regardless of pacing. Every forwarded non-geometry host
+    // event calls this first so input cannot overtake the geometry the user observed before it.
     const auto commit_outer_resize = [&]() noexcept {
       if (!outer_resize.pending()) {
         return true;
@@ -1177,13 +1177,11 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
 
       if ((input_events.revents & POLLIN) != 0) {
         // Input observed after a physical resize must not overtake the latest geometry update,
-        // even while pacing would otherwise hold that geometry until the next interval.
+        // even while pacing would otherwise hold that geometry. Batch forwarding commits it before
+        // the first non-geometry event; in-band size reports alone remain paced.
         if (resize_pending != 0) {
           observe_outer_resize();
           resize_wakeup.drain();
-        }
-        if (!commit_outer_resize()) {
-          break;
         }
         const auto bytes_read = ::read(STDIN_FILENO, input.data(), input.size());
         if (bytes_read <= 0) {

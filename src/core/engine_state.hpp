@@ -246,6 +246,16 @@ struct AttachmentRuntime final {
   render::FrameBuffer frame;
   render::GraphicsProjection graphics;
   protocol::CellSize cell_size;
+  // Newest client geometry not yet applied. Consecutive geometry messages supersede one another;
+  // it is applied before the next non-geometry client message, so input still follows it.
+  struct PendingGeometry final {
+    std::optional<protocol::CellSize> cell_size;
+    std::optional<protocol::Dimensions> dimensions;
+    [[nodiscard]] auto pending() const noexcept -> bool {
+      return cell_size.has_value() || dimensions.has_value();
+    }
+  };
+  PendingGeometry pending_geometry;
   protocol::ClientDecoder decoder;
   ClientFrameOutput output;
   PendingClipboardWrite clipboard_write;

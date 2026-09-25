@@ -373,7 +373,7 @@ if(LEMMA_BUILD_TESTS OR LEMMA_BUILD_BENCHMARKS)
 
   add_executable(lemma_test_cli tests/support/cli_main.cpp)
   lemma_internal_target(lemma_test_cli)
-  target_link_libraries(lemma_test_cli PRIVATE lemma_app)
+  target_link_libraries(lemma_test_cli PRIVATE lemma_app lemma_daemon lemma_protocol)
   add_dependencies(lemma_test_cli lemma-ui lemma-config-host lemma-clipboard-host)
 
   add_executable(lemma_test_pty_peer tests/support/pty_peer_main.cpp)
