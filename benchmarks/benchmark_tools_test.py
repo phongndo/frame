@@ -21,6 +21,7 @@ from unittest import mock
 from annotate_micro_report import git_metadata
 from benchmark_manifest import (
     ManifestError,
+    comparison_sampling,
     expected_failure,
     load_manifest,
     suite_workloads,
@@ -39,7 +40,7 @@ from check_regression import (
     validate_comparative_check,
 )
 from compare_mux import main as comparison_main
-from compare_mux import run_subject_workload
+from compare_mux import merge_blocks, run_subject_workload
 from compare_regression import (
     add_comparison,
     profile_values,
@@ -102,6 +103,7 @@ from mux_benchmark import (
 from ownership_census import record_sizes
 from performance_host import validate as validate_host
 from terminal_lab import validate_samples
+from validate_report import ReportError, validate_comparison_report
 
 from tests.support.pty_process import PtyProcess
 
@@ -903,6 +905,147 @@ class ComparisonEvidenceTest(unittest.TestCase):
             self.assertTrue(execution["execution_order"])
             self.assertEqual(execution["seed"], 42)
 
+    def test_sampled_workload_pools_interleaved_bracketed_blocks(self) -> None:
+        manifest = load_manifest()
+        sampled = next(
+            workload
+            for workload in manifest["process_workloads"]
+            if "comparison_sampling" in workload
+        )
+        blocks, scale = comparison_sampling(sampled)
+        self.assertGreater(blocks, 1)
+        calls: list[tuple[str, str, int]] = []
+
+        def fragment(*args: Any) -> dict[str, Any]:
+            _, subject, workload, arguments, _, _ = args
+            repetitions = arguments.repetitions * comparison_sampling(workload)[1]
+            block = sum(1 for call in calls if call[:2] == (subject, workload["id"]))
+            calls.append((subject, workload["id"], repetitions))
+            # Distinct per-block values prove pooling keeps every block's samples.
+            samples = [1_000 * (block + 1)] * repetitions
+            return {
+                "schema": 5,
+                "multiplexer": subject,
+                "repetitions": repetitions,
+                "statistics_valid": {
+                    "p50": True,
+                    "p95": repetitions >= 20,
+                    "p99": repetitions >= 100,
+                },
+                "host_load_average": [0.1, 0.1, 0.1],
+                "maximum_gate_load_average_1m": 4.0,
+                "environment_valid": True,
+                "binaries": {"probe": {"sha256": "0" * 64, "bytes": 1}},
+                "scenario_ids": [workload["id"]],
+                "workloads": {
+                    workload["id"]: {
+                        "status": "completed",
+                        "clock": "steady_clock",
+                        "key_to_outer_bytes": {
+                            "samples_ns": samples,
+                            "p50_ns": samples[0],
+                        },
+                        "workload_cpu": {"block": block},
+                    }
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / "executable"
+            executable.touch()
+            output = root / "comparison.json"
+            arguments = ["compare_mux.py", "--output", str(output)]
+            arguments.extend(["--repetitions", "2"])
+            for name in ("server", "cli", "peer", "probe"):
+                arguments.extend([f"--{name}", str(executable)])
+            with (
+                mock.patch("sys.argv", arguments),
+                mock.patch("compare_mux.resolve_executable", return_value=executable),
+                mock.patch("compare_mux.run_subject_workload", side_effect=fragment),
+                mock.patch("sys.stdout"),
+                mock.patch("sys.stderr"),
+            ):
+                self.assertEqual(comparison_main(), 0)
+            report = json.loads(output.read_text(encoding="utf-8"))
+
+        validate_comparison_report(report, manifest, allow_failures=False)
+        order = [
+            task
+            for task in report["execution_order"]
+            if task["workload"] == sampled["id"]
+        ]
+        multiplexers = {
+            subject for subject in sampled["subjects"] if subject != "direct"
+        }
+        # Each block runs every multiplexer between its two direct controls.
+        subjects = len(multiplexers) + 2
+        self.assertEqual(len(order), blocks * subjects)
+        positions = [
+            index
+            for index, task in enumerate(report["execution_order"])
+            if task["workload"] == sampled["id"] and task["phase"] == "before"
+        ]
+        self.assertGreater(
+            max(positions) - min(positions),
+            (blocks - 1) * subjects,
+            "sampled blocks were not interleaved with other workloads",
+        )
+        for block in range(blocks):
+            tasks = [task for task in order if task["block"] == block]
+            self.assertEqual(
+                (tasks[0]["subject"], tasks[0]["phase"]), ("direct", "before")
+            )
+            self.assertEqual(
+                (tasks[-1]["subject"], tasks[-1]["phase"]), ("direct", "after")
+            )
+            self.assertEqual({task["subject"] for task in tasks[1:-1]}, multiplexers)
+        self.assertTrue(
+            all(
+                repetitions == 2 * (scale if identifier == sampled["id"] else 1)
+                for _, identifier, repetitions in calls
+            )
+        )
+        lemma = next(r for r in report["results"] if r["multiplexer"] == "lemma")
+        self.assertEqual(lemma["repetitions"], 2)
+        pooled = lemma["workloads"][sampled["id"]]
+        self.assertEqual(pooled["repetitions"], 2 * scale * blocks)
+        endpoint = pooled["key_to_outer_bytes"]
+        self.assertEqual(len(endpoint["samples_ns"]), 2 * scale * blocks)
+        self.assertEqual(
+            endpoint["block_p50_ns"], [1_000 * (block + 1) for block in range(blocks)]
+        )
+        self.assertEqual(endpoint["p90_ns"], 1_000 * blocks)
+        self.assertNotIn("workload_cpu", pooled)
+        self.assertEqual(
+            [block["workload_cpu"] for block in pooled["blocks"]],
+            [{"block": block} for block in range(blocks)],
+        )
+        after = report["direct_after_controls"][sampled["id"]]
+        self.assertEqual(
+            len(after["key_to_outer_bytes"]["samples_ns"]), 2 * scale * blocks
+        )
+
+        # Dropping one block's samples cannot validate as a smaller pooled distribution.
+        pooled["repetitions"] -= 2 * scale
+        endpoint["samples_ns"] = endpoint["samples_ns"][2 * scale :]
+        with self.assertRaisesRegex(ReportError, "did not pool every block"):
+            validate_comparison_report(report, manifest, allow_failures=False)
+
+    def test_a_failed_block_fails_the_pooled_workload(self) -> None:
+        completed = {
+            "status": "completed",
+            "key_to_outer_bytes": {"samples_ns": [1, 2], "p50_ns": 1},
+        }
+        failed = {"status": "failed", "error": "PTY write timed out"}
+
+        merged = merge_blocks([completed, failed, completed])
+
+        self.assertEqual(merged["status"], "failed")
+        self.assertEqual(merged["error"], failed["error"])
+        self.assertEqual(merged["completed_blocks"], 2)
+        self.assertEqual(merged["blocks"], [completed, failed, completed])
+
     def test_capture_failure_retains_stderr_without_a_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1278,6 +1421,19 @@ class BenchmarkManifestTest(unittest.TestCase):
             self.assertRaisesRegex(TimeoutError, "no such session"),
         ):
             wait_for_profile_panes(runtime, client, "profile", 2)
+
+    def test_comparison_sampling_is_bounded(self) -> None:
+        for sampling in (
+            {"blocks": 0, "repetition_scale": 10},
+            {"blocks": 8, "repetition_scale": 101},
+            {"blocks": 8},
+        ):
+            manifest = json.loads(
+                Path("benchmarks/workloads.json").read_text(encoding="utf-8")
+            )
+            manifest["process_workloads"][0]["comparison_sampling"] = sampling
+            with self.assertRaisesRegex(ManifestError, "comparison_sampling"):
+                validate_manifest(manifest)
 
     def test_unsupported_reasons_cannot_hide_a_supported_subject(self) -> None:
         manifest = json.loads(

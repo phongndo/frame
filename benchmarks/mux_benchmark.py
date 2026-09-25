@@ -2498,24 +2498,29 @@ def interactive_open_loop(runtime: MuxRuntime, repetitions: int) -> dict[str, An
         )
         client.drain(0.01)
         cpu_before = runtime_resource_snapshot(runtime)
-        completed = subprocess.run(
-            [
-                str(runtime.probe_path),
-                "open-loop",
-                str(client.descriptor),
-                str(receipts.descriptor.fileno()),
-                "OPEN",
-                INTERACTION_LABEL_CODES["OPEN"].decode("ascii"),
-                str(repetitions),
-                "8333",
-                "bounded",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            pass_fds=(client.descriptor, receipts.descriptor.fileno()),
-            timeout=max(30.0, float(repetitions) / 60.0 + 10.0),
-        )
+        try:
+            completed = subprocess.run(
+                [
+                    str(runtime.probe_path),
+                    "open-loop",
+                    str(client.descriptor),
+                    str(receipts.descriptor.fileno()),
+                    "OPEN",
+                    INTERACTION_LABEL_CODES["OPEN"].decode("ascii"),
+                    str(repetitions),
+                    "8333",
+                    "bounded",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                pass_fds=(client.descriptor, receipts.descriptor.fileno()),
+                timeout=max(30.0, float(repetitions) / 60.0 + 10.0),
+            )
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(
+                f"native open-loop probe failed: stderr={error.stderr!r}"
+            ) from error
         try:
             measured = json.loads(completed.stdout)
         except json.JSONDecodeError as error:

@@ -884,6 +884,16 @@ void stop_child(const int descriptor, const pid_t child) noexcept {
     }
   }
   if (completed_pty != repetitions || completed_outer != repetitions) {
+    const auto missing = [](const std::vector<std::uint64_t>& samples) {
+      return std::ranges::find(samples, std::uint64_t{0}) - samples.begin();
+    };
+    constexpr std::size_t diagnostic_bytes = 512U;
+    const auto tail = retained.substr(
+        retained.size() > diagnostic_bytes ? retained.size() - diagnostic_bytes : 0U);
+    std::cerr << "open-loop timeout: sent=" << sent << " pty=" << completed_pty
+              << " outer=" << completed_outer << " first_missing_pty=" << missing(key_to_pty)
+              << " first_missing_outer=" << missing(key_to_outer_bytes)
+              << " decoded_tail=" << std::quoted(tail) << '\n';
     return 1;
   }
   std::cout << R"({"schema":1,"clock":"steady_clock","observer":"native_poll",)";

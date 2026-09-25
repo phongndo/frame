@@ -11,6 +11,7 @@ from typing import Any
 
 from benchmark_manifest import (
     ManifestError,
+    comparison_sampling,
     expected_failure,
     load_manifest,
     workload_map,
@@ -144,12 +145,16 @@ def validate_process_report(
         distributions = sample_distributions(result)
         if not distributions:
             raise ReportError(f"workload {identifier} retained no raw distributions")
+        # Comparison-sampled workloads pool scaled blocks and declare their own count.
+        expected = result.get("repetitions", repetitions)
+        if not isinstance(expected, int) or expected < repetitions:
+            raise ReportError(f"workload {identifier} has an invalid repetition count")
         for label, samples in distributions:
             if label.endswith("samples_ns") or label.endswith("samples_bytes"):
-                if len(samples) not in {1, repetitions}:
+                if len(samples) not in {1, expected}:
                     raise ReportError(
                         f"workload {identifier}.{label} has {len(samples)} samples, "
-                        f"expected 1 or {repetitions}"
+                        f"expected 1 or {expected}"
                     )
 
     profiles = report.get("pane_profiles")
@@ -239,19 +244,27 @@ def validate_comparison_report(
             subject,
             identifier,
             "before" if subject == "direct" else "subject",
+            block,
         )
         for identifier in manifest["suites"]["comparison"]
+        for block in range(comparison_sampling(scenarios[identifier])[0])
         for subject in expected
         if subject in scenarios[identifier]["subjects"]
     }
     expected_tasks.update(
-        ("direct", identifier, "after")
+        ("direct", identifier, "after", block)
         for identifier in manifest["suites"]["comparison"]
+        for block in range(comparison_sampling(scenarios[identifier])[0])
         if "direct" in scenarios[identifier]["subjects"]
     )
     observed_tasks = (
         {
-            (task.get("subject"), task.get("workload"), task.get("phase"))
+            (
+                task.get("subject"),
+                task.get("workload"),
+                task.get("phase"),
+                task.get("block"),
+            )
             for task in execution_order
             if isinstance(task, dict)
         }
@@ -281,6 +294,15 @@ def validate_comparison_report(
         raise ReportError("a direct after-control did not complete")
     for result in results:
         validate_process_report(result, manifest, allow_failures=allow_failures)
+        for identifier, workload in result["workloads"].items():
+            blocks, scale = comparison_sampling(scenarios[identifier])
+            if workload.get("status") != "completed" or (blocks, scale) == (1, 1):
+                continue
+            # A pooled distribution must contain every scaled block, never a surviving subset.
+            if workload.get("repetitions") != result["repetitions"] * scale * blocks:
+                raise ReportError(
+                    f"{result['multiplexer']} workload {identifier} did not pool every block"
+                )
 
 
 def validate_micro_report(report: dict[str, Any]) -> None:
