@@ -726,26 +726,32 @@ class GraphicsMuxTest(unittest.TestCase):
         self,
     ) -> None:
         report = self.server.root / "pixel-size.json"
+        # Sample geometry when a numbered input byte arrives rather than from SIGWINCH handlers.
+        # The attach resize can interrupt the startup sample, and a reentrant handler can
+        # overwrite newer geometry or rename away the other handler's temporary report.
         script = f"""
-import fcntl, json, os, signal, struct, termios, time
+import fcntl, json, os, struct, termios, tty
 from pathlib import Path
 path = Path({str(report)!r})
-def resized(*_):
-    size = struct.unpack('HHHH', fcntl.ioctl(0, termios.TIOCGWINSZ, b'\\0' * 8))
-    temporary = path.with_suffix('.tmp')
-    temporary.write_text(json.dumps(size))
-    temporary.replace(path)
-signal.signal(signal.SIGWINCH, resized)
-resized()
+tty.setraw(0)
 os.write(1, b'\\x1b_Ga=T,q=2,C=1,i=1,s=1,v=1,f=32,c=15;/wAA/w==\\x1b\\\\PIXEL_READY')
-while True: time.sleep(1)
+while True:
+    sequence = os.read(0, 1)
+    size = struct.unpack('HHHH', fcntl.ioctl(0, termios.TIOCGWINSZ, b'\\0' * 8))
+    path.write_text(json.dumps(size))
+    os.write(1, b'\\r\\nGEOMETRY_' + sequence)
 """
         session = self.server.create_session(
-            "pixel_resize", command=(sys.executable, "-c", script)
+            "pixel_resize", attach=False, command=(sys.executable, "-c", script)
         )
-        client = session.require_client()
-        client.expect_output("PIXEL_READY")
+        # The encoded 120px upload exceeds the retained raw tail. Attach without the state
+        # poll, whose output drain can discard the upload header, and match it while streaming.
+        client = self.server.attach(session.name)
         client.expect_raw(b"\x1b_Ga=t,q=2,f=32,s=120,v=120,")
+        client.expect_output("PIXEL_READY")
+        # Attachment geometry reaches the Pane PTY before later input from that client.
+        client.send(b"1")
+        client.expect_output("GEOMETRY_1")
         self.assertEqual(json.loads(report.read_text()), [23, 80, 640, 368])
         fcntl.ioctl(
             client.process.descriptor,
@@ -754,15 +760,12 @@ while True: time.sleep(1)
         )
         os.killpg(client.pid, signal.SIGWINCH)
         # Drain image output while waiting for resize so the client can handle SIGWINCH even
-        # when the outer PTY fills. Observe the new upload before its header leaves the raw tail.
+        # when the outer PTY fills. The upload proves the client sent its resize, which the
+        # daemon applies to the Pane PTY before the next input on that connection.
         client.expect_raw(b"\x1b_Ga=t,q=2,f=32,s=180,v=180,")
-        wait_until(
-            "cell-only resize reaches Pane PTY",
-            lambda: (
-                True if json.loads(report.read_text()) == [23, 80, 960, 552] else None
-            ),
-            diagnostics=lambda: report.read_text() + "\n" + client.diagnostics(),
-        )
+        client.send(b"2")
+        client.expect_output("GEOMETRY_2")
+        self.assertEqual(json.loads(report.read_text()), [23, 80, 960, 552])
         state = session.state()
         self.assertEqual((state.columns, state.rows), (80, 24))
         session.pane().expect_alive()
