@@ -285,6 +285,162 @@ time.sleep(60)
         right.expect_alive()
 
 
+FOCUS_RECORDER = """
+import os, sys, tty
+from pathlib import Path
+tty.setraw(0)
+output = Path(sys.argv[1])
+os.write(1, b'\\x1b[?1004h' + sys.argv[2].encode())
+data = b''
+while not data.endswith(b'q'):
+    data += os.read(0, 4096)
+    output.write_bytes(data)
+"""
+
+
+class FocusReportMuxTest(unittest.TestCase):
+    """Mode-1004 Panes observe focus derived from Pane, Tab, Session, and outer focus."""
+
+    def setUp(self) -> None:
+        self.server = LemmaServer.from_environment()
+        self.addCleanup(self.server.close)
+
+    def recorder(self, name: str) -> tuple[tuple[str, ...], Path]:
+        path = self.server.root / f"focus-{name}.bin"
+        marker = f"__FOCUS_READY_{name}__"
+        return (sys.executable, "-c", FOCUS_RECORDER, str(path), marker), path
+
+    def wait_ready(self, session: str, pane: str, name: str) -> None:
+        # Terminal-content matching proves the daemon parsed the preceding mode change.
+        self.server.require_command(
+            "wait",
+            "--session",
+            session,
+            "--pane",
+            pane,
+            "--contains",
+            f"__FOCUS_READY_{name}__",
+            "--timeout",
+            "5s",
+        )
+
+    def expect_reports(self, path: Path, expected: bytes) -> None:
+        wait_until(
+            f"{path.name} to record {expected!r}",
+            lambda: True if path.exists() and path.read_bytes() == expected else None,
+            diagnostics=lambda: (
+                f"recorded={path.read_bytes() if path.exists() else None!r}\n"
+                f"{self.server.diagnostics()}"
+            ),
+        )
+
+    def test_pane_tab_outer_and_exit_changes_report_focus_once(self) -> None:
+        left_command, left = self.recorder("A")
+        session = self.server.create_session(
+            "focus_reports", attach=False, command=left_command
+        )
+        left_id = session.state().focused_pane
+        self.wait_ready(session.name, left_id, "A")
+        client = session.attach()
+        self.expect_reports(left, b"\x1b[I")
+
+        # Proc-driven split focuses the created Pane.
+        right_command, right = self.recorder("B")
+        right_id = self.server.require_command(
+            "split",
+            "--session",
+            session.name,
+            "--pane",
+            left_id,
+            "--right",
+            "--",
+            *right_command,
+        ).output.strip()
+        self.expect_reports(left, b"\x1b[I\x1b[O")
+        self.wait_ready(session.name, right_id, "B")
+
+        # Repeated outer reports do not duplicate the delivered state.
+        client.send(b"\x1b[O")
+        client.send(b"\x1b[O")
+        self.expect_reports(right, b"\x1b[O")
+        client.send(b"\x1b[I")
+        self.expect_reports(right, b"\x1b[O\x1b[I")
+
+        self.server.require_command(
+            "focus", "--session", session.name, "--pane", left_id
+        )
+        self.expect_reports(right, b"\x1b[O\x1b[I\x1b[O")
+        self.expect_reports(left, b"\x1b[I\x1b[O\x1b[I")
+
+        # A left click inside the right Pane focuses it through ordinary mouse routing.
+        client.send(b"\x1b[<0;60;12M\x1b[<0;60;12m")
+        self.expect_reports(left, b"\x1b[I\x1b[O\x1b[I\x1b[O")
+        self.expect_reports(right, b"\x1b[O\x1b[I\x1b[O\x1b[I")
+
+        first_tab = session.state().active_tab
+        client.prefix("c")
+        self.server.wait_for_state(
+            session.name, lambda state: state.tabs == 2, "second tab to open"
+        )
+        self.expect_reports(right, b"\x1b[O\x1b[I\x1b[O\x1b[I\x1b[O")
+        client.prefix("p")
+        self.server.wait_for_state(
+            session.name,
+            lambda state: state.active_tab == first_tab,
+            "first tab to be selected",
+        )
+        self.expect_reports(right, b"\x1b[O\x1b[I\x1b[O\x1b[I\x1b[O\x1b[I")
+
+        # Pane exit moves focus outside command dispatch.
+        client.send(b"q")
+        self.server.wait_for_state(
+            session.name,
+            lambda state: right_id not in {pane.id for pane in state.pane_states},
+            "right pane to exit",
+        )
+        self.expect_reports(left, b"\x1b[I\x1b[O\x1b[I\x1b[O\x1b[I")
+        self.expect_reports(right, b"\x1b[O\x1b[I\x1b[O\x1b[I\x1b[O\x1b[Iq")
+
+    def test_detach_and_session_switch_report_focus(self) -> None:
+        first_command, first = self.recorder("S1")
+        second_command, second = self.recorder("S2")
+        source = self.server.create_session(
+            "focus_source", attach=False, command=first_command
+        )
+        target = self.server.create_session(
+            "focus_target", attach=False, command=second_command
+        )
+        self.wait_ready(source.name, source.state().focused_pane, "S1")
+        self.wait_ready(target.name, target.state().focused_pane, "S2")
+
+        source.attach()
+        self.expect_reports(first, b"\x1b[I")
+        source.detach()
+        self.expect_reports(first, b"\x1b[I\x1b[O")
+        client = source.attach()
+        self.expect_reports(first, b"\x1b[I\x1b[O\x1b[I")
+
+        client.prefix(":")
+        client.send(f"switch {target.name}\r")
+        self.server.wait_for_state(
+            target.name, lambda state: state.attached, "attachment to switch"
+        )
+        self.expect_reports(first, b"\x1b[I\x1b[O\x1b[I\x1b[O")
+        self.expect_reports(second, b"\x1b[I")
+
+        # Outer focus follows the connection rather than resetting on Session switch.
+        client.send(b"\x1b[O")
+        self.expect_reports(second, b"\x1b[I\x1b[O")
+        client.prefix(":")
+        client.send(f"switch {source.name}\r")
+        self.server.wait_for_state(
+            source.name, lambda state: state.attached, "attachment to switch back"
+        )
+        client.send(b"\x1b[I")
+        self.expect_reports(first, b"\x1b[I\x1b[O\x1b[I\x1b[O\x1b[I")
+        self.expect_reports(second, b"\x1b[I\x1b[O")
+
+
 class GraphicsMuxTest(unittest.TestCase):
     def setUp(self) -> None:
         self.server = LemmaServer.from_environment()
