@@ -383,6 +383,34 @@ TEST(TerminalTest, DetectsAndEncodesVerticalScroll) {
   EXPECT_THAT(encoded, testing::HasSubstr("five"));
 }
 
+TEST(TerminalTest, ScrollHashPassSkipsRowsAlreadyMatchingPhysicalState) {
+  TerminalOptions options;
+  options.size = {.columns = 20, .rows = 4};
+  auto terminal = make_terminal(options);
+  write_text(terminal, "same\r\nsame\r\nsame\r\n");
+
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  ASSERT_TRUE(terminal.render_ansi(output, true).has_value());
+  // Scrolling an identical row marks every row dirty, but no shifted alignment matches the blank
+  // cursor row. The row hashes computed for scroll detection already prove every row unchanged.
+  write_text(terminal, "same\r\n");
+  const auto repeated = terminal.render_ansi(output);
+  ASSERT_TRUE(repeated.has_value());
+  EXPECT_EQ(repeated->scrolled_rows, 0);
+  EXPECT_EQ(repeated->rows, 0U);
+  EXPECT_EQ(repeated->encoded_rows, 0U);
+
+  write_text(terminal, "next\r\n");
+  const auto changed = terminal.render_ansi(output);
+  ASSERT_TRUE(changed.has_value());
+  EXPECT_EQ(changed->scrolled_rows, 0);
+  EXPECT_EQ(changed->rows, 1U);
+  EXPECT_EQ(changed->encoded_rows, 1U);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const std::string_view encoded(reinterpret_cast<const char*>(output.data()), changed->bytes);
+  EXPECT_THAT(encoded, testing::HasSubstr("\x1B[3;1H\x1B[0mnext"));
+}
+
 TEST(TerminalTest, ScrollDetectionHashesCompleteGraphemes) {
   TerminalOptions options;
   options.size = {.columns = 2, .rows = 4};

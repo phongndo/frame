@@ -181,7 +181,9 @@ struct AnsiCursorPosition final {
 
 struct AnsiRenderResult final {
   std::size_t bytes{0};
+  // Rows that emitted bytes, and all rows re-encoded against retained physical state.
   std::size_t rows{0};
+  std::size_t encoded_rows{0};
   std::int32_t scrolled_rows{0};
   bool full{false};
   // Visible cursor actually presented, including native overrides, in zero-based output
