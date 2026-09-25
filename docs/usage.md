@@ -167,7 +167,8 @@ the child when its active terminal modes request them. The focused pane's cursor
 prompts, and focused extension Surfaces use a steady block while they own the cursor. Detaching
 resets the outer terminal to its own configured cursor.
 
-The replaceable statusline extension supplies the normal top row. `C-b s` opens the shipped
+The replaceable statusline extension supplies the normal top row, including
+[attention markers](extensions.md#shipped-user-layer) on inactive tabs. `C-b s` opens the shipped
 [session manager](extensions.md#shipped-user-layer).
 
 The status row is the only persistent interaction chrome. An active resize, copy, search, log, or command mode

@@ -4,6 +4,7 @@
 #include "lemma/limits.hpp"
 #include "render/status_line.hpp"
 #include "render/ui.hpp"
+#include "user/attention.hpp"
 #include "user/session_manager.hpp"
 
 #include <algorithm>
@@ -14,6 +15,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -76,7 +79,7 @@ void report_status_error(const std::string_view context, const std::exception& e
 [[nodiscard]] auto hello(const std::string_view session, const bool presentation) -> std::string {
   return std::string{
              R"({"schema":"lemma.extension/v1","name":"lemma-ui","capabilities":["observe","proc","surface"],"events":{"schema":"lemma.events/v1","session":)"} +
-         selector(session) + (presentation ? R"(,"presentation":true}})" : "}}");
+         selector(session) + (presentation ? R"(,"presentation":true,"signals":true}})" : "}}");
 }
 
 [[nodiscard]] auto plain(const std::string_view value) -> std::string {
@@ -88,11 +91,16 @@ void report_status_error(const std::string_view context, const std::exception& e
   return result;
 }
 
+using Markers = std::array<lemma::user::Marker, render::status_tabs_max>;
+
 struct Status final {
   ext::Client client;
   std::string session;
   std::string surface;
   JsonValue state;
+  lemma::user::TabAttention attention;
+  std::optional<std::uint64_t> revision;
+  Markers painted{};
   std::string prompt_text;
   bool prompting{false};
   std::string dragged;
@@ -102,19 +110,36 @@ struct Status final {
   Status(const std::string_view endpoint, std::string id)
       : client(endpoint, hello(id, true)), session(std::move(id)) {}
 
+  [[nodiscard]] auto shown_tabs() const -> const std::vector<JsonValue>& {
+    const auto& values = preview.empty() ? member(state, "tabs").array : preview;
+    if (values.size() > render::status_tabs_max) {
+      throw std::runtime_error("too many status tabs");
+    }
+    return values;
+  }
+
+  [[nodiscard]] auto markers() const -> Markers {
+    Markers result{};
+    const auto& values = shown_tabs();
+    for (std::size_t index = 0; index < values.size(); ++index) {
+      result.at(index) = attention.marker(text(values.at(index), "id"));
+    }
+    return result;
+  }
+
   // Bounded UI projection/interaction branches have one owner.
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] auto projection(std::array<render::StatusTab, render::status_tabs_max>& tabs,
-                                std::string& context) const -> render::StatusLine {
-    const auto& values = preview.empty() ? member(state, "tabs").array : preview;
-    if (values.size() > tabs.size()) {
-      throw std::runtime_error("too many status tabs");
-    }
+                                const Markers& marks, std::string& context) const
+      -> render::StatusLine {
+    const auto& values = shown_tabs();
     for (std::size_t index = 0; index < values.size(); ++index) {
       const auto& value = values.at(index);
+      const bool active = enabled(value, "active");
       tabs.at(index) = {.number = static_cast<std::uint16_t>(number(value, "position")),
                         .title = text(value, "title"),
-                        .active = enabled(value, "active")};
+                        .active = active,
+                        .attention = active ? std::string_view{} : marks.at(index).view()};
     }
     const auto& prompt = member(state, "prompt");
     const auto kind = text(prompt, "kind");
@@ -186,7 +211,8 @@ struct Status final {
     }
     std::array<render::StatusTab, render::status_tabs_max> tabs{};
     std::string context;
-    const auto status = projection(tabs, context);
+    painted = markers();
+    const auto status = projection(tabs, painted, context);
     prompting = status.prompting();
     std::array<render::ui::Cell, lemma::limits::terminal_columns_hard_max> storage{};
     auto cells = std::span(storage).first(columns);
@@ -239,7 +265,7 @@ struct Status final {
     std::array<render::StatusTab, render::status_tabs_max> tabs{};
     std::string context;
     const auto hit = render::status_target_at_column(
-        projection(tabs, context),
+        projection(tabs, painted, context),
         {.columns = static_cast<std::uint16_t>(number(state, "columns")),
          .rows = static_cast<std::uint16_t>(number(state, "rows"))},
         static_cast<std::uint16_t>(*column));
@@ -281,29 +307,88 @@ struct Status final {
     }
   }
 
+  // Pane->Tab membership changes only with the Session revision; a signal from an unlisted Pane
+  // means the listing is older than that Pane.
+  void list_panes() {
+    const auto listed =
+        command(client, R"({"command":"pane.list","session":)" + selector(session) + '}');
+    const auto& values = member(listed, "panes").array;
+    std::vector<lemma::user::PaneMember> panes;
+    panes.reserve(values.size());
+    for (const auto& value : values) {
+      panes.push_back({.pane = text(value, "id"),
+                       .tab = text(value, "tab"),
+                       .signals = lemma::user::decode_signals(member(value, "signals"))});
+    }
+    attention.list(panes);
+  }
+
+  void signal(const JsonValue& document) {
+    const auto pane = text(document, "pane");
+    const auto signals = lemma::user::decode_signals(member(document, "signals"));
+    if (!attention.signal(pane, signals)) {
+      list_panes();
+      static_cast<void>(attention.signal(pane, signals));
+    }
+    if (!state.object.empty() && markers() != painted) {
+      paint();
+    }
+  }
+
+  void observe_revision(const JsonValue& document) {
+    const auto* const sessions = api::json_member(document, "sessions");
+    if (sessions == nullptr || sessions->array.size() != 1U) {
+      return;
+    }
+    const auto current = number(sessions->array.front(), "revision");
+    if (revision != current) {
+      revision = current;
+      list_panes();
+    }
+  }
+
+  void visit_active() {
+    for (const auto& tab : member(state, "tabs").array) {
+      if (enabled(tab, "active")) {
+        attention.visit(text(tab, "id"));
+      }
+    }
+  }
+
+  // A drag preview survives only while the presented Tabs are the same set.
+  void reconcile_preview(const JsonValue& presentation) {
+    if (preview.empty()) {
+      return;
+    }
+    const auto& values = member(presentation, "tabs").array;
+    if (values.size() != preview.size() || std::ranges::any_of(preview, [&](const auto& tab) {
+          return std::ranges::none_of(
+              values, [&](const auto& value) { return text(tab, "id") == text(value, "id"); });
+        })) {
+      dragged.clear();
+      drag_position.reset();
+      preview.clear();
+    } else {
+      for (auto& tab : preview) {
+        const auto found = std::ranges::find_if(
+            values, [&](const auto& value) { return text(tab, "id") == text(value, "id"); });
+        tab = *found;
+      }
+    }
+  }
+
   void event(const JsonValue& document) {
     if (const auto* const presentation = api::json_member(document, "presentation");
         presentation != nullptr) {
-      if (!preview.empty()) {
-        const auto& values = member(*presentation, "tabs").array;
-        if (values.size() != preview.size() || std::ranges::any_of(preview, [&](const auto& tab) {
-              return std::ranges::none_of(
-                  values, [&](const auto& value) { return text(tab, "id") == text(value, "id"); });
-            })) {
-          dragged.clear();
-          drag_position.reset();
-          preview.clear();
-        } else {
-          for (auto& tab : preview) {
-            const auto found = std::ranges::find_if(
-                values, [&](const auto& value) { return text(tab, "id") == text(value, "id"); });
-            tab = *found;
-          }
-        }
-      }
+      // List before visiting: signals that preceded a Tab switch were seen on the Tab being left.
+      observe_revision(document);
+      reconcile_preview(*presentation);
       state = *presentation;
       prompt_text = plain(text(member(state, "prompt"), "value"));
+      visit_active();
       paint();
+    } else if (text(document, "event") == "pane.signal") {
+      signal(document);
     } else if (text(document, "event") == "surface.mouse") {
       mouse(document);
     } else if (text(document, "event") == "surface.resized" && !state.object.empty()) {
@@ -312,16 +397,29 @@ struct Status final {
   }
 };
 
+// Attention outlives a detached Session's status connection, so a reattached statusline marks
+// what happened while detached. Entries end with their Session.
+using RetainedAttention = std::map<std::string, lemma::user::TabAttention, std::less<>>;
+
 // Discovery observes bounded Session summaries; only attached Sessions own status Surfaces.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void discover_statuses(const std::string_view endpoint, const JsonValue& document,
-                       std::vector<std::unique_ptr<Status>>& statuses) {
+                       std::vector<std::unique_ptr<Status>>& statuses,
+                       RetainedAttention& retained) {
   const auto* const sessions = api::json_member(document, "sessions");
   if (sessions != nullptr) {
     std::erase_if(statuses, [&](const auto& status) {
-      return std::ranges::none_of(sessions->array, [&](const auto& session) {
+      const bool detached = std::ranges::none_of(sessions->array, [&](const auto& session) {
         return text(session, "id") == status->session && enabled(session, "attached");
       });
+      if (detached) {
+        retained.insert_or_assign(status->session, std::move(status->attention));
+      }
+      return detached;
+    });
+    std::erase_if(retained, [&](const auto& entry) {
+      return std::ranges::none_of(
+          sessions->array, [&](const auto& session) { return text(session, "id") == entry.first; });
     });
     for (const auto& session : sessions->array) {
       const auto id = text(session, "id");
@@ -329,7 +427,13 @@ void discover_statuses(const std::string_view endpoint, const JsonValue& documen
             return status->session == id;
           })) {
         try {
-          statuses.push_back(std::make_unique<Status>(endpoint, std::string(id)));
+          auto status = std::make_unique<Status>(endpoint, std::string(id));
+          if (const auto found = retained.find(id); found != retained.end()) {
+            status->attention = std::move(found->second);
+            status->attention.detach();
+            retained.erase(found);
+          }
+          statuses.push_back(std::move(status));
         } catch (const std::exception& error) {
           report_status_error("status admission: ", error);
         }
@@ -344,6 +448,7 @@ auto run_status(const std::string_view endpoint) -> int {
       endpoint,
       R"({"schema":"lemma.extension/v1","name":"lemma-ui-discovery","capabilities":["observe"],"events":{"schema":"lemma.events/v1"}})");
   std::vector<std::unique_ptr<Status>> statuses;
+  RetainedAttention retained;
   while (true) {
     std::vector<pollfd> descriptors{{.fd = observer.descriptor(), .events = POLLIN, .revents = 0}};
     bool ready = observer.ready();
@@ -361,23 +466,27 @@ auto run_status(const std::string_view endpoint) -> int {
     }
     if (observer.ready() || descriptors.front().revents != 0) {
       if (auto record = observer.next(0); record.has_value()) {
-        discover_statuses(endpoint, record->document, statuses);
+        discover_statuses(endpoint, record->document, statuses, retained);
       }
     }
     // Discovery can replace the vector, so use nonblocking receives rather than stale poll indices.
-    std::erase_if(statuses, [](auto& status) {
+    std::erase_if(statuses, [&](auto& status) {
+      bool failed = false;
       try {
         if (auto record = status->client.next(0); record.has_value()) {
-          if (record->kind == ext::RecordKind::error) {
-            return true;
+          failed = record->kind == ext::RecordKind::error;
+          if (!failed) {
+            status->event(record->document);
           }
-          status->event(record->document);
         }
-        return false;
       } catch (const std::exception& error) {
         report_status_error("status: ", error);
-        return true;
+        failed = true;
       }
+      if (failed) {
+        retained.insert_or_assign(status->session, std::move(status->attention));
+      }
+      return failed;
     });
   }
 }

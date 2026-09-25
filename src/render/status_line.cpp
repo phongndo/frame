@@ -23,6 +23,9 @@ namespace {
 constexpr std::size_t status_title_columns_max = 16;
 constexpr std::size_t status_session_columns_max = 32;
 constexpr std::size_t status_label_bytes_max = status_session_columns_max + 4U;
+// An inactive label is "NN:" plus its title, then one space and the attention marker.
+static_assert(3U + status_title_columns_max + 1U + status_attention_bytes_max <=
+              status_label_bytes_max);
 constexpr std::string_view status_group_separator = " | ";
 constexpr std::string_view status_create_button = "  +";
 
@@ -34,6 +37,8 @@ constexpr std::string_view status_create_button = "  +";
 struct StatusLabel final {
   std::array<char, status_label_bytes_max> text{};
   std::size_t size{0};
+  // Trailing bytes drawn with identity emphasis.
+  std::size_t attention_size{0};
   bool active{false};
 };
 
@@ -99,6 +104,13 @@ status_label(const StatusTab& tab,
     append_character(':');
     label.size += sanitized_title(
         tab.title, std::span(label.text).subspan(label.size).first(title_columns_max));
+  }
+  if (!tab.attention.empty()) {
+    append_character(' ');
+    for (const char character : tab.attention) {
+      append_character(character);
+    }
+    label.attention_size = tab.attention.size();
   }
   return label;
 }
@@ -540,7 +552,10 @@ constexpr ui::Style status_prompt_cell_style{.attributes =
 [[nodiscard]] auto write_status_label(const std::span<ui::Cell> cells, std::size_t& column,
                                       const StatusLabel& label, const ui::Style style) noexcept
     -> bool {
-  return write_status_text(cells, column, std::string_view(label.text.data(), label.size), style);
+  const std::string_view text(label.text.data(), label.size);
+  const auto plain = label.size - label.attention_size;
+  return write_status_text(cells, column, text.substr(0, plain), style) &&
+         write_status_text(cells, column, text.substr(plain), status_identity_cell_style);
 }
 
 [[nodiscard]] auto write_prompt_field(const std::span<ui::Cell> cells, std::size_t& column,
@@ -814,6 +829,12 @@ struct ModalPromptProjection final {
          status.tabs.size() <= status_tabs_max &&
          (status.tabs.empty() || std::ranges::count(status.tabs, true, &StatusTab::active) == 1) &&
          std::ranges::none_of(status.tabs, [](const StatusTab& tab) { return tab.number == 0; }) &&
+         std::ranges::all_of(status.tabs,
+                             [&](const StatusTab& tab) {
+                               return tab.attention.size() <= status_attention_bytes_max &&
+                                      (!tab.active || tab.attention.empty()) &&
+                                      std::ranges::all_of(tab.attention, printable);
+                             }) &&
          status.prompt_cursor <= status.prompt_value.size() &&
          (!status.prompting() || !status.tabs.empty()) &&
          (status.prompting() || status.prompt_feedback == StatusPromptFeedback::none);

@@ -226,6 +226,68 @@ TEST(PaneCompositionTest, StatusControlHitTestMatchesRenderedLabelsAndOverflow) 
   EXPECT_EQ(status_target_at_column(modal, {.columns = 40, .rows = 3}, 17), std::nullopt);
 }
 
+TEST(PaneCompositionTest, InactiveTabAttentionIsEmphasizedPartOfItsLabel) {
+  auto terminal = make_terminal(40, 2);
+  const PaneSurface pane{
+      .terminal = &terminal,
+      .rectangle = {.columns = 40, .rows = 2},
+      .focused = true,
+  };
+  const std::array tabs{
+      StatusTab{.number = 1, .title = "zsh", .attention = "42% !"},
+      StatusTab{.number = 2, .title = "nvim", .active = true},
+  };
+  const StatusLine status{.session_name = {},
+                          .tabs = tabs,
+                          .prompt_target = StatusPromptTarget::none,
+                          .prompt_feedback = StatusPromptFeedback::none,
+                          .prompt_value = {},
+                          .input_context = {},
+                          .prompt_cursor = 0,
+                          .dirty = true};
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+
+  const auto result =
+      compose_frame(std::span(&pane, 1), {.columns = 40, .rows = 3}, output, true, status);
+
+  ASSERT_TRUE(result.has_value());
+  const auto encoded = as_text(std::span(output).first(result->bytes));
+  EXPECT_THAT(encoded,
+              testing::HasSubstr("\x1B[0m1:zsh \x1B[0;1m42% !\x1B[0m  \x1B[0;1m[ 2:nvim ]"));
+  // "1:zsh 42% !" occupies columns 0-10; the marker selects its Tab like the title does.
+  EXPECT_EQ(status_target_at_column(status, {.columns = 40, .rows = 3}, 10),
+            (StatusTarget{.kind = StatusTargetKind::tab, .tab_position = 0}));
+  EXPECT_EQ(status_target_at_column(status, {.columns = 40, .rows = 3}, 13),
+            (StatusTarget{.kind = StatusTargetKind::tab, .tab_position = 1}));
+}
+
+TEST(PaneCompositionTest, StatusRejectsActiveControlAndOverlongAttention) {
+  const std::array tabs{
+      StatusTab{.number = 1, .title = "zsh", .attention = "!"},
+      StatusTab{.number = 2, .title = "nvim", .active = true},
+  };
+  const StatusLine status{.session_name = {},
+                          .tabs = tabs,
+                          .prompt_target = StatusPromptTarget::none,
+                          .prompt_feedback = StatusPromptFeedback::none,
+                          .prompt_value = {},
+                          .input_context = {},
+                          .prompt_cursor = 0,
+                          .dirty = true};
+  EXPECT_TRUE(valid_status(status));
+  auto active_marker = tabs;
+  active_marker.at(1).attention = "!";
+  auto control_marker = tabs;
+  control_marker.at(0).attention = "\x1B";
+  auto long_marker = tabs;
+  long_marker.at(0).attention = "1234567890123";
+  for (const auto& invalid : {active_marker, control_marker, long_marker}) {
+    auto rejected = status;
+    rejected.tabs = invalid;
+    EXPECT_FALSE(valid_status(rejected));
+  }
+}
+
 TEST(PaneCompositionTest, ActiveInputContextReplacesStatusRowWithoutABadge) {
   auto terminal = make_terminal(40, 2);
   const PaneSurface pane{

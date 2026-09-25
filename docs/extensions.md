@@ -36,6 +36,27 @@ picker lists one row per Tab: `session / position:title`, followed by the focuse
 There are no separate Session header rows. Pane counts appear only for Tabs with multiple Panes;
 `*` marks the current Tab and `[attached]` marks another client's Session.
 
+The statusline marks inactive Tabs that need attention, using the [Pane signals](api.md#pane-signals)
+of the Panes they contain. Markers follow the Tab title in bold, in this order:
+
+| Marker | Meaning |
+| --- | --- |
+| `40%`, `%` | Progress in flight, with its percent when reported; `=` follows paused progress and `x` progress in error |
+| `x` | A command completed since the Tab was last active, and the latest completion failed (nonzero exit code) |
+| `!` | A bell or notification arrived since the Tab was last active |
+
+The active Tab never shows markers. Bells, notifications, and command completions count as seen
+when their Tab becomes active or while it is active. Progress is current state, so it shows again
+after leaving a Tab whose progress is still in flight. Among several Panes reporting progress, a
+Tab shows an error first, then paused progress, then the first listed Pane's progress.
+
+Signals present when `lemma-ui` first observes a Session count as seen. It retains what was seen
+across detach and reattach, so a reattached statusline marks what happened in between; Panes
+created later count every signal since their creation. Pane-to-Tab membership comes from
+`pane.list` when the Session revision changes or an unlisted Pane reports a signal, so markers
+follow their Panes and disappear when those Panes close. Nothing is polled: the statusline repaints
+when a marker changes and otherwise sleeps.
+
 Typing filters Tabs by Session name, Tab position/title, or any contained Pane's process name or
 directory. A process or directory match selects its containing Tab. Tab opens that Tab's Pane
 list, where search matches Pane ordinals, process names, and directories. Shift-Tab returns to
