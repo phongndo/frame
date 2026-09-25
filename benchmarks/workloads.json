@@ -339,7 +339,7 @@
     },
     {
       "id": "new_pane",
-      "input": "one split keyboard trigger creates a pane whose account login shell prints a unique startup marker; the pane is closed before the next sample; the direct control starts the same shell in a fresh PTY",
+      "input": "one split keyboard trigger creates a pane whose account shell, started as a login shell by every subject, prints a unique marker from login-only startup; the pane is closed before the next sample; the direct control starts the same login shell in a fresh PTY",
       "completion": "the new shell's unique startup token is observable in the attached client output",
       "metrics": [
         "latency_ns",
@@ -358,7 +358,7 @@
     },
     {
       "id": "new_tab",
-      "input": "one new-tab keyboard trigger creates a tab whose account login shell prints a unique startup marker; the tab is closed before the next sample; the direct control starts the same shell in a fresh PTY",
+      "input": "one new-tab keyboard trigger creates a tab whose account shell, started as a login shell by every subject, prints a unique marker from login-only startup; the tab is closed before the next sample; the direct control starts the same login shell in a fresh PTY",
       "completion": "the new shell's unique startup token is observable in the attached client output",
       "metrics": [
         "latency_ns",
@@ -1227,6 +1227,17 @@
       "new_pane",
       "new_tab",
       "resize_reflow",
+      "idle_resources",
+      "blocked_pty",
+      "blocked_client"
+    ],
+    "regression": [
+      "warm_scroll",
+      "attach_to_visible",
+      "interactive_under_output",
+      "interactive_open_loop",
+      "tui_redraw",
+      "tui_wheel_burst",
       "idle_resources",
       "blocked_pty",
       "blocked_client"

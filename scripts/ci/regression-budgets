@@ -61,7 +61,7 @@ python3 benchmarks/annotate_micro_report.py \
   --executable build/release/lemma_benchmarks
 python3 benchmarks/validate_report.py --micro "${micro_output}"
 python3 benchmarks/mux_benchmark.py \
-  --mode comparison \
+  --mode regression \
   --intent gate \
   --repetitions "${process_repetitions}" \
   --output "${process_output}" >/dev/null

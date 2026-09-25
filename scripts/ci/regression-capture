@@ -76,7 +76,7 @@ python3 "${harness_root}/benchmarks/validate_report.py" \
 
 python3 "${harness_root}/benchmarks/mux_benchmark.py" \
   --manifest "${manifest}" \
-  --mode comparison \
+  --mode regression \
   --intent gate \
   --peer "${benchmark_peer}" \
   --probe "${benchmark_probe}" \

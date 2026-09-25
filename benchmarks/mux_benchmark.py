@@ -171,6 +171,9 @@ enabled = false
 [experimental]
 pane_history = false
 
+[terminal]
+shell_mode = "login"
+
 [keys]
 next_workspace = "prefix+)"
 previous_workspace = "prefix+("
@@ -674,8 +677,9 @@ def linux_context_switch_snapshot(pids: set[int]) -> dict[str, Any]:
     """Sum per-thread context switches as a Linux wakeup proxy.
 
     Voluntary switches count blocking waits (each later needs a wakeup); nonvoluntary switches
-    count preemption. Neither equals Darwin's package-idle or interrupt wakeups. Like schedstat
-    CPU, these live-thread snapshots lose counts from threads that exit between endpoints.
+    count preemption. Neither equals Darwin's package-idle or interrupt wakeups. Live-thread
+    snapshots lose counts from threads that exit, so each snapshot identifies its exact thread set
+    and intervals whose set changed are rejected rather than undercounted.
     """
     if platform.system() != "Linux":
         return {"available": False, "reason": "not Linux"}
@@ -685,14 +689,22 @@ def linux_context_switch_snapshot(pids: set[int]) -> dict[str, Any]:
         voluntary = 0
         nonvoluntary = 0
         sampled = 0
+        tasks: list[str] = []
         for pid in pids:
             for task in Path(f"/proc/{pid}/task").iterdir():
-                thread_voluntary, thread_nonvoluntary = parse_linux_context_switches(
+                try:
                     # The Name field is arbitrary thread-name bytes.
-                    (task / "status").read_text(encoding="utf-8", errors="replace")
+                    status = (task / "status").read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except (FileNotFoundError, ProcessLookupError):
+                    continue  # The thread exited after enumeration; the task set records it.
+                thread_voluntary, thread_nonvoluntary = parse_linux_context_switches(
+                    status
                 )
                 voluntary += thread_voluntary
                 nonvoluntary += thread_nonvoluntary
+                tasks.append(f"{pid}/{task.name}")
             sampled += 1
     except (OSError, ValueError) as error:
         return {"available": False, "reason": str(error)}
@@ -700,6 +712,10 @@ def linux_context_switch_snapshot(pids: set[int]) -> dict[str, Any]:
         "available": sampled == len(pids),
         "source": "/proc/PID/task/TID/status live-thread context switches",
         "sampled_processes": sampled,
+        "sampled_threads": len(tasks),
+        "task_set_sha256": hashlib.sha256(
+            "\n".join(sorted(tasks)).encode("ascii")
+        ).hexdigest(),
         "voluntary": voluntary,
         "nonvoluntary": nonvoluntary,
         "total": voluntary + nonvoluntary,
@@ -1073,9 +1089,15 @@ def counter_interval_summary(
     key: str,
     unavailable_reason: str,
 ) -> dict[str, Any]:
+    """Difference cumulative counters, rejecting intervals that cannot be compared.
+
+    A changed process or thread set loses the exited members' counts, and a decreasing total
+    proves that happened. Either interval is rejected and counted rather than clamped to zero.
+    """
     samples: list[int] = []
     source: str | None = None
     available = True
+    rejected = {"changed_task_set": 0, "decreasing_counter": 0}
     for before, after in zip(before_samples, after_samples):
         start = before.get(key)
         end = after.get(key)
@@ -1088,11 +1110,24 @@ def counter_interval_summary(
             available = False
             continue
         source = str(end.get("source"))
-        samples.append(max(0, int(end["total"]) - int(start["total"])))
+        if before.get("pids") != after.get("pids") or start.get(
+            "task_set_sha256"
+        ) != end.get("task_set_sha256"):
+            rejected["changed_task_set"] += 1
+            continue
+        elapsed = int(end["total"]) - int(start["total"])
+        if elapsed < 0:
+            rejected["decreasing_counter"] += 1
+            continue
+        samples.append(elapsed)
+    if available and not samples:
+        available = False
+        unavailable_reason = "every interval changed its task set or counter"
     return {
         "available": available,
         "source": source if available else None,
         "reason": None if available else unavailable_reason,
+        "rejected_samples": rejected,
         **(metric_summary(samples, "count") if available else {"samples_count": []}),
     }
 
@@ -1842,6 +1877,14 @@ class ZellijRuntime:
             self.environment["LEMMA_LATENCY_TRACE"] = str(trace_directory.resolve())
         self.socket_directory = Path(tempfile.mkdtemp(prefix="lz-", dir="/tmp"))
         self.environment["ZELLIJ_SOCKET_DIR"] = str(self.socket_directory)
+        # Zellij's default_shell takes no arguments and spawns a non-login shell. Match the
+        # other subjects' login startup with a wrapper that replaces itself with the shell.
+        self.login_shell_path = root / "login-shell"
+        self.login_shell_path.write_text(
+            f"#!/bin/sh\nexec {shlex.quote(self.environment['SHELL'])} -l\n",
+            encoding="utf-8",
+        )
+        self.login_shell_path.chmod(0o700)
         self.config_path = root / "config.kdl"
         self.config_path.write_text(
             "show_startup_tips false\n"
@@ -1849,10 +1892,12 @@ class ZellijRuntime:
             "session_serialization false\n"
             "serialize_pane_viewport false\n"
             "disable_session_metadata true\n"
+            f"default_shell {json.dumps(str(self.login_shell_path))}\n"
             'keybinds {\n    normal {\n        bind "Alt t" { NewTab; }\n    }\n}\n',
             encoding="utf-8",
         )
         self.session_prefix = f"lb-{os.getpid()}-"
+        self.pane_listing_error: str | None = None
         self.sessions: list[str] = []
         self.clients: list[PtyProcess] = []
         self.version = subprocess.run(
@@ -1934,7 +1979,12 @@ class ZellijRuntime:
         if not isinstance(panes, list):
             # While tabs are created or torn down, Zellij can reject the listing or publish an
             # empty or non-list result. Treat it as not yet observable; callers' deadlines bound it.
+            self.pane_listing_error = (
+                f"list-panes exit {listed.returncode}: "
+                f"stderr={listed.stderr.strip()[-512:]!r} stdout={listed.stdout[:128]!r}"
+            )
             return -1
+        self.pane_listing_error = None
         return sum(not pane["is_plugin"] for pane in panes)
 
     def _wait_for_session(self, mapped_session: str) -> None:
@@ -2778,9 +2828,45 @@ def tab_switch(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
             control.unlink(missing_ok=True)
 
 
-def shell_marker_command(marker: bytes) -> str:
+# Every subject starts new panes as login shells: Lemma always forks `$SHELL -l`, tmux uses its
+# default login shell, and the Zellij and Herdr adapters configure login startup. The direct
+# control matches. Login and non-login startup read different files, so mixed modes would compare
+# different shell work.
+SHELL_STARTUP_MODES = {
+    "direct": "fork a PTY and exec $SHELL -l",
+    "lemma": "daemon spawns $SHELL -l",
+    "tmux": "default login shell (argv0 -NAME)",
+    "zellij": "default_shell wrapper execs $SHELL -l (one extra /bin/sh exec)",
+    "herdr": 'terminal.shell_mode = "login"',
+}
+
+
+def install_login_shell_marker(environment: dict[str, str], marker: bytes) -> None:
+    """Print MARKER only from login startup, so a non-login shell cannot complete a sample."""
     # Markers are [A-Z0-9_]; the startup file, not echoed input, prints them.
-    return f"printf '%s\\n' '{marker.decode('ascii')}'\n"
+    text = marker.decode("ascii")
+    printf = f"printf '%s\\n' '{text}'\n"
+    shell = Path(environment["SHELL"]).name
+    home = Path(environment["HOME"])
+    config = Path(environment["XDG_CONFIG_HOME"])
+    if shell in {"sh", "dash", "ksh", "mksh"}:
+        path, command = home / ".profile", printf
+    elif shell == "bash":
+        path, command = home / ".bash_profile", printf
+    elif shell == "zsh":
+        path, command = Path(environment["ZDOTDIR"]) / ".zprofile", printf
+    elif shell == "fish":
+        path = config / "fish" / "config.fish"
+        command = f"if status is-login\n    {printf}end\n"
+    elif shell in {"nu", "nushell"}:
+        path = config / "nushell" / "config.nu"
+        command = f"if $nu.is-login {{ print '{text}' }}\n"
+    else:
+        raise RuntimeError(
+            f"benchmark startup does not support account login shell {environment['SHELL']!r}"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(command, encoding="utf-8")
 
 
 def shell_startup_control(
@@ -2792,7 +2878,7 @@ def shell_startup_control(
     shell = runtime.environment["SHELL"]
     for index in range(repetitions):
         marker = interaction_marker(label, index)
-        install_shell_startup(runtime.environment, shell_marker_command(marker))
+        install_login_shell_marker(runtime.environment, marker)
         try:
             completed = subprocess.run(
                 [
@@ -2841,6 +2927,7 @@ def shell_startup_control(
         runtime,
         None,
         trigger="fork a PTY and exec the account login shell",
+        shell_startup=SHELL_STARTUP_MODES["direct"],
     )
 
 
@@ -2862,7 +2949,7 @@ def new_shell_latency(
     cpu_before = runtime_resource_snapshot(runtime)
     for index in range(repetitions):
         marker = interaction_marker(label, index)
-        install_shell_startup(runtime.environment, shell_marker_command(marker))
+        install_login_shell_marker(runtime.environment, marker)
         latency, sample_bytes = trigger_sample(
             runtime, client, trigger, interaction_visible_token(label, index)
         )
@@ -2878,6 +2965,7 @@ def new_shell_latency(
         runtime,
         cpu_before,
         trigger=f"{action.replace('_', ' ')} binding",
+        shell_startup=SHELL_STARTUP_MODES[runtime.multiplexer],
     )
 
 
@@ -3373,7 +3461,11 @@ def wait_for_profile_panes(
         if reached:
             return
         time.sleep(0.005)
-    raise TimeoutError(f"{runtime.multiplexer} did not reach {panes} panes")
+    listing_error = getattr(runtime, "pane_listing_error", None)
+    raise TimeoutError(
+        f"{runtime.multiplexer} did not reach {panes} panes"
+        + (f"; last {listing_error}" if listing_error else "")
+    )
 
 
 def send_prefix(client: PtyProcess, command: bytes) -> None:
@@ -3817,6 +3909,7 @@ def main() -> int:
         choices=(
             *process_modes,
             "comparison",
+            "regression",
             "profiles",
             "session-profiles",
             "workspace-profiles",
@@ -3875,7 +3968,7 @@ def main() -> int:
         parser.error("--repetitions must be between 1 and 10000")
     selected_scenarios = (
         suite_workloads(manifest, arguments.mode)
-        if arguments.mode in {"comparison", "all"}
+        if arguments.mode in {"comparison", "regression", "all"}
         else []
     )
     individual_scenario = workload_for_mode(manifest, arguments.mode)

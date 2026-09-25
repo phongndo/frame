@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import runpy
+import shutil
 import socket
 import subprocess
 import sys
@@ -51,10 +52,12 @@ from mux_benchmark import (
     ALT_SCREEN,
     ATTACH_VISIBLE_MARKER,
     BLOCK_DONE,
+    HERDR_BENCHMARK_CONFIG,
     INTERACTION_LABEL_CODES,
     LATENCY_VISIBLE_ACK,
     NAVIGATION_KEYS,
     SHELL_READY_MARKER,
+    SHELL_STARTUP_MODES,
     TUI_REDRAW_READY,
     AttachVersionMismatch,
     HerdrRuntime,
@@ -67,8 +70,10 @@ from mux_benchmark import (
     blocked_pty,
     build_profile,
     connect_blocked_client,
+    counter_interval_summary,
     git_provenance,
     install_attach_shell_startup,
+    install_login_shell_marker,
     interaction_marker,
     interaction_visible_token,
     lifecycle_sentinel_arguments,
@@ -87,6 +92,7 @@ from mux_benchmark import (
     resource_snapshot,
     summarize_resource_samples,
     tui_redraw,
+    wait_for_profile_panes,
     wait_for_profile_shell,
     workload_cpu,
 )
@@ -260,6 +266,56 @@ class LinuxResourceTest(unittest.TestCase):
         self.assertEqual(result["context_switches"]["samples_count"], [4, 0])
         self.assertEqual(result["context_switches"]["source"], "linux")
 
+    def test_thread_exiting_after_enumeration_is_skipped_not_fatal(self) -> None:
+        status = "voluntary_ctxt_switches:\t2\nnonvoluntary_ctxt_switches:\t1\n"
+        with (
+            mock.patch("mux_benchmark.platform.system", return_value="Linux"),
+            mock.patch.object(
+                Path,
+                "iterdir",
+                return_value=iter([Path("/proc/10/task/10"), Path("/proc/10/task/11")]),
+            ),
+            mock.patch.object(
+                Path, "read_text", side_effect=[status, FileNotFoundError("gone")]
+            ),
+        ):
+            snapshot = linux_context_switch_snapshot({10})
+        self.assertTrue(snapshot["available"])
+        self.assertEqual((snapshot["total"], snapshot["sampled_threads"]), (3, 1))
+
+    def test_incomparable_counter_intervals_are_rejected_not_clamped(self) -> None:
+        def endpoint(total: int, tasks: str, pids: list[int]) -> dict[str, Any]:
+            return {
+                "pids": pids,
+                "context_switches": {
+                    "available": True,
+                    "source": "linux",
+                    "total": total,
+                    "task_set_sha256": tasks,
+                },
+            }
+
+        result = counter_interval_summary(
+            [endpoint(10, "a", [1]), endpoint(20, "a", [1]), endpoint(30, "a", [1])],
+            [endpoint(15, "a", [1]), endpoint(19, "a", [1]), endpoint(40, "b", [1])],
+            "context_switches",
+            "unused",
+        )
+        self.assertEqual(result["samples_count"], [5])
+        self.assertEqual(
+            result["rejected_samples"],
+            {"changed_task_set": 1, "decreasing_counter": 1},
+        )
+        changed_process = counter_interval_summary(
+            [endpoint(10, "a", [1])],
+            [endpoint(12, "a", [1, 2])],
+            "context_switches",
+            "unused",
+        )
+        self.assertFalse(changed_process["available"])
+        self.assertEqual(changed_process["samples_count"], [])
+        self.assertEqual(changed_process["rejected_samples"]["changed_task_set"], 1)
+
 
 class EfficiencyAccountingTest(unittest.TestCase):
     def test_cpu_includes_worker_threads(self) -> None:
@@ -399,22 +455,76 @@ class UserFacingWorkloadTest(unittest.TestCase):
         with (
             mock.patch("mux_benchmark.runtime_resource_snapshot", return_value={}),
             mock.patch("mux_benchmark.workload_cpu", return_value={}),
-            mock.patch("mux_benchmark.install_shell_startup") as startup,
+            mock.patch("mux_benchmark.install_login_shell_marker") as startup,
             mock.patch("mux_benchmark.wait_for_profile_panes") as wait,
             mock.patch(
                 "mux_benchmark.trigger_sample", return_value=(5_000, 20)
             ) as trigger,
         ):
             result = new_shell_latency(runtime, 2, "new_pane", "SPLIT")
-        self.assertIn(
-            interaction_marker("SPLIT", 1).decode(), startup.call_args.args[1]
-        )
+        startup.assert_called_with(runtime.environment, interaction_marker("SPLIT", 1))
         self.assertEqual(trigger.call_args.args[2], NAVIGATION_KEYS["tmux"]["new_pane"])
+        self.assertEqual(result["shell_startup"], SHELL_STARTUP_MODES["tmux"])
         self.assertEqual(
             client.write_all.call_args_list, [mock.call(b"exit\r", 2.0)] * 2
         )
         wait.assert_called_with(runtime, client, "new_pane", 1)
         self.assertEqual(result["outer_bytes"], [20, 20])
+
+    def test_new_shell_markers_come_only_from_login_startup(self) -> None:
+        marker = interaction_marker("SPLIT", 3)
+        for shell, login_file, other_file in (
+            ("/bin/bash", "home/.bash_profile", "home/.bashrc"),
+            ("/bin/zsh", "zdot/.zprofile", "zdot/.zshrc"),
+            ("/bin/dash", "home/.profile", "config/lemma/shell-startup.sh"),
+        ):
+            with self.subTest(shell=shell), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                environment = {
+                    "SHELL": shell,
+                    "HOME": str(root / "home"),
+                    "XDG_CONFIG_HOME": str(root / "config"),
+                    "ZDOTDIR": str(root / "zdot"),
+                }
+                install_login_shell_marker(environment, marker)
+                self.assertIn(marker.decode(), (root / login_file).read_text())
+                self.assertFalse((root / other_file).exists())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            install_login_shell_marker(
+                {
+                    "SHELL": "/usr/bin/fish",
+                    "HOME": str(root / "home"),
+                    "XDG_CONFIG_HOME": str(root / "config"),
+                    "ZDOTDIR": str(root / "zdot"),
+                },
+                marker,
+            )
+            fish = (root / "config" / "fish" / "config.fish").read_text()
+            self.assertTrue(fish.startswith("if status is-login\n"))
+
+    def test_every_new_shell_subject_is_configured_for_login_startup(self) -> None:
+        manifest = load_manifest()
+        for workload in manifest["process_workloads"]:
+            if workload["id"] in {"new_pane", "new_tab"}:
+                self.assertLessEqual(
+                    set(workload["subjects"]), set(SHELL_STARTUP_MODES)
+                )
+        self.assertIn('[terminal]\nshell_mode = "login"', HERDR_BENCHMARK_CONFIG)
+        with mock.patch(
+            "mux_benchmark.subprocess.run", return_value=mock.Mock(stdout="zellij")
+        ):
+            runtime = ZellijRuntime(Path("/bin/zellij"), Path("peer"), Path("probe"))
+        try:
+            wrapper = runtime.login_shell_path.read_text(encoding="utf-8")
+            config = runtime.config_path.read_text(encoding="utf-8")
+        finally:
+            shutil.rmtree(runtime.socket_directory, ignore_errors=True)
+            runtime.temporary.cleanup()
+        self.assertEqual(
+            wrapper, f"#!/bin/sh\nexec {runtime.environment['SHELL']} -l\n"
+        )
+        self.assertIn(f'default_shell "{runtime.login_shell_path}"', config)
 
     def test_every_supported_navigation_subject_has_its_trigger(self) -> None:
         workloads = {
@@ -1125,6 +1235,49 @@ class BenchmarkManifestTest(unittest.TestCase):
             checked
             & {"session_switch", "tab_switch", "new_pane", "new_tab", "resize_reflow"}
         )
+
+    def test_gate_captures_only_the_budgeted_regression_suite(self) -> None:
+        manifest = load_manifest()
+        regression = manifest["suites"]["regression"]
+        self.assertLessEqual(set(regression), set(manifest["suites"]["comparison"]))
+        self.assertFalse(
+            set(regression)
+            & {"session_switch", "tab_switch", "new_pane", "new_tab", "resize_reflow"}
+        )
+        for script in (
+            "scripts/ci/regression-capture",
+            "scripts/ci/regression-budgets",
+        ):
+            text = Path(script).read_text(encoding="utf-8")
+            self.assertIn("--mode regression", text)
+            self.assertNotIn("--mode comparison", text)
+        budgeted = json.loads(
+            Path("benchmarks/workloads.json").read_text(encoding="utf-8")
+        )
+        budgeted["regression_budgets"]["process_workloads"]["checks"].append(
+            {
+                "id": "new_pane_latency_p50",
+                "samples_path": ["workloads", "new_pane", "samples_ns"],
+                "statistic": "p50",
+                "maximum": 1,
+                "unit": "ns",
+            }
+        )
+        with self.assertRaisesRegex(ManifestError, "omits budgeted workloads"):
+            validate_manifest(budgeted)
+
+    def test_zellij_pane_count_timeout_keeps_the_listing_error(self) -> None:
+        runtime = object.__new__(ZellijRuntime)
+        runtime.session_prefix = "lb-"
+        runtime._command = mock.Mock(
+            return_value=mock.Mock(returncode=1, stdout="", stderr="no such session")
+        )
+        client = mock.Mock()
+        with (
+            mock.patch("mux_benchmark.ZELLIJ_PANE_LISTING_SECONDS", 0.01),
+            self.assertRaisesRegex(TimeoutError, "no such session"),
+        ):
+            wait_for_profile_panes(runtime, client, "profile", 2)
 
     def test_unsupported_reasons_cannot_hide_a_supported_subject(self) -> None:
         manifest = json.loads(

@@ -86,8 +86,10 @@ a stable regression gate.
 Navigation workloads time one keyboard trigger written to the attached client until a unique token
 is visible in its output. Session and tab switches alternate between two full-screen painters. Before
 each sample, the hidden target paints its token and a fill that differs from the visible screen, then
-settles so pane ingestion is outside the sample. New-pane and new-tab samples include the account
-login shell's startup; their direct control starts that shell in a fresh PTY. Each resize sample
+settles so pane ingestion is outside the sample. New-pane and new-tab samples include shell startup.
+Every subject and the direct control start the account shell as a login shell, and only login
+startup prints the marker, so a non-login shell cannot complete a sample; reports record each
+subject's startup mode. Zellij reaches login startup through a one-exec wrapper. Each resize sample
 follows a quiet interval, so it measures an isolated resize rather than a drag burst and includes
 any subject-side resize coalescing delay. Per-subject trigger bindings and intervals live in the
 [harness](../benchmarks/mux_benchmark.py); reviewed unsupported subjects and reasons live in the
@@ -126,7 +128,9 @@ The gate holds a host-wide lock and validates host state before and after captur
 baseline and candidate with the candidate's manifest, harness, and Nix toolchain. Each subject uses
 its own pinned Ghostty source and offline Zig dependencies; the candidate-owned PTY fixture and
 native probe are built once and shared. This compares actual dependency upgrades without requiring
-an old revision to contain a newer harness. Evidence stays under `build/performance/`.
+an old revision to contain a newer harness. Evidence stays under `build/performance/`. Gate process
+captures run only the manifest's `regression` suite, which must contain every budgeted workload;
+diagnostic comparison workloads join it only with reviewed budgets.
 
 Host fingerprints must agree across report types, paired captures, and before/after checks.
 Linux `MemTotal` is usable memory, not exact installed RAM, and can vary across boots. Host policy

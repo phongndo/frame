@@ -80,11 +80,17 @@ python3 benchmarks/mux_benchmark.py \
   --repetitions "${repetitions}" \
   --output "${lemma_profiles}" >/dev/null
 python3 benchmarks/validate_report.py --process "${lemma_profiles}"
+# Zellij's pane listing slows to seconds per call at high pane counts, so Zellij and Herdr use the
+# bounded smoke profile set (still through PMAX) in both modes rather than every scaling knee.
 for subject in tmux zellij herdr; do
   profile_output="${output_directory}/f3-memory-${subject}-profiles.json"
+  profile_intent="${mode}"
+  if [[ "${subject}" != tmux ]]; then
+    profile_intent=smoke
+  fi
   python3 benchmarks/mux_benchmark.py \
     --mode profiles \
-    --intent "${mode}" \
+    --intent "${profile_intent}" \
     --multiplexer "${subject}" \
     --repetitions "${repetitions}" \
     --output "${profile_output}" >/dev/null

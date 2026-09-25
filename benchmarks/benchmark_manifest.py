@@ -174,6 +174,34 @@ def validate_manifest(manifest: Any) -> None:
         unknown = sorted(set(selected).difference(known))
         if unknown:
             raise ManifestError(f"suites.{name} contains unknown workloads: {unknown}")
+    # The paired gate captures only the regression suite: diagnostic comparisons stay out of it
+    # until reviewed budgets reference them, so their failures cannot abort a gate.
+    regression = suites.get("regression")
+    comparison = suites.get("comparison")
+    if not isinstance(regression, list) or not isinstance(comparison, list):
+        raise ManifestError("suites must define comparison and regression")
+    if not set(regression) <= set(comparison):
+        raise ManifestError("suites.regression must be a subset of suites.comparison")
+    budgets = manifest.get("regression_budgets")
+    process_budgets = (
+        budgets.get("process_workloads") if isinstance(budgets, dict) else None
+    )
+    if isinstance(process_budgets, dict):
+        referenced = {
+            path[1]
+            for check in process_budgets.get("checks", [])
+            for path in (check.get("samples_path"),)
+            if isinstance(path, list) and len(path) > 1
+        } | {
+            check.get(key, [None, None])[1]
+            for check in process_budgets.get("comparative_checks", [])
+            for key in ("baseline_samples_path", "loaded_samples_path")
+        }
+        missing = sorted(str(name) for name in referenced - set(regression))
+        if missing:
+            raise ManifestError(
+                f"suites.regression omits budgeted workloads: {missing}"
+            )
 
     policies = manifest.get("sample_policies")
     if not isinstance(policies, dict) or set(policies) != {
