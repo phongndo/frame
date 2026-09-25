@@ -359,8 +359,8 @@ there directly:
   `SESSION: TAB`, the Tab's status-row label, followed by ` - TITLE` when the application supplied
   one. Control characters and malformed UTF-8 are removed, `;` in the title becomes a space, and
   the title and body are truncated at character boundaries to 256 bytes and 1 KiB. After a burst of
-  three, at most one is sent per five seconds, oldest arrival first; a Pane's notifications waiting
-  for that budget coalesce into its latest.
+  three, at most one is sent per five seconds, to the Pane that has waited longest; a Pane's
+  notifications waiting for that budget coalesce into its latest without losing its place.
 - **Progress** (opt-in). The active Tab's focused Pane's OSC 9;4 progress is forwarded and follows
   focus as the window title does, coalesced to its latest value at most four times per second. It
   is off by default because there is no capability report: a terminal that implements OSC 9

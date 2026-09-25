@@ -526,9 +526,9 @@ void request_outer_attention_retry(OuterAttention& attention,
   attention.retry_at = attention.retry_at.has_value() ? std::min(*attention.retry_at, at) : at;
 }
 
-// Forwards the latest notification of the Pane whose unforwarded notification arrived earliest,
-// at most one per frame. Several notifications from one Pane before forwarding coalesce into its
-// latest. With forwarding disabled, notifications only ring the bell.
+// Forwards the latest notification of the Pane that has waited longest, at most one per frame.
+// Several notifications from one Pane before forwarding coalesce into its latest. With forwarding
+// disabled, notifications only ring the bell.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void present_outer_notification(SessionRecord& session, PaneRuntimeStore& runtimes,
                                 const std::span<std::byte> output, std::size_t& used,

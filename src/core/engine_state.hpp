@@ -108,8 +108,8 @@ struct PaneRuntime final {
   // the application reports one. The signal values themselves remain owned by the terminal.
   std::uint64_t signal_stamp{0};
   // Terminal notification count already forwarded to (or deliberately skipped for) the attached
-  // client's outer terminal, and the signal stamp of the latest notification, which orders
-  // forwarding independently of this Pane's other signal changes.
+  // client's outer terminal, and the signal stamp of the notification that started the current
+  // wait, which orders forwarding independently of this Pane's other signal changes.
   std::uint64_t outer_notifications{0};
   std::uint64_t notification_stamp{0};
   std::size_t scrollback_bytes_reserved{0};

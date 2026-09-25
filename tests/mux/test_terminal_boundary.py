@@ -737,6 +737,19 @@ for index in range(500):
     time.sleep(0.02)
 time.sleep(60)
 """
+# Two Panes notify every second from a shared start. The first three notifications spend the burst;
+# afterwards each Pane always has one waiting, and B's latest always precedes A's at a refill.
+PERIODIC_NOTIFIER = """
+import os, sys, time
+start, name = float(sys.argv[1]), sys.argv[2]
+offsets = [0.0, 0.05] + [0.6 + k for k in range(16)] if name == 'a' else [
+    0.1 + k for k in range(16)
+]
+for index, offset in enumerate(offsets):
+    time.sleep(max(0.0, start + offset - time.time()))
+    os.write(1, b'\\x1b]9;%s %d\\x07' % (name.encode(), index))
+time.sleep(60)
+"""
 PROGRESS_STEPS = """
 import os, sys, time
 sys.stdin.readline()
@@ -902,6 +915,35 @@ class OuterAttentionMuxTest(unittest.TestCase):
         # before the noisy Pane's later ones, so it is forwarded at the next refill.
         self.emit(session, pending, b"")
         self.expect_notification(client, b"fair: pending", b"b pending", timeout=8.0)
+
+    def test_periodic_notifiers_share_the_notification_budget(self) -> None:
+        session = self.start("share")
+        client = session.require_client()
+        start = time.time() + 1.0
+        for name in ("a", "b"):
+            self.new_tab(
+                session, name, sys.executable, "-c", PERIODIC_NOTIFIER, str(start), name
+            )
+
+        def latest(name: bytes) -> int:
+            indices = re.findall(
+                rb"\x1b\]777;notify;share: " + name + rb";" + name + rb" (\d+)\x1b\\",
+                client.process.output_tail,
+            )
+            return max((int(index) for index in indices), default=-1)
+
+        # After the burst (a 0, a 1, b 0), the two refills at five and ten seconds go to each Pane
+        # once, even though the other always has a newer notification waiting.
+        wait_until(
+            "both periodic notifiers to be forwarded after the burst",
+            lambda: (
+                True
+                if client.drain(0.01) >= 0 and latest(b"a") >= 2 and latest(b"b") >= 1
+                else None
+            ),
+            timeout=13.0,
+            diagnostics=client.diagnostics,
+        )
 
     def test_notifications_and_bells_are_rate_limited(self) -> None:
         session = self.start("limits")

@@ -9489,6 +9489,10 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
       clipboard_eligible && active_reactor_environment->clipboard_read,
       clipboard_eligible && active_reactor_environment->clipboard_write);
   const auto pane_budget_before = pane_budget;
+  // A Pane already waiting to forward a notification keeps its place: later ones coalesce into
+  // the latest text without moving it behind other waiting Panes.
+  const bool notification_waiting =
+      runtime.outer_notifications != runtime.terminal.signals().notifications;
   const auto drained =
       drain_pty(runtime.pty, runtime.terminal, runtime.presentation_gate, runtime.pending_writes,
                 pane_budget, track_interactive_damage, trace_matcher);
@@ -9516,7 +9520,7 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
     runtime.signal_stamp = runtimes.issue_signal_stamp();
     session.signal_stamp = runtime.signal_stamp;
   }
-  if (drained.notification) {
+  if (drained.notification && !notification_waiting) {
     runtime.notification_stamp = runtime.signal_stamp;
   }
   if (drained.title_changed) {
