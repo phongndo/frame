@@ -30,6 +30,8 @@ struct SpawnPaneEffect final {
   PaneRectangle rectangle;
   std::string_view working_directory;
   std::span<const std::byte> command;
+  // Entered instead when working_directory cannot be entered at spawn; empty requires it.
+  std::string_view fallback_working_directory{}; // NOLINT(readability-redundant-member-init)
 };
 
 struct ResizePaneEffect final {
@@ -88,6 +90,8 @@ struct SessionTransition final {
 struct CreateTabOptions final {
   std::span<const std::byte> command;
   std::string_view working_directory;
+  // Entered instead when working_directory cannot be entered at spawn; empty requires it.
+  std::string_view fallback_working_directory{}; // NOLINT(readability-redundant-member-init)
   PaneExitPolicy exit_policy{PaneExitPolicy::close};
   bool activate{true};
 };
@@ -95,6 +99,8 @@ struct CreateTabOptions final {
 struct SplitPaneOptions final {
   std::span<const std::byte> command;
   std::string_view working_directory;
+  // Entered instead when working_directory cannot be entered at spawn; empty requires it.
+  std::string_view fallback_working_directory{}; // NOLINT(readability-redundant-member-init)
   PaneExitPolicy exit_policy{PaneExitPolicy::close};
   bool focus_created{true};
 };

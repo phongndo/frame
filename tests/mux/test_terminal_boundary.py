@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import fcntl
 import json
 import os
@@ -19,7 +20,13 @@ import unittest
 import zlib
 from pathlib import Path
 
-from tests.support.mux_harness import Client, LemmaServer, Session, wait_until
+from tests.support.mux_harness import (
+    Client,
+    LemmaServer,
+    Session,
+    process_exists,
+    wait_until,
+)
 
 
 class TerminalBoundaryMuxTest(unittest.TestCase):
@@ -710,10 +717,41 @@ time.sleep(60)
 PROGRESS_REMOVED = b"\x1b]9;4;0\x1b\\"
 
 
+# Three notifications spend the burst; later ones keep one waiting without landing next to the
+# refill five seconds after the first.
+NOTIFIER = """
+import os, sys, time
+sys.stdin.readline()
+for index in range(40):
+    os.write(1, b'\\x1b]9;a %d\\x07' % index)
+    time.sleep(0.05 if index < 2 else 0.8)
+time.sleep(60)
+"""
+# One notification, then progress changes every 20 ms, which also change the Pane's signals.
+PENDING_WITH_PROGRESS = """
+import os, sys, time
+sys.stdin.readline()
+os.write(1, b'\\x1b]9;b pending\\x07')
+for index in range(500):
+    os.write(1, b'\\x1b]9;4;1;%d\\x1b\\\\' % (index % 100))
+    time.sleep(0.02)
+time.sleep(60)
+"""
+PROGRESS_STEPS = """
+import os, sys, time
+sys.stdin.readline()
+for percent in range(1, 41):
+    os.write(1, b'\\x1b]9;4;1;%d\\x1b\\\\' % percent)
+    time.sleep(0.01)
+os.write(1, b'__STEPS_DONE__\\r\\n')
+sys.stdin.readline()
+"""
+
+
 class OuterAttentionMuxTest(unittest.TestCase):
     def setUp(self) -> None:
         self.server = LemmaServer.from_environment(
-            config_text='require("lemma").setup({})\n'
+            config_text='require("lemma").setup({ ui = { outer_progress = true } })\n'
         )
         self.addCleanup(self.server.close)
         self.emitted: dict[str, int] = {}
@@ -807,8 +845,9 @@ class OuterAttentionMuxTest(unittest.TestCase):
 
         # A background Tab's notification reaches the outer terminal immediately, titled with its
         # Session and Tab; the separator in the Tab name cannot split the OSC 777 fields.
+        # It also rings the bell, which terminals without OSC 777 still present.
         self.emit(session, background, b"\x1b]777;notify;Build;done\x1b\\")
-        client.expect_raw(b"\x1b]777;notify;notify: jobs x - Build;done\x1b\\")
+        client.expect_raw(b"\x1b]777;notify;notify: jobs x - Build;done\x1b\\\x07")
         self.emit(session, background, b"\x1b]9;plain body\x07")
         client.expect_raw(b"\x1b]777;notify;notify: jobs x;plain body\x1b\\")
 
@@ -822,7 +861,7 @@ class OuterAttentionMuxTest(unittest.TestCase):
         self.assertNotIn(b"first 0", client.process.output_tail)
         self.assertNotIn(b"\xc2\x9d", client.process.output_tail)
 
-        # Without forwarding, a notification rings the outer bell instead.
+        # Without notification forwarding, a notification only rings the outer bell.
         self.reload("outer_notifications = false")
         client.drain(0.2)
         bells = client.process.output_tail.count(b"\x07")
@@ -838,6 +877,31 @@ class OuterAttentionMuxTest(unittest.TestCase):
             diagnostics=client.diagnostics,
         )
         self.assertNotIn(b"quiet", client.process.output_tail)
+
+        # Without bell forwarding, neither BEL nor a notification rings.
+        self.reload("outer_bell = false")
+        client.drain(0.2)
+        bells = client.process.output_tail.count(b"\x07")
+        self.emit(session, background, b"\x07\x1b]9;silent\x07")
+        client.expect_raw(b"\x1b]777;notify;notify: jobs x;silent\x1b\\")
+        client.drain(0.3)
+        self.assertEqual(client.process.output_tail.count(b"\x07"), bells)
+
+    def test_pending_notification_is_not_starved_by_other_signals(self) -> None:
+        session = self.start("fair")
+        client = session.require_client()
+        noisy = self.new_tab(session, "noisy", sys.executable, "-c", NOTIFIER)
+        pending = self.new_tab(
+            session, "pending", sys.executable, "-c", PENDING_WITH_PROGRESS
+        )
+        time.sleep(0.2)
+        # The noisy Pane spends the burst and keeps a notification waiting at every refill.
+        self.emit(session, noisy, b"")
+        self.expect_notification(client, b"fair: noisy", b"a 2")
+        # The other Pane's notification then waits while its progress keeps changing. It arrived
+        # before the noisy Pane's later ones, so it is forwarded at the next refill.
+        self.emit(session, pending, b"")
+        self.expect_notification(client, b"fair: pending", b"b pending", timeout=8.0)
 
     def test_notifications_and_bells_are_rate_limited(self) -> None:
         session = self.start("limits")
@@ -943,6 +1007,64 @@ class OuterAttentionMuxTest(unittest.TestCase):
             tail.rfind(PROGRESS_REMOVED), tail.rfind(b"\x1b]9;4;2\x1b\\"), tail[-512:]
         )
 
+    def test_progress_is_coalesced_at_a_bounded_rate(self) -> None:
+        session = self.start("steps")
+        client = session.require_client()
+        pane = self.new_tab(session, "steps", sys.executable, "-c", PROGRESS_STEPS)
+        client.prefix("n")
+        self.server.wait_for_state(
+            session.name,
+            lambda state: state.focused_pane == pane,
+            "stepping Tab to be focused",
+        )
+        client.drain(0.2)
+        before = client.process.output_tail.count(b"\x1b]9;4;1;")
+        self.emit(session, pane, b"")
+        client.expect_output("__STEPS_DONE__")
+        # Forty changes within about 400 ms present a few intermediate values and the latest.
+        client.expect_raw(b"\x1b]9;4;1;40\x1b\\")
+        client.drain(0.3)
+        presented = client.process.output_tail.count(b"\x1b]9;4;1;") - before
+        self.assertLessEqual(presented, 5, client.diagnostics())
+
+    def test_ended_process_and_session_remove_progress(self) -> None:
+        # A held Pane whose process exited no longer reports progress.
+        script = (
+            "import os, sys\n"
+            "os.write(1, b'\\x1b]9;4;1;30\\x1b\\\\__HELD_READY__\\r\\n')\n"
+            "sys.stdin.readline()\n"
+        )
+        held = self.server.create_session(
+            "held", hold=True, command=(sys.executable, "-c", script)
+        )
+        client = held.require_client()
+        client.expect_raw(b"\x1b]9;4;1;30\x1b\\")
+        self.emit(held, held.state().focused_pane, b"")
+        wait_until(
+            "progress removal after the held process exits",
+            lambda: self.latest_after(client, PROGRESS_REMOVED, b"\x1b]9;4;1;30\x1b\\"),
+            diagnostics=client.diagnostics,
+        )
+        held.destroy()
+        with contextlib.suppress(RuntimeError):
+            client.wait_for_exit()  # The client exits unsuccessfully when its Session ends.
+
+        # A Session that ends while attached removes presented progress before its client exits.
+        session = self.start("ending")
+        client = session.require_client()
+        pane = session.state().focused_pane
+        self.emit(session, pane, b"\x1b]9;4;3\x1b\\")
+        client.expect_raw(b"\x1b]9;4;3\x1b\\")
+        self.server.require_command(
+            "send", "--session", session.name, "--pane", pane, "--key", "ctrl+d"
+        )
+        with contextlib.suppress(RuntimeError):
+            client.wait_for_exit()  # The client exits unsuccessfully when its Session ends.
+        tail = client.process.output_tail
+        self.assertGreater(
+            tail.rfind(PROGRESS_REMOVED), tail.rfind(b"\x1b]9;4;3\x1b\\"), tail[-512:]
+        )
+
     def test_focused_pane_directory_is_forwarded_and_inherited(self) -> None:
         session = self.start("cwd")
         client = session.require_client()
@@ -1005,6 +1127,22 @@ class OuterAttentionMuxTest(unittest.TestCase):
             client.expect_raw(b"\x1b]7;" + report + b"\x1b\\")
             created = split("--down")
             self.assertEqual(launch_cwd(created), fallback)
+            close(created)
+
+        # A directory the daemon's user cannot enter is not inherited, so the Pane still starts.
+        if os.geteuid() != 0:
+            locked = self.server.root / "locked"
+            locked.mkdir(mode=0o600)
+            self.addCleanup(locked.chmod, 0o700)
+            report = b"file://" + host + str(locked).encode()
+            self.emit_visible(session, pane, b"\x1b]7;" + report + b"\x1b\\")
+            created = split("--down")
+            self.assertEqual(launch_cwd(created), fallback)
+            time.sleep(0.3)
+            self.assertTrue(
+                process_exists(session.state().pane(created).pid),
+                self.server.diagnostics(session.name),
+            )
             close(created)
 
         # A report too long to forward whole is not truncated into another path.

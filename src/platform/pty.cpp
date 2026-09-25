@@ -166,14 +166,21 @@ auto capture_process_environment(const std::span<std::byte> output) noexcept
                                  const std::span<const std::byte> environment,
                                  const EnvironmentMode environment_mode,
                                  const std::span<const std::byte> launch_command,
-                                 const std::span<const EnvironmentVariable> overlay) noexcept
+                                 const std::span<const EnvironmentVariable> overlay,
+                                 const std::string_view fallback_working_directory) noexcept
     -> pid_t {
-  std::array<char, limits::working_directory_bytes_max + 1U> directory{};
-  if (working_directory.size() >= directory.size() || working_directory.contains('\0') ||
-      (!working_directory.empty() && working_directory.front() != '/')) {
+  using Directory = std::array<char, limits::working_directory_bytes_max + 1U>;
+  const auto valid_directory = [](const std::string_view path) {
+    return path.size() < Directory{}.size() && !path.contains('\0') &&
+           (path.empty() || path.front() == '/');
+  };
+  Directory directory{};
+  Directory fallback{};
+  if (!valid_directory(working_directory) || !valid_directory(fallback_working_directory)) {
     return -1;
   }
   std::ranges::copy(working_directory, directory.begin());
+  std::ranges::copy(fallback_working_directory, fallback.begin());
   std::array<char, limits::environment_bytes_max> environment_copy{};
   if (environment.size() > environment_copy.size()) {
     return -1;
@@ -224,11 +231,21 @@ auto capture_process_environment(const std::span<std::byte> output) noexcept
     ::_exit(127);
   }
 
-  if ((!working_directory.empty() && ::chdir(directory.data()) != 0) ||
-      !install_environment(std::span(environment_copy).first(environment.size()),
+  // A directory can become unenterable between validation and exec; an inherited directory then
+  // yields to its fallback rather than failing the Pane.
+  const char* entered = nullptr;
+  if (!working_directory.empty()) {
+    if (::chdir(directory.data()) == 0) {
+      entered = directory.data();
+    } else if (!fallback_working_directory.empty() && ::chdir(fallback.data()) == 0) {
+      entered = fallback.data();
+    } else {
+      ::_exit(127);
+    }
+  }
+  if (!install_environment(std::span(environment_copy).first(environment.size()),
                            environment_mode) ||
-      (!working_directory.empty() && ::setenv("PWD", directory.data(), 1) != 0) ||
-      !install_overlay(overlay) ||
+      (entered != nullptr && ::setenv("PWD", entered, 1) != 0) || !install_overlay(overlay) ||
       // terminal_name is backed by a null-terminated string literal.
       // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage)
       ::setenv("TERM", terminal_name.data(), 1) != 0 ||

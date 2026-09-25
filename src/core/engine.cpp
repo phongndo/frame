@@ -68,6 +68,7 @@
 #include <variant>
 #include <vector>
 
+#include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -254,6 +255,11 @@ private:
 [[nodiscard]] auto reactor_outer_title() noexcept -> bool {
   LEMMA_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->outer_title;
+}
+
+[[nodiscard]] auto reactor_outer_bell() noexcept -> bool {
+  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  return active_reactor_environment->outer_bell;
 }
 
 [[nodiscard]] auto reactor_outer_notifications() noexcept -> bool {
@@ -918,7 +924,9 @@ struct EncodedContextId final {
     const std::span<const std::byte> environment, const LaunchEnvironmentMode environment_mode,
     const vt::TerminalTheme& theme, const SessionId session_id, const std::string_view session_name,
     const TabId tab_id, const PaneId pane_id, const std::span<const std::byte> launch_command = {},
-    const protocol::CellSize cell = {}) noexcept -> std::unique_ptr<PaneRuntime> {
+    const protocol::CellSize cell = {},
+    const std::string_view fallback_working_directory = {}) noexcept
+    -> std::unique_ptr<PaneRuntime> {
   vt::TerminalOptions options;
   options.size = {
       .columns = columns, .rows = rows, .cell_width_px = cell.width, .cell_height_px = cell.height};
@@ -947,9 +955,9 @@ struct EncodedContextId final {
       platform::EnvironmentVariable{.name = "LEMMA_TAB_ID", .value = encoded_tab.view()},
       platform::EnvironmentVariable{.name = "LEMMA_PANE_ID", .value = encoded_pane.view()},
   };
-  runtime->child =
-      platform::spawn_process(runtime->pty, working_directory, environment,
-                              platform_environment_mode(environment_mode), launch_command, overlay);
+  runtime->child = platform::spawn_process(runtime->pty, working_directory, environment,
+                                           platform_environment_mode(environment_mode),
+                                           launch_command, overlay, fallback_working_directory);
   if (runtime->child <= 0 || !set_nonblocking(runtime->pty) ||
       !platform::resize_pty(runtime->pty, columns, rows, options.size.cell_width_px,
                             options.size.cell_height_px)) {
@@ -1150,11 +1158,11 @@ struct ProductionSessionRuntimeContext final {
       !owner.runtimes->can_reserve_scrollback(limits::terminal_scrollback_bytes_default)) {
     return RuntimeEffectStatus::rejected;
   }
-  auto runtime =
-      create_pane_runtime(effect.rectangle.columns, effect.rectangle.rows, effect.working_directory,
-                          session.launch_environment(), session.environment_mode, session.theme,
-                          session.id, session.session_name(), effect.tab, effect.pane,
-                          effect.command, session.attachment_runtime.cell_size);
+  auto runtime = create_pane_runtime(
+      effect.rectangle.columns, effect.rectangle.rows, effect.working_directory,
+      session.launch_environment(), session.environment_mode, session.theme, session.id,
+      session.session_name(), effect.tab, effect.pane, effect.command,
+      session.attachment_runtime.cell_size, effect.fallback_working_directory);
   if (runtime == nullptr) {
     return RuntimeEffectStatus::rejected;
   }
@@ -2602,18 +2610,31 @@ void service_copy_input_timeout(SessionRecord& session, PaneRuntimeStore& runtim
 
 using InheritedDirectory = std::array<char, limits::working_directory_bytes_max + 1U>;
 
+struct LaunchDirectory final {
+  std::string_view directory;
+  // Entered instead if an inherited directory cannot be entered at spawn.
+  std::string_view fallback;
+};
+
 // A new Pane without an explicit directory starts where the reference Pane last reported through
-// OSC 7, when that names an existing directory on this host. Otherwise the configured launch
-// default applies. Remote (SSH) reports and stale directories fall back rather than failing spawn.
-[[nodiscard]] auto default_directory(const SessionRecord& session, const PaneRuntimeStore& runtimes,
-                                     const Pane* const reference,
-                                     InheritedDirectory& storage) noexcept -> std::string_view {
+// OSC 7, when that names a directory on this host that the daemon's user can enter. Otherwise the
+// configured launch default applies. Remote (SSH), stale, and unenterable reports fall back rather
+// than failing spawn; the child repeats the fallback if the directory changes before it enters.
+[[nodiscard]] auto launch_directory(const SessionRecord& session, const PaneRuntimeStore& runtimes,
+                                    const Pane* const reference,
+                                    const std::string_view explicit_cwd,
+                                    InheritedDirectory& storage) noexcept -> LaunchDirectory {
+  if (!explicit_cwd.empty()) {
+    return {.directory = explicit_cwd, .fallback = {}};
+  }
+  const auto fallback = reactor_default_cwd();
+  const LaunchDirectory configured{.directory = fallback, .fallback = {}};
   const auto* const runtime =
       reference == nullptr ? nullptr : find_pane_runtime(runtimes, session, *reference);
   const auto uri =
       runtime == nullptr ? std::expected<std::string_view, vt::Error>{} : runtime->terminal.pwd();
   if (!uri.has_value() || uri->empty()) {
-    return reactor_default_cwd();
+    return configured;
   }
   std::array<char, 256> host{};
   const auto host_size =
@@ -2621,14 +2642,15 @@ using InheritedDirectory = std::array<char, limits::working_directory_bytes_max 
   const auto directory = local_directory_from_osc7(*uri, std::string_view(host.data(), host_size),
                                                    std::span(storage).first(storage.size() - 1U));
   if (!directory.has_value()) {
-    return reactor_default_cwd();
+    return configured;
   }
   std::span(storage).subspan(directory->size(), 1).front() = '\0';
   struct stat status{};
-  if (::stat(storage.data(), &status) != 0 || !S_ISDIR(status.st_mode)) {
-    return reactor_default_cwd();
+  if (::stat(storage.data(), &status) != 0 || !S_ISDIR(status.st_mode) ||
+      ::faccessat(AT_FDCWD, storage.data(), X_OK, AT_EACCESS) != 0) {
+    return configured;
   }
-  return *directory;
+  return {.directory = *directory, .fallback = fallback.empty() ? session.cwd() : fallback};
 }
 
 [[nodiscard]] auto create_tab(SessionRecord& session, PaneRuntimeStore& runtimes,
@@ -2641,15 +2663,13 @@ using InheritedDirectory = std::array<char, limits::working_directory_bytes_max 
   const auto command = launch_command.empty() ? reactor_default_program() : launch_command;
   InheritedDirectory inherited;
   const auto* const current = active_tab(session);
-  const auto directory =
-      working_directory.empty()
-          ? default_directory(
-                session, runtimes,
-                current == nullptr ? nullptr : find_pane(session, *current, current->focused_pane),
-                inherited)
-          : working_directory;
+  const auto directory = launch_directory(
+      session, runtimes,
+      current == nullptr ? nullptr : find_pane(session, *current, current->focused_pane),
+      working_directory, inherited);
   const auto transition = machine.create_tab({.command = command,
-                                              .working_directory = directory,
+                                              .working_directory = directory.directory,
+                                              .fallback_working_directory = directory.fallback,
                                               .exit_policy = exit_policy,
                                               .activate = activate});
   apply_session_change(session, runtimes, transition.change);
@@ -2669,13 +2689,12 @@ using InheritedDirectory = std::array<char, limits::working_directory_bytes_max 
   SessionMachine machine(session, production_session_options(runtime_context));
   const auto command = launch_command.empty() ? reactor_default_program() : launch_command;
   InheritedDirectory inherited;
-  const auto directory =
-      working_directory.empty()
-          ? default_directory(session, runtimes, find_pane(session, tab, source_pane), inherited)
-          : working_directory;
+  const auto directory = launch_directory(session, runtimes, find_pane(session, tab, source_pane),
+                                          working_directory, inherited);
   const auto transition = machine.split_pane(tab.id, source_pane, axis,
                                              {.command = command,
-                                              .working_directory = directory,
+                                              .working_directory = directory.directory,
+                                              .fallback_working_directory = directory.fallback,
                                               .exit_policy = exit_policy,
                                               .focus_created = focus_created});
   apply_session_change(session, runtimes, transition.change);
@@ -5741,12 +5760,37 @@ void record_reaped_child(Sessions& sessions, PaneRuntimeStore& runtimes,
   return reaped;
 }
 
+[[nodiscard]] auto queue_outer_progress_removal(SessionRecord& session) noexcept -> bool;
+[[nodiscard]] auto write_attached_client(void* context, std::span<const std::byte> bytes) noexcept
+    -> ClientFrameWriteAttempt;
+
+// An ending Session closes its client without a disconnect exchange. Progress has no outer
+// save/restore, so a presented indicator gets one nonblocking removal attempt first; a busy or
+// full socket leaves it.
+void remove_outer_progress_before_close(SessionRecord& session) noexcept {
+  auto& attachment = session.attachment_runtime;
+  if (attachment.client < 0 || attachment.output.busy() ||
+      attachment.outer_attention.progress == vt::ProgressState::none ||
+      !queue_outer_progress_removal(session)) {
+    return;
+  }
+  attachment.output.mark_write_ready();
+  ClientFrameFlushTarget target{.descriptor = attachment.client,
+                                .frame = &attachment.frame,
+                                .output = &attachment.output,
+                                .write = &write_attached_client,
+                                .context = &session};
+  std::size_t budget = attached_client_write_bytes_per_client_turn_max;
+  static_cast<void>(flush_client_frame(target, budget, reactor_now()));
+}
+
 void reclaim_inactive_sessions(Sessions& sessions, PaneRuntimeStore& runtimes,
                                extension::Runtime& extensions) noexcept {
   for (auto& session : sessions) {
     if (session != nullptr && !session->active &&
         session->attachment_runtime.pending_attach_slot ==
             std::numeric_limits<std::uint32_t>::max()) {
+      remove_outer_progress_before_close(*session);
       const auto id = session->id;
       extensions.revoke_session(id);
       runtimes.erase_session(id);
@@ -9459,18 +9503,21 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
   if (drained.failure.has_value()) {
     runtime.fail(*drained.failure);
   }
-  // Attention reaches only a connected client; attaching starts from the current values.
+  // Attention reaches only a connected client; attaching starts from the current values. A
+  // notification also rings the bell, which every outer terminal presents.
   const bool attention =
       session.attachment_runtime.client >= 0 && (drained.bell || drained.notification);
   if (attention) {
-    session.attachment_runtime.bell_pending =
-        session.attachment_runtime.bell_pending || drained.bell;
+    session.attachment_runtime.bell_pending = true;
     session.attachment_runtime.outer_attention.notification_pending =
         session.attachment_runtime.outer_attention.notification_pending || drained.notification;
   }
   if (drained.signal) {
     runtime.signal_stamp = runtimes.issue_signal_stamp();
     session.signal_stamp = runtime.signal_stamp;
+  }
+  if (drained.notification) {
+    runtime.notification_stamp = runtime.signal_stamp;
   }
   if (drained.title_changed) {
     session.attachment_runtime.status_valid = false;
@@ -10619,6 +10666,7 @@ void service_configuration_reload(ReactorEnvironment& environment, ReloadState& 
     environment.clipboard_write = generation.clipboard_write();
     const auto outer = generation.outer();
     environment.outer_title = outer.title;
+    environment.outer_bell = outer.bell;
     environment.outer_notifications = outer.notifications;
     environment.outer_progress = outer.progress;
     environment.outer_cwd = outer.cwd;

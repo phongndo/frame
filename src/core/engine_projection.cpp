@@ -526,9 +526,9 @@ void request_outer_attention_retry(OuterAttention& attention,
   attention.retry_at = attention.retry_at.has_value() ? std::min(*attention.retry_at, at) : at;
 }
 
-// Forwards the latest notification of the Pane whose unforwarded notification changed earliest,
+// Forwards the latest notification of the Pane whose unforwarded notification arrived earliest,
 // at most one per frame. Several notifications from one Pane before forwarding coalesce into its
-// latest. With forwarding disabled, notifications ring the bell instead.
+// latest. With forwarding disabled, notifications only ring the bell.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void present_outer_notification(SessionRecord& session, PaneRuntimeStore& runtimes,
                                 const std::span<std::byte> output, std::size_t& used,
@@ -551,11 +551,10 @@ void present_outer_notification(SessionRecord& session, PaneRuntimeStore& runtim
     }
     if (!reactor_outer_notifications()) {
       runtime->outer_notifications = runtime->terminal.signals().notifications;
-      session.attachment_runtime.bell_pending = true;
       continue;
     }
     ++waiting;
-    if (chosen == nullptr || runtime->signal_stamp < chosen->signal_stamp) {
+    if (chosen == nullptr || runtime->notification_stamp < chosen->notification_stamp) {
       chosen = runtime;
       chosen_pane = slot.pane.get();
     }
@@ -611,6 +610,34 @@ struct FocusedPaneRuntime final {
                                   .runtime = find_pane_runtime(runtimes, session, *tab, *pane)};
 }
 
+// The focused Pane's progress, coalesced to its latest value at a bounded rate. A Pane whose
+// process has exited reports none, even while held.
+void present_outer_progress(OuterAttention& attention, const FocusedPaneRuntime focused,
+                            const std::span<std::byte> output, std::size_t& used,
+                            const AttentionRateLimit::TimePoint now) noexcept {
+  auto progress = vt::ProgressState::none;
+  std::optional<std::uint8_t> percent;
+  if (reactor_outer_progress() && focused.runtime != nullptr &&
+      !focused.pane->process_exit.has_value() && !focused.runtime->observed_exit.has_value()) {
+    progress = focused.runtime->terminal.signals().progress;
+    percent = focused.runtime->terminal.signals().progress_percent;
+  }
+  if (progress == attention.progress && percent == attention.progress_percent) {
+    return;
+  }
+  if (attention.progress_presented_at.has_value() &&
+      now < *attention.progress_presented_at + outer_progress_interval) {
+    request_outer_attention_retry(attention,
+                                  *attention.progress_presented_at + outer_progress_interval);
+    return;
+  }
+  if (append_outer_progress(output, used, progress, percent)) {
+    attention.progress = progress;
+    attention.progress_percent = percent;
+    attention.progress_presented_at = now;
+  }
+}
+
 // Bells from any Pane ring once per frame, paced by the attachment's bell budget. Progress and
 // working directory follow the focused Pane of the active Tab and are sent only on change.
 void append_outer_attention(SessionRecord& session, PaneRuntimeStore& runtimes,
@@ -619,25 +646,17 @@ void append_outer_attention(SessionRecord& session, PaneRuntimeStore& runtimes,
   auto& attachment = session.attachment_runtime;
   auto& attention = attachment.outer_attention;
   present_outer_notification(session, runtimes, output, used, now);
-  if (attachment.bell_pending) {
+  if (attachment.bell_pending && reactor_outer_bell()) {
     if (!attention.bells.take(now)) {
       request_outer_attention_retry(attention, attention.bells.next_token());
     } else if (append_outer_bytes(output, used, "\x07")) {
       attachment.bell_pending = false;
     }
+  } else {
+    attachment.bell_pending = false;
   }
   const auto focused = focused_pane_runtime(session, runtimes);
-  auto progress = vt::ProgressState::none;
-  std::optional<std::uint8_t> percent;
-  if (reactor_outer_progress() && focused.runtime != nullptr) {
-    progress = focused.runtime->terminal.signals().progress;
-    percent = focused.runtime->terminal.signals().progress_percent;
-  }
-  if ((progress != attention.progress || percent != attention.progress_percent) &&
-      append_outer_progress(output, used, progress, percent)) {
-    attention.progress = progress;
-    attention.progress_percent = percent;
-  }
+  present_outer_progress(attention, focused, output, used, now);
   if (!reactor_outer_cwd() || focused.runtime == nullptr) {
     return;
   }

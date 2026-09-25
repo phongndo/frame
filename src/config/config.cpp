@@ -638,6 +638,8 @@ auto encode(const Configuration& configuration) -> std::optional<std::string> {
     output += configuration.ui.status_line ? "true" : "false";
     output += R"(,"outer_title":)";
     output += configuration.ui.outer.title ? "true" : "false";
+    output += R"(,"outer_bell":)";
+    output += configuration.ui.outer.bell ? "true" : "false";
     output += R"(,"outer_notifications":)";
     output += configuration.ui.outer.notifications ? "true" : "false";
     output += R"(,"outer_progress":)";
@@ -700,9 +702,9 @@ auto decode(const api::JsonValue& document) noexcept -> DecodeResult {
   if (!known_members(document,
                      {"schema", "preset", "prefix", "contexts", "bindings", "scrollback_lines",
                       "status_line", "default_cwd", "history_file", "default_program", "extensions",
-                      "clipboard_read", "clipboard_write", "outer_title", "outer_notifications",
-                      "outer_progress", "outer_cwd"}) ||
-      (document.object.size() < 10U || document.object.size() > 17U)) {
+                      "clipboard_read", "clipboard_write", "outer_title", "outer_bell",
+                      "outer_notifications", "outer_progress", "outer_cwd"}) ||
+      (document.object.size() < 10U || document.object.size() > 18U)) {
     return {.configuration = std::nullopt,
             .failure = {.error = Error::invalid_document, .field = {}}};
   }
@@ -815,7 +817,8 @@ auto decode(const api::JsonValue& document) noexcept -> DecodeResult {
     result.terminal.scrollback_lines = static_cast<std::size_t>(*lines);
   }
   for (const auto name : {std::string_view{"clipboard_read"}, std::string_view{"clipboard_write"},
-                          std::string_view{"outer_title"}, std::string_view{"outer_notifications"},
+                          std::string_view{"outer_title"}, std::string_view{"outer_bell"},
+                          std::string_view{"outer_notifications"},
                           std::string_view{"outer_progress"}, std::string_view{"outer_cwd"}}) {
     if (api::json_member(document, name) == nullptr) {
       continue;
@@ -831,6 +834,8 @@ auto decode(const api::JsonValue& document) noexcept -> DecodeResult {
       result.terminal.clipboard_write = *allowed;
     } else if (name == "outer_title") {
       result.ui.outer.title = *allowed;
+    } else if (name == "outer_bell") {
+      result.ui.outer.bell = *allowed;
     } else if (name == "outer_notifications") {
       result.ui.outer.notifications = *allowed;
     } else if (name == "outer_progress") {

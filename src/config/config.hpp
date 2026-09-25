@@ -32,8 +32,10 @@ struct TerminalConfiguration final {
 // docs/usage.md#attention-and-directory and #window-title.
 struct OuterPresentation final {
   bool title{true};
+  bool bell{true};
   bool notifications{true};
-  bool progress{true};
+  // Off by default: terminals without OSC 9;4 can show each report as an OSC 9 notification.
+  bool progress{false};
   bool cwd{true};
 };
 

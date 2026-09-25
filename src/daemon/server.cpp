@@ -608,6 +608,7 @@ void release_owned_endpoint(void* const context) noexcept {
     reactor_environment.status_line = configured_runtime.generation->status_line();
     const auto outer = configured_runtime.generation->outer();
     reactor_environment.outer_title = outer.title;
+    reactor_environment.outer_bell = outer.bell;
     reactor_environment.outer_notifications = outer.notifications;
     reactor_environment.outer_progress = outer.progress;
     reactor_environment.outer_cwd = outer.cwd;

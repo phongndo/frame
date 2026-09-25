@@ -123,6 +123,8 @@ inline constexpr std::uint8_t outer_bell_burst = 4;
 inline constexpr auto outer_bell_interval = std::chrono::milliseconds{250};
 inline constexpr std::uint8_t outer_notification_burst = 3;
 inline constexpr auto outer_notification_interval = std::chrono::seconds{5};
+// Progress changes coalesce to the latest value, presented at most four times per second.
+inline constexpr auto outer_progress_interval = std::chrono::milliseconds{250};
 
 // Presentation shadow of the attention forwarded to one client connection. Signal values stay in
 // each Pane's terminal; this retains only what was presented and delivery pacing, and moves with
@@ -138,6 +140,7 @@ struct OuterAttention final {
   std::uint64_t cwd_changes{0};
   vt::ProgressState progress{vt::ProgressState::none};
   std::optional<std::uint8_t> progress_percent;
+  std::optional<AttentionRateLimit::TimePoint> progress_presented_at;
   // Some Pane's notification count may exceed its forwarded count.
   bool notification_pending{false};
 };

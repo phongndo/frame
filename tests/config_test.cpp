@@ -70,7 +70,8 @@ TEST(ConfigurationTest, RoundTripsAndCompilesOneCompleteGeneration) {
   ASSERT_TRUE(source.input.set_prefix(prefix_chord));
   source.terminal.scrollback_lines = 12'345;
   source.ui.status_line = false;
-  source.ui.outer = {.title = false, .notifications = false, .progress = true, .cwd = false};
+  source.ui.outer = {
+      .title = false, .bell = false, .notifications = false, .progress = true, .cwd = false};
   source.launch.default_cwd = "/tmp";
   source.launch.default_program = {"/bin/sh", "-l"};
   source.history.file = "/tmp/lemma-history";
@@ -93,6 +94,7 @@ TEST(ConfigurationTest, RoundTripsAndCompilesOneCompleteGeneration) {
   EXPECT_EQ(compiled->scrollback_lines(), 12'345U);
   EXPECT_FALSE(compiled->status_line());
   EXPECT_FALSE(compiled->outer().title);
+  EXPECT_FALSE(compiled->outer().bell);
   EXPECT_FALSE(compiled->outer().notifications);
   EXPECT_TRUE(compiled->outer().progress);
   EXPECT_FALSE(compiled->outer().cwd);
@@ -139,8 +141,8 @@ end
 lemma.setup({
   input = { prefix = "C-a" },
   terminal = { scrollback_lines = 12345 },
-  ui = { status_line = false, outer_title = false, outer_notifications = false,
-         outer_progress = false, outer_cwd = false },
+  ui = { status_line = false, outer_title = false, outer_bell = false,
+         outer_notifications = false, outer_progress = true, outer_cwd = false },
   launch = { default_cwd = "/tmp", default_program = { "/bin/sh", "-l" } },
   history = { file = "/tmp/lemma-history" },
 })
@@ -162,8 +164,9 @@ lemma.keymap.del("prefix", "%")
   EXPECT_EQ(loaded.generation->scrollback_lines(), 12'345U);
   EXPECT_FALSE(loaded.generation->status_line());
   EXPECT_FALSE(loaded.generation->outer().title);
+  EXPECT_FALSE(loaded.generation->outer().bell);
   EXPECT_FALSE(loaded.generation->outer().notifications);
-  EXPECT_FALSE(loaded.generation->outer().progress);
+  EXPECT_TRUE(loaded.generation->outer().progress);
   EXPECT_FALSE(loaded.generation->outer().cwd);
   EXPECT_EQ(loaded.generation->default_cwd(), "/tmp");
   EXPECT_EQ(loaded.generation->history_file(), "/tmp/lemma-history");
@@ -278,9 +281,9 @@ lemma.setup({ unknown = {} })
 // GoogleTest assertions inflate the measured branch count.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(ConfigurationHostTest, RejectsInvalidUiOptions) {
-  for (const auto* const ui :
-       {"{ outer_title = 'yes' }", "{ status_line = 1 }", "{ title = true }",
-        "{ outer_notifications = 'osc9' }", "{ outer_progress = 1 }", "{ outer_cwd = 0 }"}) {
+  for (const auto* const ui : {"{ outer_title = 'yes' }", "{ status_line = 1 }", "{ title = true }",
+                               "{ outer_notifications = 'osc9' }", "{ outer_progress = 1 }",
+                               "{ outer_cwd = 0 }", "{ outer_bell = 'visual' }"}) {
     TemporaryConfig file(std::string("require('lemma').setup({ ui = ") + ui + " })\n");
     ASSERT_TRUE(file.valid());
     const auto loaded = extension::load_configuration(file.path());

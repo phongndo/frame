@@ -68,6 +68,55 @@ TEST(PlatformPtyTest, LaunchWorkingDirectoryOverridesStalePwdEnvironment) {
   EXPECT_TRUE(output.starts_with("/\r\n")) << output;
 }
 
+// GoogleTest assertions and explicit PTY child setup inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(PlatformPtyTest, UnenterableWorkingDirectoryUsesTheFallback) {
+  std::string command{"/bin/sh"};
+  command.push_back('\0');
+  command += "-c";
+  command.push_back('\0');
+  command += R"(pwd; printf '%s\n' "$PWD")";
+  command.push_back('\0');
+  int descriptor = -1;
+
+  const auto child =
+      spawn_process(descriptor, "/nonexistent/lemma-directory", {}, EnvironmentMode::inherit,
+                    std::as_bytes(std::span(command.data(), command.size())), {}, "/");
+  ASSERT_GT(child, 0);
+  ASSERT_GE(descriptor, 0);
+
+  std::string output;
+  std::array<char, 64> buffer{};
+  while (true) {
+    const auto received = ::read(descriptor, buffer.data(), buffer.size());
+    if (received > 0) {
+      output.append(buffer.data(), static_cast<std::size_t>(received));
+      continue;
+    }
+    if (received < 0 && errno == EINTR) {
+      continue;
+    }
+    break;
+  }
+  int status = 0;
+  ASSERT_EQ(::waitpid(child, &status, 0), child);
+  static_cast<void>(::close(descriptor));
+
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+  EXPECT_EQ(output, "/\r\n/\r\n");
+
+  // Without a fallback, an unenterable directory still fails the child.
+  const auto failed =
+      spawn_process(descriptor, "/nonexistent/lemma-directory", {}, EnvironmentMode::inherit,
+                    std::as_bytes(std::span(command.data(), command.size())));
+  ASSERT_GT(failed, 0);
+  ASSERT_EQ(::waitpid(failed, &status, 0), failed);
+  static_cast<void>(::close(descriptor));
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 127);
+}
+
 TEST(PlatformPtyTest, ResizeReachesSlaveGeometry) {
   std::array<int, 2> descriptors{};
   winsize initial{.ws_row = 24, .ws_col = 80, .ws_xpixel = 0, .ws_ypixel = 0};

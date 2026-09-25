@@ -123,9 +123,11 @@ All `lemma.setup()` groups and fields are optional:
   [managed extensions](extensions.md#managed-programs) to retain those native editors with custom UI.
 - `ui.outer_title` is Boolean and defaults to `true`. It enables the outer
   [window title](usage.md#window-title).
-- `ui.outer_notifications`, `ui.outer_progress`, and `ui.outer_cwd` are Boolean and default to
-  `true`. They forward desktop notifications, progress, and the working directory to the outer
-  terminal as described in [Attention and directory](usage.md#attention-and-directory).
+- `ui.outer_bell`, `ui.outer_notifications`, and `ui.outer_cwd` are Boolean and default to `true`;
+  `ui.outer_progress` is Boolean and defaults to `false`. They forward bells, desktop notifications,
+  the working directory, and progress to the outer terminal as described in
+  [Attention and directory](usage.md#attention-and-directory). Enable progress only for an outer
+  terminal that supports OSC 9;4.
 - `launch.default_cwd` is empty or an absolute path. It applies when creation does not specify
   `--cwd` and, for a split or new Tab, the source Pane has no usable
   [OSC 7 directory](usage.md#sessions-tabs-and-panes).

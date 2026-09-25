@@ -108,8 +108,10 @@ struct PaneRuntime final {
   // the application reports one. The signal values themselves remain owned by the terminal.
   std::uint64_t signal_stamp{0};
   // Terminal notification count already forwarded to (or deliberately skipped for) the attached
-  // client's outer terminal.
+  // client's outer terminal, and the signal stamp of the latest notification, which orders
+  // forwarding independently of this Pane's other signal changes.
   std::uint64_t outer_notifications{0};
+  std::uint64_t notification_stamp{0};
   std::size_t scrollback_bytes_reserved{0};
   std::chrono::steady_clock::time_point compression_deadline;
   bool compression_scheduled{false};
@@ -385,6 +387,7 @@ static_assert(sizeof(SessionRecord) <= std::size_t{96} * 1'024U);
 [[nodiscard]] auto reactor_input_map() noexcept -> const input::CompiledInputMap&;
 [[nodiscard]] auto reactor_status_line() noexcept -> bool;
 [[nodiscard]] auto reactor_outer_title() noexcept -> bool;
+[[nodiscard]] auto reactor_outer_bell() noexcept -> bool;
 [[nodiscard]] auto reactor_outer_notifications() noexcept -> bool;
 [[nodiscard]] auto reactor_outer_progress() noexcept -> bool;
 [[nodiscard]] auto reactor_outer_cwd() noexcept -> bool;

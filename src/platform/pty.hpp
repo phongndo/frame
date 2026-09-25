@@ -29,12 +29,14 @@ struct EnvironmentVariable final {
 // Spawns an exact NUL-separated argv, or the account's login shell when launch_command is empty,
 // with a new controlling PTY. The parent receives the child PID and master descriptor; the child
 // replaces itself or exits with status 127. Replacement clears the inherited environment even when
-// the supplied snapshot is empty.
+// the supplied snapshot is empty. When the child cannot enter working_directory, it enters a
+// nonempty fallback_working_directory instead of exiting.
 [[nodiscard]] auto spawn_process(int& pty_descriptor, std::string_view working_directory = {},
                                  std::span<const std::byte> environment = {},
                                  EnvironmentMode environment_mode = EnvironmentMode::inherit,
                                  std::span<const std::byte> launch_command = {},
-                                 std::span<const EnvironmentVariable> overlay = {}) noexcept
+                                 std::span<const EnvironmentVariable> overlay = {},
+                                 std::string_view fallback_working_directory = {}) noexcept
     -> pid_t;
 
 [[nodiscard]] auto resize_pty(int pty_descriptor, std::uint16_t columns, std::uint16_t rows,

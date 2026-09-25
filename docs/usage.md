@@ -83,7 +83,8 @@ Arguments after `--` execute directly without shell interpretation. When `--cwd`
 command is omitted, the configured launch default applies; without configuration Lemma uses the
 account home and login shell. A split or new Tab without `--cwd`, from any frontend, instead starts
 in the directory its source Pane (the split Pane, or the active Tab's focused Pane) last reported
-with OSC 7, when that report names an existing directory on the daemon's host. Pane processes
+with OSC 7, when that report names a directory on the daemon's host that its user can enter. If
+the directory becomes unenterable before the process starts, it uses the launch default. Pane processes
 normally keep running without `--hold`; `--hold` retains the Pane and its terminal after the
 process exits.
 
@@ -348,21 +349,25 @@ unchanged; disabling it by reload restores the saved title.
 While attached, applications in the Session reach the outer terminal much as they would if run
 there directly:
 
-- **Bells.** A BEL from any Pane rings the outer terminal. Bells handled in one frame ring once.
-  After a burst of four, at most one bell per 250 ms is sent; a paced bell rings when the budget
-  refills rather than being lost.
-- **Notifications.** An OSC 9 or OSC 777 desktop notification from any Pane is sent as OSC 777
+- **Bells.** A BEL or desktop notification from any Pane rings the outer terminal, so every
+  terminal presents some attention. Bells handled in one frame ring once. After a burst of four, at
+  most one bell per 250 ms is sent; a paced bell rings when the budget refills rather than being
+  lost.
+- **Notifications.** An OSC 9 or OSC 777 desktop notification from any Pane is also sent as OSC 777
   `notify`, which Ghostty and foot, among others, support; terminals without it ignore it. OSC 9
   cannot carry a title and its body is ambiguous with ConEmu's numbered OSC 9 commands. The title is
   `SESSION: TAB`, the Tab's status-row label, followed by ` - TITLE` when the application supplied
   one. Control characters and malformed UTF-8 are removed, `;` in the title becomes a space, and
   the title and body are truncated at character boundaries to 256 bytes and 1 KiB. After a burst of
-  three, at most one is sent per five seconds; a Pane's notifications waiting for that budget
-  coalesce into its latest.
-- **Progress.** The active Tab's focused Pane's OSC 9;4 progress is forwarded and follows focus as
-  the window title does. Focusing a Pane without progress, or that Pane ending, removes the outer
-  indicator. A requested detach removes it before the client exits; a Session ending while attached
-  does not.
+  three, at most one is sent per five seconds, oldest arrival first; a Pane's notifications waiting
+  for that budget coalesce into its latest.
+- **Progress** (opt-in). The active Tab's focused Pane's OSC 9;4 progress is forwarded and follows
+  focus as the window title does, coalesced to its latest value at most four times per second. It
+  is off by default because there is no capability report: a terminal that implements OSC 9
+  notifications but not OSC 9;4 can show each report as a notification. Focusing a Pane without
+  progress, or whose process has exited, removes the outer indicator. A requested detach removes
+  it before the client exits, and a Session that ends while attached makes one nonblocking attempt
+  to remove it before closing the connection.
 - **Directory.** The focused Pane's OSC 7 report is forwarded unchanged when it changes or focus
   moves, so an outer "new tab here" action starts there. A report longer than 2 KiB or containing
   control characters is not forwarded rather than altered, and focusing a Pane that has not reported
@@ -371,9 +376,8 @@ there directly:
 
 Only attention arriving while a client is attached is forwarded; attaching or switching Sessions
 does not replay earlier bells or notifications, which remain available as
-[Pane signals](api.md#pane-signals). Set [`ui.outer_notifications`, `ui.outer_progress`, or
-`ui.outer_cwd`](configuration.md#api) to `false` to stop that forwarding; without notification
-forwarding, a notification rings the bell instead.
+[Pane signals](api.md#pane-signals). The [`ui.outer_bell`, `ui.outer_notifications`,
+`ui.outer_progress`, and `ui.outer_cwd`](configuration.md#api) options control each kind.
 
 ### Kitty graphics
 
