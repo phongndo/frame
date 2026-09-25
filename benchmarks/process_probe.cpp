@@ -376,11 +376,13 @@ void drain_outer(const int descriptor) noexcept {
   return {};
 }
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] auto read_interaction(const int outer_descriptor, const int receipt_descriptor,
-                                    const std::string_view receipt_marker,
-                                    const std::string_view output_token,
-                                    const std::uint64_t started_ns) -> InteractionResult {
+// A receipt suffix, when requested, carries fixture-observed state after "MARKER ".
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+[[nodiscard]] auto
+read_interaction(const int outer_descriptor, const int receipt_descriptor,
+                 const std::string_view receipt_marker, const std::string_view output_token,
+                 const std::uint64_t started_ns, std::string* const receipt_suffix = nullptr)
+    -> InteractionResult {
   InteractionResult result;
   std::string retained;
   retained.reserve(output_token.size() + read_bytes_max);
@@ -407,9 +409,20 @@ void drain_outer(const int descriptor) noexcept {
 
     if ((events.front().revents & POLLIN) != 0) {
       std::string received;
-      if (!receive_datagram(receipt_descriptor, received) || received != receipt_marker ||
-          result.key_to_pty_ns != 0) {
+      if (!receive_datagram(receipt_descriptor, received) || result.key_to_pty_ns != 0) {
         return {};
+      }
+      if (receipt_suffix == nullptr) {
+        if (received != receipt_marker) {
+          return {};
+        }
+      } else {
+        const auto prefix_size = receipt_marker.size() + 1U;
+        if (received.size() <= prefix_size || !received.starts_with(receipt_marker) ||
+            received.at(receipt_marker.size()) != ' ') {
+          return {};
+        }
+        receipt_suffix->assign(received, prefix_size);
       }
       result.key_to_pty_ns = ready_ns - started_ns;
     }
@@ -445,6 +458,7 @@ void drain_outer(const int descriptor) noexcept {
   }
   return {};
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
 [[nodiscard]] auto percentile(std::vector<std::uint64_t> samples, const double quantile)
     -> std::uint64_t {
@@ -631,6 +645,71 @@ void stop_child(const int descriptor, const pid_t child) noexcept {
   std::cout << R"(,"outer_bytes":)";
   print_samples(outer_bytes);
   std::cout << "}\n";
+  return 0;
+}
+
+// One harness-prepared sample: the caller makes the completion token unique and absent from the
+// visible screen, so neither a stale redraw nor a shared marker prefix can finish this sample.
+[[nodiscard]] auto run_trigger(const int outer_descriptor, const std::string_view encoded_trigger,
+                               const std::string_view token) -> int {
+  std::string trigger;
+  if (token.empty() || !decode_hex(encoded_trigger, trigger)) {
+    return 2;
+  }
+  drain_outer(outer_descriptor);
+  const auto started_ns = monotonic_ns();
+  if (!write_all(outer_descriptor, trigger,
+                 std::chrono::steady_clock::now() + interaction_timeout)) {
+    std::cerr << "trigger probe write failed errno=" << errno << '\n';
+    return 1;
+  }
+  const auto [latency, bytes] = read_outer_marker(outer_descriptor, token, started_ns);
+  if (latency == 0) {
+    return 1;
+  }
+  std::cout << R"({"schema":1,"clock":"steady_clock","observer":"native_poll","latency_ns":)"
+            << latency << R"(,"outer_bytes":)" << bytes << "}\n";
+  return 0;
+}
+
+// Resize the outer terminal as a host terminal would; the kernel delivers SIGWINCH to the
+// attached client's foreground process group. The armed fixture reports its new pane geometry.
+[[nodiscard]] auto run_resize(const int outer_descriptor, const int receipt_descriptor,
+                              const int rows, const int columns, const std::string_view marker,
+                              const std::string_view token) -> int {
+  if (marker.empty() || token.empty()) {
+    return 2;
+  }
+  drain_outer(outer_descriptor);
+  const winsize size{.ws_row = static_cast<unsigned short>(rows),
+                     .ws_col = static_cast<unsigned short>(columns),
+                     .ws_xpixel = 0,
+                     .ws_ypixel = 0};
+  const auto started_ns = monotonic_ns();
+  // ioctl is variadic because its third argument depends on the request.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+  if (::ioctl(outer_descriptor, TIOCSWINSZ, &size) != 0) {
+    std::cerr << "resize probe ioctl failed errno=" << errno << '\n';
+    return 1;
+  }
+  std::string geometry;
+  const auto result =
+      read_interaction(outer_descriptor, receipt_descriptor, marker, token, started_ns, &geometry);
+  if (result.key_to_pty_ns == 0 || result.key_to_outer_bytes_ns == 0) {
+    std::cerr << "resize probe did not observe both endpoints\n";
+    return 1;
+  }
+  if (std::ranges::count(geometry, 'x') != 1 ||
+      !std::ranges::all_of(geometry, [](const char value) {
+        return value == 'x' || (value >= '0' && value <= '9');
+      })) {
+    std::cerr << "resize probe received malformed pane geometry\n";
+    return 1;
+  }
+  std::cout << R"({"schema":1,"clock":"steady_clock","observer":"native_poll",)"
+            << R"("resize_to_pty_ns":)" << result.key_to_pty_ns << R"(,"resize_to_outer_bytes_ns":)"
+            << result.key_to_outer_bytes_ns << R"(,"outer_bytes":)" << result.outer_bytes
+            << R"(,"pane_geometry":")" << geometry << "\"}\n";
   return 0;
 }
 
@@ -930,6 +1009,27 @@ void stop_child(const int descriptor, const pid_t child) noexcept {
     }
     return run_command(outer_descriptor, static_cast<std::size_t>(repetitions),
                        argument(arguments, 4), argument(arguments, 5));
+  }
+  if (arguments.size() == 5U && argument(arguments, 1) == "trigger") {
+    const auto outer_descriptor =
+        parse_integer(argument(arguments, 2), 0, std::numeric_limits<int>::max());
+    if (outer_descriptor < 0) {
+      return 2;
+    }
+    return run_trigger(outer_descriptor, argument(arguments, 3), argument(arguments, 4));
+  }
+  if (arguments.size() == 8U && argument(arguments, 1) == "resize") {
+    const auto outer_descriptor =
+        parse_integer(argument(arguments, 2), 0, std::numeric_limits<int>::max());
+    const auto receipt_descriptor =
+        parse_integer(argument(arguments, 3), 0, std::numeric_limits<int>::max());
+    const auto rows = parse_integer(argument(arguments, 4), 2, 200);
+    const auto columns = parse_integer(argument(arguments, 5), 2, 500);
+    if (outer_descriptor < 0 || receipt_descriptor < 0 || rows < 0 || columns < 0) {
+      return 2;
+    }
+    return run_resize(outer_descriptor, receipt_descriptor, rows, columns, argument(arguments, 6),
+                      argument(arguments, 7));
   }
   if (arguments.size() == 9U && std::string_view(argument(arguments, 1)) == "open-loop") {
     const auto outer_descriptor =

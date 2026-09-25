@@ -5,6 +5,8 @@ readonly mode="${1:-extended}"
 readonly output_directory="build/release"
 readonly lemma_profiles="${output_directory}/f3-memory-lemma-profiles.json"
 readonly tmux_profiles="${output_directory}/f3-memory-tmux-profiles.json"
+readonly zellij_profiles="${output_directory}/f3-memory-zellij-profiles.json"
+readonly herdr_profiles="${output_directory}/f3-memory-herdr-profiles.json"
 readonly session_profiles="${output_directory}/f3-memory-session-profiles.json"
 readonly workspace_profiles="${output_directory}/f3-memory-workspace-profiles.json"
 readonly components="${output_directory}/f3-memory-components.json"
@@ -78,13 +80,22 @@ python3 benchmarks/mux_benchmark.py \
   --repetitions "${repetitions}" \
   --output "${lemma_profiles}" >/dev/null
 python3 benchmarks/validate_report.py --process "${lemma_profiles}"
-python3 benchmarks/mux_benchmark.py \
-  --mode profiles \
-  --intent "${mode}" \
-  --multiplexer tmux \
-  --repetitions "${repetitions}" \
-  --output "${tmux_profiles}" >/dev/null
-python3 benchmarks/validate_report.py --process "${tmux_profiles}"
+# Zellij's pane listing slows to seconds per call at high pane counts, so Zellij and Herdr use the
+# bounded smoke profile set (still through PMAX) in both modes rather than every scaling knee.
+for subject in tmux zellij herdr; do
+  profile_output="${output_directory}/f3-memory-${subject}-profiles.json"
+  profile_intent="${mode}"
+  if [[ "${subject}" != tmux ]]; then
+    profile_intent=smoke
+  fi
+  python3 benchmarks/mux_benchmark.py \
+    --mode profiles \
+    --intent "${profile_intent}" \
+    --multiplexer "${subject}" \
+    --repetitions "${repetitions}" \
+    --output "${profile_output}" >/dev/null
+  python3 benchmarks/validate_report.py --process "${profile_output}"
+done
 python3 benchmarks/mux_benchmark.py \
   --mode session-profiles \
   --intent "${mode}" \
@@ -127,6 +138,8 @@ done
 python3 benchmarks/summarize_memory.py \
   --lemma-profiles "${lemma_profiles}" \
   --tmux-profiles "${tmux_profiles}" \
+  --zellij-profiles "${zellij_profiles}" \
+  --herdr-profiles "${herdr_profiles}" \
   --components "${components}" \
   --history "${history}" \
   --lifecycle "${lifecycle}" \

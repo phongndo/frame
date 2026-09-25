@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from benchmark_manifest import load_manifest
+from benchmark_manifest import load_manifest, unsupported_result
 from validate_report import validate_process_report
 
 
@@ -361,12 +361,9 @@ def main() -> int:
             report = reports[subject]
             for workload in workloads:
                 if subject not in workload["subjects"]:
-                    report["workloads"][workload["id"]] = {
-                        "status": "unsupported",
-                        "reason": (
-                            f"{workload['id']} is not defined for the {subject} subject"
-                        ),
-                    }
+                    report["workloads"][workload["id"]] = unsupported_result(
+                        workload, subject
+                    )
             report["scenario_ids"] = scenario_order
             report["workloads"] = {
                 identifier: report["workloads"][identifier]

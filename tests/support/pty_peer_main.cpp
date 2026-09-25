@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 #include <fcntl.h>
 #include <poll.h>
@@ -962,6 +963,206 @@ extern "C" void observe_winch([[maybe_unused]] const int signal_number) noexcept
   return 1;
 }
 
+int winch_pipe_write = -1;
+
+extern "C" void forward_winch(int signal_number) noexcept;
+
+extern "C" void forward_winch([[maybe_unused]] const int signal_number) noexcept {
+  const auto saved_errno = errno;
+  static_cast<void>(::write(winch_pipe_write, "W", 1));
+  errno = saved_errno;
+}
+
+struct PaintSockets final {
+  int control{-1};
+  int winch_read{-1};
+  int winch_write{-1};
+
+  PaintSockets() = default;
+  PaintSockets(const PaintSockets&) = delete;
+  PaintSockets(PaintSockets&&) = delete;
+  auto operator=(const PaintSockets&) -> PaintSockets& = delete;
+  auto operator=(PaintSockets&&) -> PaintSockets& = delete;
+  ~PaintSockets() {
+    for (const int descriptor : {control, winch_read, winch_write}) {
+      if (descriptor >= 0) {
+        static_cast<void>(::close(descriptor));
+      }
+    }
+  }
+};
+
+[[nodiscard]] auto unix_address(const std::string_view path, sockaddr_un& address) noexcept
+    -> bool {
+  address = {};
+  address.sun_family = AF_UNIX;
+  if (path.empty() || path.size() >= sizeof(address.sun_path)) {
+    return false;
+  }
+  std::memcpy(std::span(address.sun_path).data(), path.data(), path.size());
+  return true;
+}
+
+[[nodiscard]] auto open_paint_control(const std::string_view receipt_path,
+                                      const std::string_view control_path,
+                                      PaintSockets& sockets) noexcept -> bool {
+  sockaddr_un receipt{};
+  sockaddr_un control{};
+  if (!unix_address(receipt_path, receipt) || !unix_address(control_path, control)) {
+    return false;
+  }
+  sockets.control = ::socket(AF_UNIX, SOCK_DGRAM, 0);
+  if (sockets.control < 0 ||
+      (::unlink(std::span(control.sun_path).data()) != 0 && errno != ENOENT)) {
+    return false;
+  }
+  // The socket ABI intentionally erases the concrete address type.
+  // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
+  return ::bind(sockets.control, reinterpret_cast<const sockaddr*>(&control), sizeof(control)) ==
+             0 &&
+         ::connect(sockets.control, reinterpret_cast<const sockaddr*>(&receipt), sizeof(receipt)) ==
+             0;
+  // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
+}
+
+[[nodiscard]] auto install_winch_pipe(PaintSockets& sockets) noexcept -> bool {
+  std::array<int, 2> descriptors{-1, -1};
+  if (::pipe(descriptors.data()) != 0) {
+    return false;
+  }
+  sockets.winch_read = descriptors.front();
+  sockets.winch_write = descriptors.back();
+  for (const int descriptor : descriptors) {
+    // fcntl is variadic even when F_GETFL has no third argument.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+    const auto flags = ::fcntl(descriptor, F_GETFL);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+    if (flags < 0 || ::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) != 0) {
+      return false;
+    }
+  }
+  winch_pipe_write = sockets.winch_write;
+  struct sigaction action{};
+  action.sa_handler = &forward_winch;
+  return sigemptyset(&action.sa_mask) == 0 && ::sigaction(SIGWINCH, &action, nullptr) == 0;
+}
+
+[[nodiscard]] auto send_geometry_receipt(const int control, const std::string_view marker,
+                                         const winsize size) noexcept -> bool {
+  std::array<char, 192> receipt{};
+  std::span<char> remaining = receipt;
+  if (!append_text(remaining, marker) || !append_text(remaining, " ") ||
+      !append_number(remaining, size.ws_col) || !append_text(remaining, "x") ||
+      !append_number(remaining, size.ws_row)) {
+    return false;
+  }
+  const auto bytes = receipt.size() - remaining.size();
+  const auto sent = ::send(control, receipt.data(), bytes, MSG_NOSIGNAL);
+  return std::cmp_equal(sent, bytes);
+}
+
+// A painter owns one full-screen alternate buffer and receives unique markers over a datagram
+// control socket, so the harness can prepare a screen that is not currently visible. In paint
+// mode each marker is drawn immediately. In resize mode a marker only arms the painter; the next
+// SIGWINCH repaints at the new geometry and reports that geometry before drawing.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[nodiscard]] auto run_paint(const std::string_view receipt_path,
+                             const std::string_view control_path, const bool resize) noexcept
+    -> int {
+  PaintSockets sockets;
+  constexpr std::string_view paint_ready = "\x1B[?1049h\x1B[?2026h\x1B[2J\x1B[H"
+                                           "__LEMMA_PAINT_READY__\x1B[?2026l";
+  constexpr std::string_view resize_ready = "\x1B[?1049h\x1B[?2026h\x1B[2J\x1B[H"
+                                            "__LEMMA_RESIZE_READY__\x1B[?2026l";
+  constexpr std::string_view armed_receipt = "__LEMMA_RESIZE_ARMED__";
+  if (!open_paint_control(receipt_path, control_path, sockets) ||
+      (resize && !install_winch_pipe(sockets)) || !enter_raw_input() ||
+      !write_all(resize ? resize_ready : paint_ready)) {
+    return 1;
+  }
+
+  // Each control datagram is one fill letter followed by the marker. The harness chooses fills so
+  // consecutive frames differ in every cell, preventing a differential renderer from retaining an
+  // unchanged screen body in only some samples.
+  std::array<char, 129> control{};
+  std::array<char, 128> marker{};
+  std::size_t marker_size = 0;
+  std::size_t fill = 0;
+  auto deadline = std::chrono::steady_clock::now() + 120s;
+  while (std::chrono::steady_clock::now() < deadline) {
+    std::array events{
+        pollfd{.fd = STDIN_FILENO, .events = POLLIN, .revents = 0},
+        pollfd{.fd = sockets.control, .events = POLLIN, .revents = 0},
+        pollfd{.fd = sockets.winch_read, .events = POLLIN, .revents = 0},
+    };
+    const auto polled = ::poll(events.data(), resize ? 3U : 2U, 100);
+    if (polled < 0 && errno == EINTR) {
+      continue;
+    }
+    if (polled < 0) {
+      return 1;
+    }
+    if ((events.front().revents & (POLLIN | POLLHUP)) != 0) {
+      std::array<char, 256> input{};
+      const auto count = ::read(STDIN_FILENO, input.data(), input.size());
+      if (count == 0 || (count < 0 && errno == EIO)) {
+        return 0;
+      }
+      if (count < 0 && errno != EINTR && errno != EAGAIN) {
+        return 1;
+      }
+    }
+    if ((events.at(1).revents & POLLIN) != 0) {
+      const auto count = ::recv(sockets.control, control.data(), control.size(), 0);
+      if (count < 2 || control.front() < 'a' || control.front() > 'z') {
+        return 1;
+      }
+      fill = static_cast<std::size_t>(control.front() - 'a');
+      marker_size = static_cast<std::size_t>(count) - 1U;
+      std::ranges::copy(std::span(control).subspan(1, marker_size), marker.begin());
+      deadline = std::chrono::steady_clock::now() + 120s;
+      const auto received = std::string_view(marker.data(), marker_size);
+      if (resize) {
+        const auto sent =
+            ::send(sockets.control, armed_receipt.data(), armed_receipt.size(), MSG_NOSIGNAL);
+        if (sent < 0 || static_cast<std::size_t>(sent) != armed_receipt.size()) {
+          return 1;
+        }
+        continue;
+      }
+      const auto geometry = tui_frame_geometry();
+      if (!geometry.has_value() || !write_tui_frame(received, fill, *geometry)) {
+        return 1;
+      }
+      const auto sent = ::send(sockets.control, received.data(), received.size(), MSG_NOSIGNAL);
+      if (sent < 0 || static_cast<std::size_t>(sent) != received.size()) {
+        return 1;
+      }
+      marker_size = 0;
+    }
+    if (resize && (events.back().revents & POLLIN) != 0) {
+      std::array<char, 64> signals{};
+      while (::read(sockets.winch_read, signals.data(), signals.size()) > 0) {
+      }
+      if (marker_size == 0) {
+        continue;
+      }
+      winsize size{};
+      const auto geometry = tui_frame_geometry();
+      const auto received = std::string_view(marker.data(), marker_size);
+      // ioctl is variadic because its third argument depends on the request.
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+      if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0 || !geometry.has_value() ||
+          !send_geometry_receipt(sockets.control, received, size) ||
+          !write_tui_frame(received, fill, *geometry)) {
+        return 1;
+      }
+      marker_size = 0;
+    }
+  }
+  return 1;
+}
+
 [[nodiscard]] auto run_attach_visible(const std::string_view ready_path = {}) noexcept -> int {
   if (!write_all("__LEMMA_ATTACH_VISIBLE__\r\n")) {
     return 1;
@@ -1211,6 +1412,13 @@ int main(const int argc, char** const argv) {
     }
     return run_block(arguments.subspan(2, 1).front(), parse_size(arguments.subspan(3, 1).front()),
                      idle_timeout);
+  }
+  if (arguments.size() == 4 && std::string_view(arguments.subspan(1, 1).front()) == "paint") {
+    return run_paint(arguments.subspan(2, 1).front(), arguments.subspan(3, 1).front(), false);
+  }
+  if (arguments.size() == 4 &&
+      std::string_view(arguments.subspan(1, 1).front()) == "resize-paint") {
+    return run_paint(arguments.subspan(2, 1).front(), arguments.subspan(3, 1).front(), true);
   }
   if (arguments.size() == 4 && std::string_view(arguments.subspan(1, 1).front()) == "order") {
     return run_order(arguments.subspan(2, 1).front(), arguments.subspan(3, 1).front());

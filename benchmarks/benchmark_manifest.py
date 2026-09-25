@@ -150,6 +150,15 @@ def validate_manifest(manifest: Any) -> None:
                 f"{label}.subjects contains unknown subjects: {unknown}"
             )
         _string_list(workload.get("metrics"), f"{label}.metrics")
+        unsupported = workload.get("unsupported_subjects", {})
+        if not isinstance(unsupported, dict):
+            raise ManifestError(f"{label}.unsupported_subjects must be an object")
+        for subject, reason in unsupported.items():
+            if subject not in SUBJECTS or subject in subjects:
+                raise ManifestError(
+                    f"{label}.unsupported_subjects must name only excluded subjects"
+                )
+            _nonempty_string(reason, f"{label}.unsupported_subjects.{subject}")
     if len(identifiers) != len(set(identifiers)):
         raise ManifestError("process workload IDs must be unique")
     if len(cli_modes) != len(set(cli_modes)):
@@ -165,6 +174,34 @@ def validate_manifest(manifest: Any) -> None:
         unknown = sorted(set(selected).difference(known))
         if unknown:
             raise ManifestError(f"suites.{name} contains unknown workloads: {unknown}")
+    # The paired gate captures only the regression suite: diagnostic comparisons stay out of it
+    # until reviewed budgets reference them, so their failures cannot abort a gate.
+    regression = suites.get("regression")
+    comparison = suites.get("comparison")
+    if not isinstance(regression, list) or not isinstance(comparison, list):
+        raise ManifestError("suites must define comparison and regression")
+    if not set(regression) <= set(comparison):
+        raise ManifestError("suites.regression must be a subset of suites.comparison")
+    budgets = manifest.get("regression_budgets")
+    process_budgets = (
+        budgets.get("process_workloads") if isinstance(budgets, dict) else None
+    )
+    if isinstance(process_budgets, dict):
+        referenced = {
+            path[1]
+            for check in process_budgets.get("checks", [])
+            for path in (check.get("samples_path"),)
+            if isinstance(path, list) and len(path) > 1
+        } | {
+            check.get(key, [None, None])[1]
+            for check in process_budgets.get("comparative_checks", [])
+            for key in ("baseline_samples_path", "loaded_samples_path")
+        }
+        missing = sorted(str(name) for name in referenced - set(regression))
+        if missing:
+            raise ManifestError(
+                f"suites.regression omits budgeted workloads: {missing}"
+            )
 
     policies = manifest.get("sample_policies")
     if not isinstance(policies, dict) or set(policies) != {
@@ -402,6 +439,16 @@ def expected_failure(
         ):
             return failure
     return None
+
+
+def unsupported_result(workload: dict[str, Any], subject: str) -> dict[str, str]:
+    reason = workload.get("unsupported_subjects", {}).get(subject)
+    return {
+        "status": "unsupported",
+        "reason": reason
+        if isinstance(reason, str)
+        else f"{workload['id']} is not defined for the {subject} subject",
+    }
 
 
 def workload_map(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
