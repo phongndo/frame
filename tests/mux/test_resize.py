@@ -129,7 +129,7 @@ while True:
         os.write(1, b'INPUT_' + bytes([byte]))
 """
 
-    def start_geometry_recorder(self, name: str) -> tuple[Session, Client, Path]:
+    def start_geometry_recorder(self, name: str) -> tuple[Session, Client, Path, int]:
         log = self.server.root / f"{name}.jsonl"
         script = self.recorder_script(log, 0)
         session = self.server.create_session(
@@ -137,7 +137,14 @@ while True:
         )
         client = session.require_client()
         self.wait_for_recorded(client, log)
-        return session, client, log
+        # The recorder may arm before or after the attach resize, so its early reports vary.
+        # Attachment geometry reaches the Pane PTY before later input on that connection: once
+        # this byte arrives, every attach-time report precedes it in the log.
+        client.send(b"1")
+        synced = self.wait_for_input(client, log, "1")
+        self.assertEqual(synced["winsz"], [23, 80])
+        self.assertEqual(synced["size"], [23, 80])
+        return session, client, log, self.recorded(log).index(synced)
 
     @property
     def history_gate(self) -> Path:
@@ -155,8 +162,10 @@ while True:
         return [json.loads(line) for line in lines[:-1]]
 
     @classmethod
-    def resizes(cls, log: Path) -> list[dict[str, Any]]:
-        return [event for event in cls.recorded(log) if "input" not in event]
+    def resizes(cls, log: Path, after: int = -1) -> list[dict[str, Any]]:
+        return [
+            event for event in cls.recorded(log)[after + 1 :] if "input" not in event
+        ]
 
     def wait_for_size(self, client: Client, log: Path, size: list[int]) -> None:
         deadline = time.monotonic() + 30.0
@@ -180,12 +189,19 @@ while True:
             client.drain(0.01)
 
     def assert_paced(
-        self, log: Path, started: float, settled: float, *, forced: int = 0
+        self,
+        log: Path,
+        synced: int,
+        started: float,
+        settled: float,
+        *,
+        forced: int = 0,
     ) -> None:
         # Paced commits are at least one interval apart, so daemon work is bounded by the drag's
         # duration rather than by the number of size samples. Input may force out one more.
         # Count grid changes: a first pixel-size change reports the unchanged grid again.
-        sizes = [event["size"] for event in self.resizes(log)]
+        sizes = [self.recorded(log)[synced]["size"]]
+        sizes += [event["size"] for event in self.resizes(log, synced)]
         applied = sum(
             1 for before, after in itertools.pairwise(sizes) if before != after
         )
@@ -196,14 +212,13 @@ while True:
         )
 
     def test_drag_commits_immediately_and_coalesces_to_final_size(self) -> None:
-        session, client, log = self.start_geometry_recorder("resize_drag")
-        self.assertEqual([event["size"] for event in self.resizes(log)], [[23, 80]])
+        session, client, log, synced = self.start_geometry_recorder("resize_drag")
 
         # Keep resizing faster than any quiet period would allow. The first step must reach the
         # Pane while the drag continues rather than waiting for the gesture to end.
         started = time.monotonic()
         columns = 80
-        while len(self.resizes(log)) == 1:
+        while not self.resizes(log, synced):
             self.assertLess(
                 columns, 230, "drag geometry was deferred until the drag ended"
             )
@@ -215,12 +230,12 @@ while True:
             client.resize(columns, 24)
             client.drain(0.002)
         self.wait_for_size(client, log, [23, columns])
-        self.assert_paced(log, started, time.monotonic())
+        self.assert_paced(log, synced, started, time.monotonic())
         state = session.state()
         self.assertEqual((state.columns, state.rows), (columns, 24))
 
     def test_in_band_size_reports_are_paced_and_precede_later_input(self) -> None:
-        session, client, log = self.start_geometry_recorder("in_band_drag")
+        session, client, log, synced = self.start_geometry_recorder("in_band_drag")
 
         def report(columns: int) -> bytes:
             return b"\x1b[48;30;%d;600;%dt" % (columns, columns * 8)
@@ -239,7 +254,7 @@ while True:
         received = self.wait_for_input(client, log, "K")
         self.assertEqual(received["size"], [29, columns])
         self.assertEqual(received["winsz"], [29, columns])
-        self.assert_paced(log, started, time.monotonic(), forced=1)
+        self.assert_paced(log, synced, started, time.monotonic(), forced=1)
         state = session.state()
         self.assertEqual((state.columns, state.rows), (columns, 30))
 
@@ -296,9 +311,10 @@ while True:
                     f"history fill did not finish: {[p.exists() for p in filled]}"
                 )
             time.sleep(0.05)
+        # The recorder arms once, after every layout change, and nothing is attached yet.
+        self.assertEqual(len(self.recorded(log)), 1)
 
         steps = 200
-        started = time.monotonic()
         burst = subprocess.Popen(
             [
                 str(self.server.cli_path),
@@ -323,7 +339,7 @@ while True:
         events = self.recorded(log)
         index = next(i for i, event in enumerate(events) if event.get("input") == "K")
         received = events[index]
-        applied = [event for event in events[:index] if event["t"] > started]
+        applied = events[1:index]
         # The Pane PTY already had the newest geometry when the input arrived.
         self.assertEqual(received["winsz"], received["size"])
         final_columns = 100 + 1 + (steps - 1) % 2
