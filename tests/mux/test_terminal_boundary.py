@@ -297,6 +297,22 @@ while not data.endswith(b'q'):
     output.write_bytes(data)
 """
 
+# Enables focus reports, then withholds reads until a gate exists so Lemma's input queue fills.
+# The recording omits the filler bytes and keeps focus reports and typed input in arrival order.
+STALLED_FOCUS_RECORDER = """
+import os, sys, time, tty
+from pathlib import Path
+tty.setraw(0)
+output, gate = Path(sys.argv[1]), Path(sys.argv[2])
+os.write(1, b'\\x1b[?1004h__STALLED_READY__')
+while not gate.exists():
+    time.sleep(0.01)
+data = b''
+while True:
+    data += os.read(0, 65536).replace(b'a', b'')
+    output.write_bytes(data)
+"""
+
 
 class FocusReportMuxTest(unittest.TestCase):
     """Mode-1004 Panes observe focus derived from Pane, Tab, Session, and outer focus."""
@@ -400,6 +416,84 @@ class FocusReportMuxTest(unittest.TestCase):
         )
         self.expect_reports(left, b"\x1b[I\x1b[O\x1b[I\x1b[O\x1b[I")
         self.expect_reports(right, b"\x1b[O\x1b[I\x1b[O\x1b[I\x1b[O\x1b[Iq")
+
+    def test_deferred_focus_report_precedes_input_to_a_full_pane(self) -> None:
+        session = self.server.create_session("focus_backlog")
+        client = session.require_client()
+        left_id = session.state().focused_pane
+        recorded = self.server.root / "focus-backlog.bin"
+        gate = self.server.root / "focus-backlog.gate"
+        right_id = self.server.require_command(
+            "split",
+            "--session",
+            session.name,
+            "--pane",
+            left_id,
+            "--right",
+            "--",
+            sys.executable,
+            "-c",
+            STALLED_FOCUS_RECORDER,
+            str(recorded),
+            str(gate),
+        ).output.strip()
+        self.server.require_command(
+            "wait",
+            "--session",
+            session.name,
+            "--pane",
+            right_id,
+            "--contains",
+            "__STALLED_READY__",
+            "--timeout",
+            "5s",
+        )
+        self.server.require_command(
+            "focus", "--session", session.name, "--pane", left_id
+        )
+
+        # Fill the stalled Pane's input queue exactly: halve each rejected batch down to one byte.
+        chunk = 4096
+        total = 0
+        while chunk > 0:
+            sent = self.server.command(
+                "send",
+                "--session",
+                session.name,
+                "--pane",
+                right_id,
+                "--text",
+                "a" * chunk,
+            )
+            if sent.status != 0:
+                self.assertIn("input_backpressure", sent.output, (chunk, total))
+                chunk //= 2
+            else:
+                total += chunk
+
+        # The focus report cannot be queued, so typed input must wait behind it.
+        self.server.require_command(
+            "focus", "--session", session.name, "--pane", right_id
+        )
+        client.send(b"Z")
+        client.drain(0.2)
+        gate.touch()
+        wait_until(
+            "stalled pane to record the focus report and input",
+            lambda: (
+                True
+                if recorded.exists()
+                and b"Z" in (data := recorded.read_bytes())
+                and b"\x1b[I" in data
+                else None
+            ),
+            diagnostics=lambda: (
+                f"recorded={recorded.read_bytes() if recorded.exists() else None!r}\n"
+                f"{self.server.diagnostics(session.name)}"
+            ),
+            timeout=15.0,
+        )
+        self.assertEqual(recorded.read_bytes(), b"\x1b[O\x1b[IZ")
 
     def test_detach_and_session_switch_report_focus(self) -> None:
         first_command, first = self.recorder("S1")
