@@ -146,6 +146,7 @@ add_library(
   src/terminal/terminal_clipboard.cpp
   src/terminal/terminal_graphics.cpp
   src/terminal/terminal_input.cpp
+  src/terminal/fingerprint.cpp
   src/terminal/terminal_render.cpp
   src/terminal/terminal_selection.cpp
   src/terminal/terminal_measure.cpp

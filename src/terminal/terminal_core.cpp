@@ -4,6 +4,7 @@
 #include "lemma/limits.hpp"
 #include "lemma/terminal/terminal.hpp"
 #include "lemma/terminal_identity.hpp"
+#include "terminal/fingerprint.hpp"
 
 #include <algorithm>
 #include <array>
@@ -464,6 +465,10 @@ auto Terminal::create(const TerminalOptions& options) noexcept -> std::expected<
   if (!valid_options(options)) {
     return std::unexpected(Error::invalid_options);
   }
+  const auto* const fingerprint_key = detail::process_fingerprint_key();
+  if (fingerprint_key == nullptr) {
+    return std::unexpected(Error::invalid_state);
+  }
 
   std::unique_ptr<Impl> impl;
   try {
@@ -471,6 +476,7 @@ auto Terminal::create(const TerminalOptions& options) noexcept -> std::expected<
   } catch (const std::bad_alloc&) {
     return std::unexpected(Error::out_of_memory);
   }
+  impl->fingerprint_key = *fingerprint_key;
 
   auto result = ghostty_terminal_new(impl->allocator.native(), &impl->terminal,
                                      options.size.columns, options.size.rows);

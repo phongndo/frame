@@ -2,6 +2,7 @@
 #define LEMMA_TERMINAL_TERMINAL_IMPL_HPP
 
 #include "lemma/terminal/terminal.hpp"
+#include "terminal/fingerprint.hpp"
 
 #include <ghostty/vt.h>
 
@@ -198,6 +199,8 @@ struct Terminal::Impl final {
   bool clipboard_write_allowed{false};
   bool capturing_clipboard_reply{false};
   bool pty_response_integrity_failed{false};
+  // Copied from the process key at creation; keys every presentation fingerprint of this terminal.
+  detail::FingerprintKey fingerprint_key{};
 };
 
 } // namespace lemma::vt

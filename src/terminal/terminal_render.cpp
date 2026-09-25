@@ -3,6 +3,7 @@
 #include "diagnostic/latency_trace.hpp"
 #include "lemma/assert.hpp"
 #include "lemma/terminal/terminal.hpp"
+#include "terminal/fingerprint.hpp"
 
 #include <algorithm>
 #include <array>
@@ -299,11 +300,13 @@ public:
                              const GhosttyStyleId id, RowCellCursor& cursor,
                              const std::size_t column, const GhosttyRenderStateColors& colors,
                              const TerminalTheme& theme) noexcept
-      -> std::expected<AnsiStyle, Error> {
+      -> std::expected<const AnsiStyle*, Error> {
+    // The result borrows this projection until the next resolve; a hit copies nothing.
     const bool text_style = content_tag == GHOSTTY_CELL_CONTENT_CODEPOINT ||
                             content_tag == GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME;
-    if (text_style && valid_ && id == id_) {
-      return style_;
+    hit_ = text_style && valid_ && id == id_;
+    if (hit_) {
+      return &style_;
     }
     const auto cells = cursor.at(column);
     if (!cells.has_value()) {
@@ -316,23 +319,28 @@ public:
     if (result != GHOSTTY_SUCCESS) {
       return std::unexpected(detail::map_error(result));
     }
-    auto projected = ansi_style(raw_cell, content_tag, native, colors, theme);
-    default_ = ghostty_style_is_default(&native);
-    valid_ = text_style && projected.has_value();
-    if (valid_) {
-      id_ = id;
-      style_ = *projected;
+    const auto projected = ansi_style(raw_cell, content_tag, native, colors, theme);
+    if (!projected.has_value()) {
+      valid_ = false;
+      return std::unexpected(projected.error());
     }
-    return projected;
+    default_ = ghostty_style_is_default(&native);
+    valid_ = text_style;
+    id_ = id;
+    style_ = *projected;
+    return &style_;
   }
 
   [[nodiscard]] auto native_default() const noexcept -> bool { return default_; }
+  // The last resolve returned the projection of the previous resolve.
+  [[nodiscard]] auto hit() const noexcept -> bool { return hit_; }
 
 private:
   AnsiStyle style_{};
   GhosttyStyleId id_{0};
   bool valid_{false};
   bool default_{false};
+  bool hit_{false};
 };
 
 struct SelectedColumns final {
@@ -458,71 +466,9 @@ constexpr std::uint8_t decscusr_steady_block = 2;
   return 1;
 }
 
-// Physical fingerprints are compared only with retained fingerprints from this process. Every row
-// and scroll-detection pass visits every cell, so fold whole words with one 64x64->128 multiply
-// (wyhash's folded multiply) rather than a byte-serial FNV chain on the per-cell critical path.
-// The initial state must differ from both secrets: an operand equal to its secret annihilates the
-// product and would discard the other operand.
-constexpr std::uint64_t fingerprint_initial = 0x4B33'A62E'D433'D4A3ULL;
-constexpr std::uint64_t fingerprint_state_secret = 0x2D35'8DCC'AA6C'78A5ULL;
-constexpr std::uint64_t fingerprint_value_secret = 0x8BB8'4B93'962E'ACC9ULL;
-static_assert(fingerprint_initial != fingerprint_state_secret &&
-              fingerprint_initial != fingerprint_value_secret);
-
-[[nodiscard]] constexpr auto fingerprint_mix(const std::uint64_t hash,
-                                             const std::uint64_t value) noexcept -> std::uint64_t {
-  using Product = unsigned __int128;
-  const auto product = static_cast<Product>(hash ^ fingerprint_state_secret) *
-                       static_cast<Product>(value ^ fingerprint_value_secret);
-  return static_cast<std::uint64_t>(product) ^ static_cast<std::uint64_t>(product >> 64U);
-}
-
-// A plain row (see RowCellDecoder::plain) projects as a function of its raw cells and the frame's
-// colors and theme alone, so its fingerprint folds the raw values instead of decoding every cell:
-// a scroll frame then costs a few multiplies per unchanged cell rather than a full decode. Plain
-// and decoded fingerprints use distinct seeds, and the color epoch retires plain fingerprints taken
-// under other colors. Rows that render alike but differ in raw metadata (for example
-// semantic-prompt bits) or in plainness compare unequal; that can only turn a terminal scroll into
-// row repaints. Four independent lanes keep the multiply chain off the per-cell critical path.
-// Column c folds into lane c % 4, so the whole-row and cell-by-cell forms agree.
-class PlainRowFingerprint final {
-public:
-  void add(const std::size_t column, const GhosttyCell raw) noexcept {
-    auto& lane = std::span(lanes_).subspan(column % lanes_.size(), 1).front();
-    lane = fingerprint_mix(lane, raw);
-  }
-
-  [[nodiscard]] auto finish(const std::size_t columns,
-                            const std::uint64_t color_epoch) const noexcept -> std::uint64_t {
-    const auto [first, second, third, fourth] = lanes_;
-    auto hash = fingerprint_mix(fingerprint_mix(first, second), fingerprint_mix(third, fourth));
-    hash = fingerprint_mix(hash, columns);
-    return fingerprint_mix(hash, color_epoch);
-  }
-
-  [[nodiscard]] static auto of(const std::span<const GhosttyCell> cells,
-                               const std::uint64_t color_epoch) noexcept -> std::uint64_t {
-    PlainRowFingerprint fingerprint;
-    auto [first, second, third, fourth] = fingerprint.lanes_;
-    const auto whole = cells.size() - (cells.size() % fingerprint.lanes_.size());
-    // Named lanes stay in registers; the per-cell form is used where decoding dominates anyway.
-    for (std::size_t column = 0; column < whole; column += fingerprint.lanes_.size()) {
-      first = fingerprint_mix(first, cells.subspan(column, 1).front());
-      second = fingerprint_mix(second, cells.subspan(column + 1U, 1).front());
-      third = fingerprint_mix(third, cells.subspan(column + 2U, 1).front());
-      fourth = fingerprint_mix(fourth, cells.subspan(column + 3U, 1).front());
-    }
-    fingerprint.lanes_ = {first, second, third, fourth};
-    for (std::size_t column = whole; column < cells.size(); ++column) {
-      fingerprint.add(column, cells.subspan(column, 1).front());
-    }
-    return fingerprint.finish(cells.size(), color_epoch);
-  }
-
-private:
-  std::array<std::uint64_t, 4> lanes_{0x1D8E'4E27'C47D'124FULL, 0x9C0F'3A53'5E2B'64B1ULL,
-                                      0x5A0B'C8D7'0E71'98C3ULL, 0xE703'7ED1'A0B4'28DBULL};
-};
+using detail::fingerprint_mix;
+using detail::FingerprintKey;
+using detail::RowFingerprint;
 
 [[nodiscard]] constexpr auto color_word(const AnsiColor& color) noexcept -> std::uint64_t {
   return static_cast<std::uint64_t>(color.tag) | (static_cast<std::uint64_t>(color.index) << 8U) |
@@ -531,7 +477,8 @@ private:
          (static_cast<std::uint64_t>(color.blue) << 32U);
 }
 
-[[nodiscard]] auto hash_style(const AnsiStyle& style) noexcept -> std::uint64_t {
+[[nodiscard]] auto hash_style(const FingerprintKey& key, const AnsiStyle& style) noexcept
+    -> std::uint64_t {
   const std::array flags{style.bold,    style.italic,    style.faint,         style.blink,
                          style.inverse, style.invisible, style.strikethrough, style.overline};
   std::uint64_t attributes = style.underline;
@@ -540,10 +487,9 @@ private:
                   << (8U + index);
   }
   // Each color occupies 40 bits; attributes fill the remaining high bits of the first word.
-  auto hash =
-      fingerprint_mix(fingerprint_initial, color_word(style.foreground) | (attributes << 40U));
-  hash = fingerprint_mix(hash, color_word(style.background));
-  return fingerprint_mix(hash, color_word(style.underline_color));
+  auto hash = fingerprint_mix(key, key.initial, color_word(style.foreground) | (attributes << 40U));
+  hash = fingerprint_mix(key, hash, color_word(style.background));
+  return fingerprint_mix(key, hash, color_word(style.underline_color));
 }
 
 // Row-local memoization of the existing hash prefix, not a second terminal/style authority.
@@ -551,10 +497,17 @@ private:
 // and palette projection), then hash width and graphemes independently.
 class RenderedCellHasher final {
 public:
-  [[nodiscard]] auto hash(const AnsiStyle& style, const GhosttyCellWide wide,
+  // Copies the key: a row-scoped member stays loadable without chasing a pointer after every
+  // grapheme or cell store.
+  explicit RenderedCellHasher(const FingerprintKey& key) noexcept : key_(key) {}
+
+  // style_repeated promises that style equals the style of the previous call.
+  [[nodiscard]] auto hash(const AnsiStyle& style, const bool style_repeated,
+                          const GhosttyCellWide wide,
                           const std::span<const std::uint8_t> grapheme) noexcept -> std::uint64_t {
-    if (!cached_.has_value() || cached_->style != style) {
-      cached_ = HashedStyle{.style = style, .hash = hash_style(style)};
+    if (!style_repeated && (!cached_valid_ || cached_.style != style)) {
+      cached_ = HashedStyle{.style = style, .hash = hash_style(key_, style)};
+      cached_valid_ = true;
     }
     static_assert(pane_ansi_grapheme_bytes_max <= std::numeric_limits<std::uint16_t>::max());
     // The length prefix makes the word sequence unambiguous. A single codepoint of up to five
@@ -567,7 +520,7 @@ public:
     for (std::size_t index = 0; index < prefix.size(); ++index) {
       word |= static_cast<std::uint64_t>(prefix.subspan(index, 1).front()) << (24U + (8U * index));
     }
-    auto result = fingerprint_mix(cached_->hash, word);
+    auto result = fingerprint_mix(key_, cached_.hash, word);
     auto remaining = grapheme.subspan(prefix.size());
     while (!remaining.empty()) {
       const auto chunk = remaining.first(std::min(remaining.size(), word_bytes));
@@ -575,7 +528,7 @@ public:
       for (std::size_t index = 0; index < chunk.size(); ++index) {
         word |= static_cast<std::uint64_t>(chunk.subspan(index, 1).front()) << (8U * index);
       }
-      result = fingerprint_mix(result, word);
+      result = fingerprint_mix(key_, result, word);
       remaining = remaining.subspan(chunk.size());
     }
     return result;
@@ -586,7 +539,9 @@ private:
     AnsiStyle style;
     std::uint64_t hash;
   };
-  std::optional<HashedStyle> cached_;
+  FingerprintKey key_;
+  HashedStyle cached_{};
+  bool cached_valid_{false};
 };
 
 // The projected presentation of one cell. Style includes selection highlighting; grapheme bytes
@@ -607,8 +562,9 @@ struct DecodedCell final {
 // differs. Only styles that miss the row projection and non-ASCII text use per-cell accessors.
 class RowCellDecoder final {
 public:
-  RowCellDecoder(const GhosttyRenderStateColors& colors, const TerminalTheme& theme) noexcept
-      : colors_(&colors), theme_(&theme) {}
+  RowCellDecoder(const GhosttyRenderStateColors& colors, const TerminalTheme& theme,
+                 const FingerprintKey& key) noexcept
+      : colors_(&colors), theme_(&theme), hasher_(key) {}
 
   [[nodiscard]] auto open(const GhosttyRenderStateRowIterator row,
                           GhosttyRenderStateRowCells& cells) noexcept
@@ -642,6 +598,8 @@ public:
   }
 
   [[nodiscard]] auto columns() const noexcept -> std::size_t { return raw_.size(); }
+  // The last decode returned the previous column's decode unchanged, so it has the same style.
+  [[nodiscard]] auto repeated() const noexcept -> bool { return repeated_; }
   [[nodiscard]] auto raw() const noexcept -> std::span<const GhosttyCell> { return raw_; }
   // Ghostty's row flags have no false negatives: without styled or grapheme cells, every cell uses
   // style ID 0 and keeps its complete content in the raw value. Without selection, nothing else
@@ -654,10 +612,13 @@ public:
     LEMMA_ASSERT(column < raw_.size());
     const auto raw_cell = raw_.subspan(column, 1).front();
     const bool selected = selection_.contains(column);
-    if (decoded_ && raw_cell == raw_cell_ && selected == cell_.selected &&
-        cell_.content_tag != GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME) {
+    repeated_ = decoded_ && raw_cell == raw_cell_ && selected == cell_.selected &&
+                cell_.content_tag != GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME;
+    if (repeated_) {
       return &cell_;
     }
+    const bool follows_decode = decoded_;
+    const bool previous_selected = cell_.selected;
     decoded_ = false;
 
     GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
@@ -678,14 +639,22 @@ public:
     if (!style.has_value()) {
       return std::unexpected(style.error());
     }
-    apply_selection_highlight(*style, selected, *theme_);
+    const AnsiStyle* presented = *style;
+    if (selected) {
+      selected_style_ = *presented;
+      apply_selection_highlight(selected_style_, true, *theme_);
+      presented = &selected_style_;
+    }
     const auto grapheme = graphemes(column, content_tag, codepoint);
     if (!grapheme.has_value()) {
       return std::unexpected(grapheme.error());
     }
+    // The previous decode resolved the same projection with the same selection, so the hasher's
+    // cached style is this style; skip comparing it field by field.
+    const bool style_repeated = follows_decode && styles_.hit() && selected == previous_selected;
     cell_ = {
-        .style = *style,
-        .hash = hasher_.hash(*style, wide, *grapheme),
+        .style = *presented,
+        .hash = hasher_.hash(*presented, style_repeated, wide, *grapheme),
         .grapheme = *grapheme,
         .wide = wide,
         .content_tag = content_tag,
@@ -764,6 +733,8 @@ private:
   DecodedCell cell_{};
   GhosttyCell raw_cell_{0};
   bool decoded_{false};
+  bool repeated_{false};
+  AnsiStyle selected_style_{};
   std::array<std::uint8_t, pane_ansi_grapheme_bytes_max> grapheme_{};
 };
 
@@ -861,22 +832,24 @@ private:
 // Grapheme/style hashing is intentionally explicit so unsafe scroll equivalence is never inferred.
 [[nodiscard]] auto Terminal::Impl::calculate_row_hash() noexcept
     -> std::expected<std::uint64_t, Error> {
-  RowCellDecoder decoder(render_colors, session_theme);
+  RowCellDecoder decoder(render_colors, session_theme, fingerprint_key);
   const auto opened = decoder.open(row_iterator, row_cells);
   if (!opened.has_value()) {
     return std::unexpected(opened.error());
   }
   LEMMA_ASSERT(decoder.columns() == options.size.columns);
   if (decoder.plain()) {
-    return PlainRowFingerprint::of(decoder.raw(), plain_row_color_epoch);
+    return RowFingerprint::of(fingerprint_key, fingerprint_key.plain_lanes, decoder.raw(),
+                              plain_row_color_epoch);
   }
-  std::uint64_t row_hash = fingerprint_initial;
+  // Decoded cell fingerprints already cover the projected colors.
+  std::uint64_t row_hash = fingerprint_key.initial;
   for (std::size_t column = 0; column < decoder.columns(); ++column) {
     const auto decoded = decoder.decode(column);
     if (!decoded.has_value()) {
       return std::unexpected(decoded.error());
     }
-    row_hash = fingerprint_mix(row_hash, (*decoded)->hash);
+    row_hash = fingerprint_mix(fingerprint_key, row_hash, (*decoded)->hash);
   }
   return row_hash;
 }
@@ -935,7 +908,7 @@ Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, cons
   LEMMA_ASSERT(row_index < row_hash_count);
   LEMMA_ASSERT(physical_cell_hashes != nullptr);
   const auto checkpoint = writer.size();
-  RowCellDecoder decoder(render_colors, session_theme);
+  RowCellDecoder decoder(render_colors, session_theme, fingerprint_key);
   const auto opened = decoder.open(row_iterator, row_cells);
   if (!opened.has_value()) {
     return std::unexpected(opened.error());
@@ -947,13 +920,14 @@ Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, cons
   // not fill the viewport scrolls identical lines. A plain row proves that without its cells.
   std::optional<std::uint64_t> probed;
   if (plain && probe_unchanged && !force) {
-    probed = PlainRowFingerprint::of(decoder.raw(), plain_row_color_epoch);
+    probed = RowFingerprint::of(fingerprint_key, fingerprint_key.plain_lanes, decoder.raw(),
+                                plain_row_color_epoch);
     if (*probed == row_hashes().subspan(row_index, 1).front()) {
       return detail::RowEncoding::matched;
     }
   }
-  std::uint64_t row_hash = fingerprint_initial;
-  PlainRowFingerprint plain_fingerprint;
+  std::uint64_t row_hash = fingerprint_key.initial;
+  RowFingerprint plain_fingerprint(fingerprint_key, fingerprint_key.plain_lanes);
   AnsiStyle active_style{};
   bool active_style_valid = false;
   bool span_started = false;
@@ -975,7 +949,7 @@ Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, cons
     const auto grapheme_bytes = cell.grapheme;
     const auto cell_hash = cell.hash;
     if (!plain) {
-      row_hash = fingerprint_mix(row_hash, cell_hash);
+      row_hash = fingerprint_mix(fingerprint_key, row_hash, cell_hash);
     } else if (!probed.has_value()) {
       plain_fingerprint.add(cell_count, decoder.raw().subspan(cell_count, 1).front());
     }
@@ -986,6 +960,8 @@ Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, cons
     const bool changed = force || !ansi_physical_valid || physical_hash != cell_hash;
     physical_hash = cell_hash;
     if (span_started || changed) {
+      // Within a span the previous column set the active style; a repeated decode shares it.
+      const bool style_active = span_started && decoder.repeated();
       if (!span_started) {
         if (!writer.append("\x1B[") ||
             !writer.append_integer(static_cast<std::size_t>(origin_row) + row_index + 1U) ||
@@ -998,11 +974,13 @@ Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, cons
       }
 
       const auto cell_checkpoint = writer.size();
-      if ((!active_style_valid || style != active_style) && !append_style(writer, style)) {
-        return std::unexpected(Error::out_of_space);
+      if (!style_active) {
+        if ((!active_style_valid || style != active_style) && !append_style(writer, style)) {
+          return std::unexpected(Error::out_of_space);
+        }
+        active_style = style;
+        active_style_valid = true;
       }
-      active_style = style;
-      active_style_valid = true;
 
       const bool default_blank = !cell.selected && grapheme_bytes.empty() &&
                                  wide != GHOSTTY_CELL_WIDE_SPACER_TAIL && cell.native_default &&
