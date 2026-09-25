@@ -150,6 +150,15 @@ def validate_manifest(manifest: Any) -> None:
                 f"{label}.subjects contains unknown subjects: {unknown}"
             )
         _string_list(workload.get("metrics"), f"{label}.metrics")
+        unsupported = workload.get("unsupported_subjects", {})
+        if not isinstance(unsupported, dict):
+            raise ManifestError(f"{label}.unsupported_subjects must be an object")
+        for subject, reason in unsupported.items():
+            if subject not in SUBJECTS or subject in subjects:
+                raise ManifestError(
+                    f"{label}.unsupported_subjects must name only excluded subjects"
+                )
+            _nonempty_string(reason, f"{label}.unsupported_subjects.{subject}")
     if len(identifiers) != len(set(identifiers)):
         raise ManifestError("process workload IDs must be unique")
     if len(cli_modes) != len(set(cli_modes)):
@@ -402,6 +411,16 @@ def expected_failure(
         ):
             return failure
     return None
+
+
+def unsupported_result(workload: dict[str, Any], subject: str) -> dict[str, str]:
+    reason = workload.get("unsupported_subjects", {}).get(subject)
+    return {
+        "status": "unsupported",
+        "reason": reason
+        if isinstance(reason, str)
+        else f"{workload['id']} is not defined for the {subject} subject",
+    }
 
 
 def workload_map(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:

@@ -162,6 +162,7 @@
     "process_tree_cpu_time_ns",
     "process_tree_rss_bytes",
     "wakeups_when_supported",
+    "context_switches_when_supported",
     "direct_role_cpu_and_rss"
   ],
   "profile_conditions": {
@@ -177,6 +178,7 @@
     "process_tree_cpu_time_ns",
     "process_tree_rss_bytes",
     "wakeups_when_supported",
+    "context_switches_when_supported",
     "direct_role_cpu_and_rss"
   ],
   "process_workloads": [
@@ -298,6 +300,102 @@
       "completion_endpoint": "pty_receipt_and_outer_bytes"
     },
     {
+      "id": "session_switch",
+      "input": "one keyboard trigger switches the attached client between two existing isolation units whose full-screen painters each drew a unique hidden token before the sample; Herdr uses Workspaces because its Sessions are separate servers",
+      "completion": "the target painter's unique token is observable in the attached client output",
+      "metrics": [
+        "latency_ns",
+        "outer_bytes"
+      ],
+      "cli_mode": "session-switch",
+      "fixture": "painted-hidden-screens",
+      "subjects": [
+        "lemma",
+        "tmux",
+        "herdr"
+      ],
+      "unsupported_subjects": {
+        "zellij": "Zellij 0.44 has no keybinding or native command-line Session switch; its session-manager plugin UI and CLI action are not comparable one-write triggers"
+      },
+      "completion_endpoint": "outer_bytes"
+    },
+    {
+      "id": "tab_switch",
+      "input": "one previous/next tab keyboard trigger alternates between two tabs whose full-screen painters each drew a unique hidden token before the sample",
+      "completion": "the target painter's unique token is observable in the attached client output",
+      "metrics": [
+        "latency_ns",
+        "outer_bytes"
+      ],
+      "cli_mode": "tab-switch",
+      "fixture": "painted-hidden-screens",
+      "subjects": [
+        "lemma",
+        "tmux",
+        "zellij",
+        "herdr"
+      ],
+      "completion_endpoint": "outer_bytes"
+    },
+    {
+      "id": "new_pane",
+      "input": "one split keyboard trigger creates a pane whose account login shell prints a unique startup marker; the pane is closed before the next sample; the direct control starts the same shell in a fresh PTY",
+      "completion": "the new shell's unique startup token is observable in the attached client output",
+      "metrics": [
+        "latency_ns",
+        "outer_bytes"
+      ],
+      "cli_mode": "new-pane",
+      "fixture": "shell-startup-marker",
+      "subjects": [
+        "direct",
+        "lemma",
+        "tmux",
+        "zellij",
+        "herdr"
+      ],
+      "completion_endpoint": "outer_bytes"
+    },
+    {
+      "id": "new_tab",
+      "input": "one new-tab keyboard trigger creates a tab whose account login shell prints a unique startup marker; the tab is closed before the next sample; the direct control starts the same shell in a fresh PTY",
+      "completion": "the new shell's unique startup token is observable in the attached client output",
+      "metrics": [
+        "latency_ns",
+        "outer_bytes"
+      ],
+      "cli_mode": "new-tab",
+      "fixture": "shell-startup-marker",
+      "subjects": [
+        "direct",
+        "lemma",
+        "tmux",
+        "zellij",
+        "herdr"
+      ],
+      "completion_endpoint": "outer_bytes"
+    },
+    {
+      "id": "resize_reflow",
+      "input": "the outer PTY alternates between 100x30 and 80x24; an armed full-screen peer reports its new pane geometry on SIGWINCH and repaints a unique token at that geometry",
+      "completion": "the peer's geometry receipt arrives and its repainted token is observable in the attached client output",
+      "metrics": [
+        "resize_to_pty_ns",
+        "resize_to_outer_bytes_ns",
+        "outer_bytes"
+      ],
+      "cli_mode": "resize-reflow",
+      "fixture": "resize-painter",
+      "subjects": [
+        "direct",
+        "lemma",
+        "tmux",
+        "zellij",
+        "herdr"
+      ],
+      "completion_endpoint": "pty_receipt_and_outer_bytes"
+    },
+    {
       "id": "idle_resources",
       "input": "an attached quiescent native peer blocked indefinitely on input with no injected input or output for one second per sample",
       "completion": "the client and session remain attached for the complete sample interval",
@@ -308,7 +406,8 @@
         "attached_client_rss_bytes",
         "process_tree_cpu_time_ns",
         "process_tree_rss_bytes",
-        "wakeups_when_supported"
+        "wakeups_when_supported",
+        "context_switches_when_supported"
       ],
       "cli_mode": "idle-resources",
       "fixture": "idle-peer",
@@ -1123,6 +1222,11 @@
       "interactive_open_loop",
       "tui_redraw",
       "tui_wheel_burst",
+      "session_switch",
+      "tab_switch",
+      "new_pane",
+      "new_tab",
+      "resize_reflow",
       "idle_resources",
       "blocked_pty",
       "blocked_client"
@@ -1134,6 +1238,11 @@
       "interactive_open_loop",
       "tui_redraw",
       "tui_wheel_burst",
+      "session_switch",
+      "tab_switch",
+      "new_pane",
+      "new_tab",
+      "resize_reflow",
       "idle_resources",
       "component_resources",
       "history_resources",

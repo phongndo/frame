@@ -106,6 +106,129 @@ class CommandProbeTest(unittest.TestCase):
         self.assertTrue(result.stdout.endswith(marker + b"1|\r\n"))
 
 
+class TriggerProbeTest(unittest.TestCase):
+    probe: Path
+
+    def run_trigger(self, reply: bytes) -> subprocess.CompletedProcess[str]:
+        outer, fixture = socket.socketpair()
+        with outer, fixture:
+            outer.setblocking(False)
+            fixture.settimeout(5)
+            with subprocess.Popen(
+                [
+                    str(self.probe),
+                    "trigger",
+                    str(outer.fileno()),
+                    b"\x02n".hex(),
+                    "BCDEFG",
+                ],
+                pass_fds=(outer.fileno(),),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ) as process:
+                try:
+                    self.assertEqual(fixture.recv(2), b"\x02n")
+                    fixture.sendall(reply)
+                    fixture.shutdown(socket.SHUT_WR)
+                    stdout, stderr = process.communicate(timeout=10)
+                    return subprocess.CompletedProcess(
+                        process.args, process.returncode, stdout, stderr
+                    )
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+
+    def test_only_the_prepared_token_completes_the_sample(self) -> None:
+        result = self.run_trigger(b"__LEMMA_TAB_0000_AAAAAA__")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_token_is_decoded_across_differential_cursor_moves(self) -> None:
+        reply = b"__LEMMA_TAB_0001_BC\x1b[3;20HDEFG__"
+        result = self.run_trigger(reply)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        measured = json.loads(result.stdout)
+        self.assertGreater(measured["latency_ns"], 0)
+        self.assertEqual(measured["outer_bytes"], len(reply))
+
+    def test_rejects_an_undecodable_trigger(self) -> None:
+        result = subprocess.run(
+            [str(self.probe), "trigger", "0", "0", "BCDEFG"],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+
+
+class PainterTest(unittest.TestCase):
+    probe: Path
+    peer: Path
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.control = root / "control.sock"
+        self.receipts = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.addCleanup(self.receipts.close)
+        self.receipts.bind(str(root / "receipt.sock"))
+        self.receipts.settimeout(5)
+        self.receipt_path = root / "receipt.sock"
+
+    def start(self, mode: str, ready: bytes) -> PtyProcess:
+        process = PtyProcess(
+            [str(self.peer), mode, str(self.receipt_path), str(self.control)],
+            dict(os.environ),
+        )
+        self.addCleanup(process.close)
+        process.read_until(ready, 2.0)
+        return process
+
+    def test_paints_a_hidden_frame_before_acknowledging(self) -> None:
+        process = self.start("paint", b"__LEMMA_PAINT_READY__")
+        self.receipts.sendto(b"c__LEMMA_SESSION_0002_CCCCCC__", str(self.control))
+        self.assertEqual(self.receipts.recv(256), b"__LEMMA_SESSION_0002_CCCCCC__")
+        process.read_until(b"__LEMMA_SESSION_0002_CCCCCC__", 2.0)
+        self.assertIn("c" * 40, process.screen.text())
+
+    def test_rejects_a_control_without_a_fill_letter(self) -> None:
+        process = self.start("paint", b"__LEMMA_PAINT_READY__")
+        self.receipts.sendto(b"__LEMMA_SESSION_0002_CCCCCC__", str(self.control))
+        with self.assertRaisesRegex(RuntimeError, "exited unsuccessfully"):
+            process.wait_for_exit(2.0)
+
+    def test_resize_reports_the_new_geometry_before_the_repaint(self) -> None:
+        process = self.start("resize-paint", b"__LEMMA_RESIZE_READY__")
+        marker = "__LEMMA_RESIZE_0000_AAAAAA__"
+        self.receipts.sendto(b"a" + marker.encode(), str(self.control))
+        self.assertEqual(self.receipts.recv(256), b"__LEMMA_RESIZE_ARMED__")
+        self.receipts.setblocking(False)
+        completed = subprocess.run(
+            [
+                str(self.probe),
+                "resize",
+                str(process.descriptor),
+                str(self.receipts.fileno()),
+                "30",
+                "100",
+                marker,
+                "AAAAAA",
+            ],
+            pass_fds=(process.descriptor, self.receipts.fileno()),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        measured = json.loads(completed.stdout)
+        self.assertEqual(measured["pane_geometry"], "100x30")
+        self.assertGreater(measured["resize_to_pty_ns"], 0)
+        self.assertGreaterEqual(
+            measured["resize_to_outer_bytes_ns"], measured["resize_to_pty_ns"]
+        )
+
+
 class BlockedPeerTest(unittest.TestCase):
     peer: Path
 
@@ -163,6 +286,10 @@ class BlockedPeerTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    CommandProbeTest.probe = Path(sys.argv[1]).resolve()
-    CommandProbeTest.peer = BlockedPeerTest.peer = Path(sys.argv[2]).resolve()
+    CommandProbeTest.probe = TriggerProbeTest.probe = PainterTest.probe = Path(
+        sys.argv[1]
+    ).resolve()
+    CommandProbeTest.peer = BlockedPeerTest.peer = PainterTest.peer = Path(
+        sys.argv[2]
+    ).resolve()
     unittest.main(argv=[sys.argv[0]])

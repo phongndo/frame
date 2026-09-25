@@ -103,6 +103,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--lemma-profiles", type=Path, required=True)
     parser.add_argument("--tmux-profiles", type=Path, required=True)
+    parser.add_argument("--zellij-profiles", type=Path)
+    parser.add_argument("--herdr-profiles", type=Path)
     parser.add_argument("--components", type=Path, required=True)
     parser.add_argument("--history", type=Path, required=True)
     parser.add_argument("--lifecycle", type=Path, required=True)
@@ -118,6 +120,14 @@ def main() -> int:
         "lemma_profiles": lemma,
         "tmux_profiles": tmux,
         "p1_idle_tree_rss_lemma_to_tmux_ratio": lemma_p1 / tmux_p1,
+        "competitor_profiles": {
+            subject: profile_summary(load(path))
+            for subject, path in (
+                ("zellij", arguments.zellij_profiles),
+                ("herdr", arguments.herdr_profiles),
+            )
+            if path is not None
+        },
         "components": component_summary(load(arguments.components)),
         "history": history_summary(load(arguments.history)),
         "lifecycle": lifecycle_summary(load(arguments.lifecycle)),

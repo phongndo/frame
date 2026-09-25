@@ -77,7 +77,21 @@ input_to_photon     external terminal-lab HID event to measured display change
 
 Only the last is user-visible latency. Compare the same build profile, fixture, work, completion
 condition, and host. Distinguish CPU time, elapsed time, output bytes, physical footprint, RSS,
-descriptors, and wakeups. Shared-runner timing is diagnostic, not a stable regression gate.
+descriptors, and wakeups. Darwin wakeups are `proc_pid_rusage` package-idle and interrupt counts.
+Linux instead reports `context_switches`: voluntary plus involuntary switches summed over live
+threads from `/proc/PID/task/TID/status`. It is a wakeup proxy, not comparable with Darwin wakeups,
+and loses counts from threads that exit within an interval. Shared-runner timing is diagnostic, not
+a stable regression gate.
+
+Navigation workloads time one keyboard trigger written to the attached client until a unique token
+is visible in its output. Session and tab switches alternate between two full-screen painters. Before
+each sample, the hidden target paints its token and a fill that differs from the visible screen, then
+settles so pane ingestion is outside the sample. New-pane and new-tab samples include the account
+login shell's startup; their direct control starts that shell in a fresh PTY. Each resize sample
+follows a quiet interval, so it measures an isolated resize rather than a drag burst and includes
+any subject-side resize coalescing delay. Per-subject trigger bindings and intervals live in the
+[harness](../benchmarks/mux_benchmark.py); reviewed unsupported subjects and reasons live in the
+manifest.
 
 Reports retain raw distributions, source/manifest identity, executable SHA-256 values, and failures
 or unsupported capabilities as outcomes rather than samples. Cross-subject validation admits only
@@ -145,8 +159,8 @@ evidence, not paired blockers: frame-cadence outliers make their rank unstable.
 
 | Question | Evidence |
 | --- | --- |
-| Is interaction responsive and isolated from blocked peers? | Input/echo, attach, blocked-PTY/client latency at the named headless endpoint |
-| Is resource use bounded and efficient? | Idle CPU, wakeups, memory, native CPU, deterministic work/queue bounds |
+| Is interaction responsive and isolated from blocked peers? | Input/echo, attach, navigation, resize, blocked-PTY/client latency at the named headless endpoint |
+| Is resource use bounded and efficient? | Idle CPU, wakeups or context switches, memory, native CPU, deterministic work/queue bounds |
 | Is output efficient? | Warm-scroll completion and byte limits, not interactive frame deadlines |
 | Did this change regress? | Paired baseline/candidate checks independent of absolute-target misses |
 | Does Lemma match competitors? | Same-host, same-fixture comparison with the best supported subject for each workload and metric |

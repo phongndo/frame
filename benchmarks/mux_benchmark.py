@@ -36,6 +36,7 @@ from benchmarks.benchmark_manifest import (  # noqa: E402
     expected_failure,
     load_manifest,
     suite_workloads,
+    unsupported_result,
     workload_for_mode,
 )
 from tests.support.mux_harness import LEMMA_OUTER_TERMINAL_RESTORE  # noqa: E402
@@ -63,6 +64,47 @@ LATENCY_NEXT_READY = b"__LEMMA_LATENCY_NEXT__"
 TUI_REDRAW_READY = b"__LEMMA_TUI_REDRAW_READY__"
 TUI_WHEEL_READY = b"__LEMMA_TUI_WHEEL_READY__"
 IDLE_READY = b"__LEMMA_IDLE_READY__"
+PAINT_READY = b"__LEMMA_PAINT_READY__"
+RESIZE_READY = b"__LEMMA_RESIZE_READY__"
+RESIZE_ARMED = b"__LEMMA_RESIZE_ARMED__"
+# Alternate across the 80x24 baseline so every sample changes both pane dimensions.
+RESIZE_GEOMETRIES = ((100, 30), (80, 24))
+RESIZE_QUIET_SECONDS = 0.3
+# Each navigation trigger is one terminal write through the attached client. Bindings are the
+# subject defaults except where noted: Zellij's default new-tab path needs a mode round trip, so its
+# benchmark config binds Alt t directly; Herdr leaves workspace cycling unbound by default, so its
+# benchmark config binds prefix+( and prefix+). Lemma switches Sessions through its native command
+# line (`switch NAME`). Zellij has no in-client Session switch trigger; see the workload manifest.
+NAVIGATION_KEYS: dict[str, dict[str, bytes]] = {
+    "lemma": {
+        "new_pane": b"\x02%",
+        "new_tab": b"\x02c",
+        "next_tab": b"\x02n",
+        "previous_tab": b"\x02p",
+    },
+    "tmux": {
+        "new_pane": b"\x02%",
+        "new_tab": b"\x02c",
+        "next_tab": b"\x02n",
+        "previous_tab": b"\x02p",
+        "next_session": b"\x02)",
+        "previous_session": b"\x02(",
+    },
+    "zellij": {
+        "new_pane": b"\x1bn",
+        "new_tab": b"\x1bt",
+        "next_tab": b"\x1bl",
+        "previous_tab": b"\x1bh",
+    },
+    "herdr": {
+        "new_pane": b"\x02v",
+        "new_tab": b"\x02c",
+        "next_tab": b"\x02n",
+        "previous_tab": b"\x02p",
+        "next_session": b"\x02)",
+        "previous_session": b"\x02(",
+    },
+}
 ATTACH_VISIBLE_MARKER = b"__LEMMA_ATTACH_VISIBLE__"
 # Keep the first byte distinct from fixture markers. Differential terminal renderers can retain a
 # shared prefix on screen without retransmitting it to an attached outer client.
@@ -105,6 +147,8 @@ EXTENSION_FIXTURE_MODES = (
     "crash-focused",
     "crash-docked",
 )
+# Zellij's list-panes action took about 3 s per call at 40-64 panes on the approved host.
+ZELLIJ_PANE_LISTING_SECONDS = 30.0
 HERDR_BENCHMARK_CONFIG = """onboarding = false
 
 [update]
@@ -126,6 +170,10 @@ enabled = false
 
 [experimental]
 pane_history = false
+
+[keys]
+next_workspace = "prefix+)"
+previous_workspace = "prefix+("
 """
 
 
@@ -384,6 +432,8 @@ def interaction_label_codes() -> dict[str, bytes]:
     ]
     for profile in load_manifest()["pane_profiles"]:
         labels.extend((f"{profile['id']}_IDLE", f"{profile['id']}_ACTIVE"))
+    # Append-only: earlier label indices determine existing interaction tokens.
+    labels.extend(("SESSION", "TAB", "SPLIT", "NEWTAB", "RESIZE"))
     if len(labels) > 26 * 26:
         raise RuntimeError("interaction labels exceed the native probe token space")
     return {
@@ -606,6 +656,56 @@ def linux_cpu_snapshot(pids: set[int]) -> dict[str, Any]:
     }
 
 
+def parse_linux_context_switches(value: str) -> tuple[int, int]:
+    counts: dict[str, int] = {}
+    for line in value.splitlines():
+        name, separator, count = line.partition(":")
+        if name in ("voluntary_ctxt_switches", "nonvoluntary_ctxt_switches"):
+            count = count.strip()
+            if not separator or not count.isascii() or not count.isdecimal():
+                raise ValueError("invalid /proc/PID/task/TID/status context switches")
+            counts[name] = int(count)
+    if len(counts) != 2:
+        raise ValueError("incomplete /proc/PID/task/TID/status context switches")
+    return counts["voluntary_ctxt_switches"], counts["nonvoluntary_ctxt_switches"]
+
+
+def linux_context_switch_snapshot(pids: set[int]) -> dict[str, Any]:
+    """Sum per-thread context switches as a Linux wakeup proxy.
+
+    Voluntary switches count blocking waits (each later needs a wakeup); nonvoluntary switches
+    count preemption. Neither equals Darwin's package-idle or interrupt wakeups. Like schedstat
+    CPU, these live-thread snapshots lose counts from threads that exit between endpoints.
+    """
+    if platform.system() != "Linux":
+        return {"available": False, "reason": "not Linux"}
+    if not pids:
+        return {"available": False, "reason": "no processes to sample"}
+    try:
+        voluntary = 0
+        nonvoluntary = 0
+        sampled = 0
+        for pid in pids:
+            for task in Path(f"/proc/{pid}/task").iterdir():
+                thread_voluntary, thread_nonvoluntary = parse_linux_context_switches(
+                    # The Name field is arbitrary thread-name bytes.
+                    (task / "status").read_text(encoding="utf-8", errors="replace")
+                )
+                voluntary += thread_voluntary
+                nonvoluntary += thread_nonvoluntary
+            sampled += 1
+    except (OSError, ValueError) as error:
+        return {"available": False, "reason": str(error)}
+    return {
+        "available": sampled == len(pids),
+        "source": "/proc/PID/task/TID/status live-thread context switches",
+        "sampled_processes": sampled,
+        "voluntary": voluntary,
+        "nonvoluntary": nonvoluntary,
+        "total": voluntary + nonvoluntary,
+    }
+
+
 def linux_memory_snapshot(pids: set[int]) -> dict[str, Any]:
     if platform.system() != "Linux":
         return {"available": False, "reason": "not Linux"}
@@ -726,6 +826,7 @@ def process_group_snapshot(
             "reason": "no reviewed per-process wakeup counter on this platform",
         }
     )
+    context_switches = linux_context_switch_snapshot(pids)
     return {
         "available": True,
         "process_count": len(pids),
@@ -756,6 +857,7 @@ def process_group_snapshot(
             else "ps time"
         ),
         "wakeups": wakeups,
+        "context_switches": context_switches,
         "pids": sorted(pids),
     }
 
@@ -934,24 +1036,6 @@ def summarize_resource_samples(
         if after.get("physical_footprint_bytes") is not None
     ]
     footprint_available = len(footprint_samples) == len(after_samples)
-    wakeup_samples: list[int] = []
-    wakeup_source: str | None = None
-    wakeups_available = True
-    for before, after in zip(before_samples, after_samples):
-        before_wakeups = before.get("wakeups")
-        after_wakeups = after.get("wakeups")
-        if (
-            not isinstance(before_wakeups, dict)
-            or not isinstance(after_wakeups, dict)
-            or before_wakeups.get("available") is not True
-            or after_wakeups.get("available") is not True
-        ):
-            wakeups_available = False
-            continue
-        wakeup_source = str(after_wakeups.get("source"))
-        wakeup_samples.append(
-            max(0, int(after_wakeups["total"]) - int(before_wakeups["total"]))
-        )
     return {
         "cpu_time": summary(cpu_samples),
         "rss": metric_summary(rss_samples, "bytes"),
@@ -968,18 +1052,48 @@ def summarize_resource_samples(
                 else {"samples_bytes": []}
             ),
         },
-        "wakeups": {
-            "available": wakeups_available,
-            "source": wakeup_source if wakeups_available else None,
-            "reason": None
-            if wakeups_available
-            else "no reviewed per-process wakeup counter on this platform",
-            **(
-                metric_summary(wakeup_samples, "count")
-                if wakeups_available
-                else {"samples_count": []}
-            ),
-        },
+        "wakeups": counter_interval_summary(
+            before_samples,
+            after_samples,
+            "wakeups",
+            "no reviewed per-process wakeup counter on this platform",
+        ),
+        "context_switches": counter_interval_summary(
+            before_samples,
+            after_samples,
+            "context_switches",
+            "no reviewed per-thread context-switch counter on this platform",
+        ),
+    }
+
+
+def counter_interval_summary(
+    before_samples: list[dict[str, Any]],
+    after_samples: list[dict[str, Any]],
+    key: str,
+    unavailable_reason: str,
+) -> dict[str, Any]:
+    samples: list[int] = []
+    source: str | None = None
+    available = True
+    for before, after in zip(before_samples, after_samples):
+        start = before.get(key)
+        end = after.get(key)
+        if (
+            not isinstance(start, dict)
+            or not isinstance(end, dict)
+            or start.get("available") is not True
+            or end.get("available") is not True
+        ):
+            available = False
+            continue
+        source = str(end.get("source"))
+        samples.append(max(0, int(end["total"]) - int(start["total"])))
+    return {
+        "available": available,
+        "source": source if available else None,
+        "reason": None if available else unavailable_reason,
+        **(metric_summary(samples, "count") if available else {"samples_count": []}),
     }
 
 
@@ -1124,6 +1238,10 @@ class PtyReceiptChannel:
             raise RuntimeError(
                 "incomplete autonomous-output visibility acknowledgement"
             )
+
+    def send_control(self, path: Path, message: bytes) -> None:
+        if self.descriptor.sendto(message, str(path)) != len(message):
+            raise RuntimeError(f"incomplete fixture control datagram to {path}")
 
     def wait_for_receipt(self, expected: bytes, timeout: float) -> None:
         deadline = time.monotonic() + timeout
@@ -1730,7 +1848,8 @@ class ZellijRuntime:
             "show_release_notes false\n"
             "session_serialization false\n"
             "serialize_pane_viewport false\n"
-            "disable_session_metadata true\n",
+            "disable_session_metadata true\n"
+            'keybinds {\n    normal {\n        bind "Alt t" { NewTab; }\n    }\n}\n',
             encoding="utf-8",
         )
         self.session_prefix = f"lb-{os.getpid()}-"
@@ -1753,7 +1872,7 @@ class ZellijRuntime:
         ]
 
     def _command(
-        self, *arguments: str, check: bool = True
+        self, *arguments: str, check: bool = True, timeout: float = 5.0
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             self._arguments(*arguments),
@@ -1761,7 +1880,7 @@ class ZellijRuntime:
             check=check,
             capture_output=True,
             text=True,
-            timeout=5.0,
+            timeout=timeout,
         )
 
     def attach_arguments(self, session: str) -> list[str]:
@@ -1793,13 +1912,29 @@ class ZellijRuntime:
         return client
 
     def session_command(
-        self, session: str, *arguments: str
+        self, session: str, *arguments: str, timeout: float = 5.0
     ) -> subprocess.CompletedProcess[str]:
         mapped = self.session_prefix + session.replace("_", "-")
-        return self._command("--session", mapped, "action", *arguments)
+        return self._command("--session", mapped, "action", *arguments, timeout=timeout)
 
     def pane_count(self, session: str) -> int:
-        panes = json.loads(self.session_command(session, "list-panes", "--json").stdout)
+        listed = self._command(
+            "--session",
+            self.session_prefix + session.replace("_", "-"),
+            "action",
+            "list-panes",
+            "--json",
+            check=False,
+            timeout=ZELLIJ_PANE_LISTING_SECONDS,
+        )
+        try:
+            panes = json.loads(listed.stdout) if listed.returncode == 0 else None
+        except json.JSONDecodeError:
+            panes = None
+        if not isinstance(panes, list):
+            # While tabs are created or torn down, Zellij can reject the listing or publish an
+            # empty or non-list result. Treat it as not yet observable; callers' deadlines bound it.
+            return -1
         return sum(not pane["is_plugin"] for pane in panes)
 
     def _wait_for_session(self, mapped_session: str) -> None:
@@ -2441,6 +2576,419 @@ def tui_wheel_burst(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
         receipts.close()
 
 
+def trigger_sample(
+    runtime: MuxRuntime, client: PtyProcess, trigger: bytes, token: bytes
+) -> tuple[int, int]:
+    """Run one native trigger-to-visible sample; the caller prepares an unseen unique token."""
+    try:
+        completed = subprocess.run(
+            [
+                str(runtime.probe_path),
+                "trigger",
+                str(client.descriptor),
+                trigger.hex(),
+                token.decode("ascii"),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            pass_fds=(client.descriptor,),
+            timeout=10.0,
+        )
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"native trigger probe failed: stdout={error.stdout!r} stderr={error.stderr!r}"
+        ) from error
+    try:
+        measured = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("native trigger probe returned invalid JSON") from error
+    if not isinstance(measured, dict):
+        raise RuntimeError("native trigger probe returned an invalid result")
+    latency = measured.get("latency_ns")
+    outer_bytes = measured.get("outer_bytes")
+    if (
+        measured.get("observer") != "native_poll"
+        or not isinstance(latency, int)
+        or latency <= 0
+        or not isinstance(outer_bytes, int)
+    ):
+        raise RuntimeError("native trigger probe returned an invalid result")
+    return latency, outer_bytes
+
+
+def trigger_result(
+    latencies: list[int],
+    outer_bytes: list[int],
+    runtime: MuxRuntime,
+    cpu_before: dict[str, Any] | None,
+    **metadata: Any,
+) -> dict[str, Any]:
+    result = {
+        "status": "completed",
+        "observer": "native_poll",
+        "clock": "steady_clock",
+        **metadata,
+        **summary(latencies),
+        "outer_bytes": outer_bytes,
+        "median_outer_bytes": percentile(outer_bytes, 0.50),
+    }
+    if cpu_before is not None:
+        result["workload_cpu"] = {
+            **workload_cpu(runtime, cpu_before, len(latencies)),
+            "includes": "untimed per-sample fixture preparation and probe launch",
+        }
+    return result
+
+
+def painter_control(index: int, marker: bytes) -> bytes:
+    # Consecutive fills differ, so every cell except the marker row changes between samples.
+    return bytes((ord("a") + index % 26,)) + marker
+
+
+def launch_painter(
+    runtime: MuxRuntime,
+    client: PtyProcess,
+    receipts: PtyReceiptChannel,
+    control: Path,
+) -> None:
+    command = (
+        f"exec {shlex.quote(str(runtime.peer_path))} paint "
+        f"{shlex.quote(str(receipts.path))} {shlex.quote(str(control))}\r"
+    ).encode()
+    client.write_all(command, 2.0)
+    client.read_until(PAINT_READY, 5.0, visible_text=screen_renders_markers(runtime))
+    client.drain(0.01)
+
+
+def painted_switch_samples(
+    runtime: MuxRuntime,
+    client: PtyProcess,
+    receipts: PtyReceiptChannel,
+    controls: tuple[Path, Path],
+    triggers: tuple[bytes, bytes],
+    label: str,
+    repetitions: int,
+    **metadata: Any,
+) -> dict[str, Any]:
+    """Alternate the client between two painted screens; the client starts on the second.
+
+    Before each sample the hidden target paints a unique token and acknowledges the write. A
+    bounded settle lets the subject ingest that pane output, so the sample measures the switch.
+    """
+    latencies: list[int] = []
+    outer_bytes: list[int] = []
+    cpu_before = runtime_resource_snapshot(runtime)
+    for index in range(repetitions):
+        target = index % 2
+        marker = interaction_marker(label, index)
+        receipts.send_control(controls[target], painter_control(index, marker))
+        receipts.wait_for_receipt(marker, 5.0)
+        client.drain(0.05)
+        latency, sample_bytes = trigger_sample(
+            runtime, client, triggers[target], interaction_visible_token(label, index)
+        )
+        latencies.append(latency)
+        outer_bytes.append(sample_bytes)
+    return trigger_result(latencies, outer_bytes, runtime, cpu_before, **metadata)
+
+
+def session_switch(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
+    if not isinstance(runtime, (LemmaRuntime, TmuxRuntime, HerdrRuntime)):
+        raise TypeError("session switch requires an in-client Session switch trigger")
+    receipts = PtyReceiptChannel(runtime.receipt_path)
+    controls = (
+        Path(f"{runtime.receipt_path}.a"),
+        Path(f"{runtime.receipt_path}.b"),
+    )
+    names = ("switch_a", "switch_b")
+    try:
+        client = runtime.start_and_attach(names[0])
+        launch_painter(runtime, client, receipts, controls[0])
+        if isinstance(runtime, HerdrRuntime):
+            # Herdr Sessions are separate servers; a Workspace is its in-client isolation unit.
+            runtime.session_command(
+                names[0], "workspace", "create", "--cwd", os.getcwd()
+            )
+            unit = "workspace"
+        else:
+            runtime.start_detached(names[1])
+            unit = "session"
+        if isinstance(runtime, LemmaRuntime):
+            triggers = tuple(
+                b"\x02:switch " + name.encode("ascii") + b"\r" for name in names
+            )
+            description = "C-b : switch NAME Enter (native command line)"
+        else:
+            keys = NAVIGATION_KEYS[runtime.multiplexer]
+            triggers = (keys["previous_session"], keys["next_session"])
+            description = (
+                "C-b ( / C-b )"
+                if isinstance(runtime, TmuxRuntime)
+                else "prefix+( / prefix+) (configured workspace cycling)"
+            )
+        client.write_all(triggers[1], 2.0)
+        wait_for_startup_shell(runtime, client)
+        launch_painter(runtime, client, receipts, controls[1])
+        return painted_switch_samples(
+            runtime,
+            client,
+            receipts,
+            controls,
+            (triggers[0], triggers[1]),
+            "SESSION",
+            repetitions,
+            switch_unit=unit,
+            trigger=description,
+        )
+    finally:
+        receipts.close()
+        for control in controls:
+            control.unlink(missing_ok=True)
+
+
+def tab_switch(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
+    if isinstance(runtime, DirectRuntime):
+        raise TypeError("tab switch requires a multiplexer")
+    receipts = PtyReceiptChannel(runtime.receipt_path)
+    controls = (
+        Path(f"{runtime.receipt_path}.a"),
+        Path(f"{runtime.receipt_path}.b"),
+    )
+    keys = NAVIGATION_KEYS[runtime.multiplexer]
+    try:
+        client = runtime.start_and_attach("tab_switch")
+        launch_painter(runtime, client, receipts, controls[0])
+        client.write_all(keys["new_tab"], 2.0)
+        wait_for_startup_shell(runtime, client)
+        launch_painter(runtime, client, receipts, controls[1])
+        return painted_switch_samples(
+            runtime,
+            client,
+            receipts,
+            controls,
+            (keys["previous_tab"], keys["next_tab"]),
+            "TAB",
+            repetitions,
+            trigger="previous/next tab binding",
+        )
+    finally:
+        receipts.close()
+        for control in controls:
+            control.unlink(missing_ok=True)
+
+
+def shell_marker_command(marker: bytes) -> str:
+    # Markers are [A-Z0-9_]; the startup file, not echoed input, prints them.
+    return f"printf '%s\\n' '{marker.decode('ascii')}'\n"
+
+
+def shell_startup_control(
+    runtime: DirectRuntime, repetitions: int, label: str
+) -> dict[str, Any]:
+    """Direct control: the account login shell starts in a fresh PTY and prints its marker."""
+    latencies: list[int] = []
+    outer_bytes: list[int] = []
+    shell = runtime.environment["SHELL"]
+    for index in range(repetitions):
+        marker = interaction_marker(label, index)
+        install_shell_startup(runtime.environment, shell_marker_command(marker))
+        try:
+            completed = subprocess.run(
+                [
+                    str(runtime.probe_path),
+                    "attach",
+                    "1",
+                    marker.decode("ascii"),
+                    "--",
+                    shell,
+                    "-l",
+                ],
+                env=runtime.environment,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+            measured = json.loads(completed.stdout)
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(
+                f"native shell-startup probe failed: stderr={error.stderr!r}"
+            ) from error
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                "native shell-startup probe returned invalid JSON"
+            ) from error
+        latency = measured.get("latency") if isinstance(measured, dict) else None
+        samples = latency.get("samples_ns") if isinstance(latency, dict) else None
+        sample_bytes = (
+            measured.get("outer_bytes") if isinstance(measured, dict) else None
+        )
+        if (
+            not isinstance(measured, dict)
+            or measured.get("observer") != "native_poll"
+            or not isinstance(samples, list)
+            or len(samples) != 1
+            or not isinstance(sample_bytes, list)
+            or len(sample_bytes) != 1
+        ):
+            raise RuntimeError("native shell-startup probe returned an invalid result")
+        latencies.extend(samples)
+        outer_bytes.extend(sample_bytes)
+    return trigger_result(
+        latencies,
+        outer_bytes,
+        runtime,
+        None,
+        trigger="fork a PTY and exec the account login shell",
+    )
+
+
+def new_shell_latency(
+    runtime: MuxRuntime, repetitions: int, action: str, label: str
+) -> dict[str, Any]:
+    """Create a Pane or Tab by key and time until its login shell's unique marker is visible."""
+    if isinstance(runtime, DirectRuntime):
+        return shell_startup_control(runtime, repetitions, label)
+    if not isinstance(
+        runtime, (LemmaRuntime, TmuxRuntime, HerdrRuntime, ZellijRuntime)
+    ):
+        raise TypeError("new-shell latency requires a known runtime")
+    session = action
+    client = runtime.start_and_attach(session)
+    trigger = NAVIGATION_KEYS[runtime.multiplexer][action]
+    latencies: list[int] = []
+    outer_bytes: list[int] = []
+    cpu_before = runtime_resource_snapshot(runtime)
+    for index in range(repetitions):
+        marker = interaction_marker(label, index)
+        install_shell_startup(runtime.environment, shell_marker_command(marker))
+        latency, sample_bytes = trigger_sample(
+            runtime, client, trigger, interaction_visible_token(label, index)
+        )
+        latencies.append(latency)
+        outer_bytes.append(sample_bytes)
+        # Close the focused new shell so every sample creates the same one-to-two transition.
+        client.write_all(b"exit\r", 2.0)
+        wait_for_profile_panes(runtime, client, session, 1)
+        client.drain(0.05)
+    return trigger_result(
+        latencies,
+        outer_bytes,
+        runtime,
+        cpu_before,
+        trigger=f"{action.replace('_', ' ')} binding",
+    )
+
+
+def new_pane(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
+    return new_shell_latency(runtime, repetitions, "new_pane", "SPLIT")
+
+
+def new_tab(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
+    return new_shell_latency(runtime, repetitions, "new_tab", "NEWTAB")
+
+
+def require_resized_pane(outer: tuple[int, int], pane: tuple[int, int]) -> None:
+    """Subject chrome shrinks panes, but both dimensions must cross the 80x24 baseline."""
+    baseline_columns, baseline_rows = RESIZE_GEOMETRIES[1]
+    grew = outer[0] > baseline_columns
+    if (pane[0] > baseline_columns, pane[1] > baseline_rows) != (grew, grew):
+        raise RuntimeError(
+            f"first repaint after resizing to {outer[0]}x{outer[1]} reported pane "
+            f"{pane[0]}x{pane[1]}, not the requested side of "
+            f"{baseline_columns}x{baseline_rows}"
+        )
+
+
+def resize_reflow(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
+    receipts = PtyReceiptChannel(runtime.receipt_path)
+    try:
+        client = runtime.start_and_attach("resize_reflow")
+        launch = (
+            f"exec {shlex.quote(str(runtime.peer_path))} resize-paint "
+            f"{shlex.quote(str(receipts.path))} {shlex.quote(str(receipts.peer_path))}\r"
+        ).encode()
+        client.write_all(launch, 2.0)
+        client.read_until(
+            RESIZE_READY, 5.0, visible_text=screen_renders_markers(runtime)
+        )
+        client.drain(0.05)
+        to_pty: list[int] = []
+        to_outer: list[int] = []
+        outer_bytes: list[int] = []
+        outer_geometry: list[list[int]] = []
+        pane_geometry: list[list[int]] = []
+        cpu_before = runtime_resource_snapshot(runtime)
+        for index in range(repetitions):
+            columns, rows = RESIZE_GEOMETRIES[index % 2]
+            marker = interaction_marker("RESIZE", index)
+            # Measure isolated resizes rather than a drag burst: subjects may coalesce or
+            # throttle resizes that follow the previous one closely.
+            client.drain(RESIZE_QUIET_SECONDS)
+            receipts.send_control(receipts.peer_path, painter_control(index, marker))
+            receipts.wait_for_receipt(RESIZE_ARMED, 5.0)
+            try:
+                completed = subprocess.run(
+                    [
+                        str(runtime.probe_path),
+                        "resize",
+                        str(client.descriptor),
+                        str(receipts.descriptor.fileno()),
+                        str(rows),
+                        str(columns),
+                        marker.decode("ascii"),
+                        interaction_visible_token("RESIZE", index).decode("ascii"),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    pass_fds=(client.descriptor, receipts.descriptor.fileno()),
+                    timeout=10.0,
+                )
+                measured = json.loads(completed.stdout)
+            except subprocess.CalledProcessError as error:
+                raise RuntimeError(
+                    f"native resize probe failed: stderr={error.stderr!r}"
+                ) from error
+            except json.JSONDecodeError as error:
+                raise RuntimeError(
+                    "native resize probe returned invalid JSON"
+                ) from error
+            try:
+                pane_columns, pane_rows = (
+                    int(value) for value in str(measured["pane_geometry"]).split("x")
+                )
+            except (KeyError, ValueError) as error:
+                raise RuntimeError(
+                    "native resize probe returned no pane geometry"
+                ) from error
+            require_resized_pane((columns, rows), (pane_columns, pane_rows))
+            to_pty.append(int(measured["resize_to_pty_ns"]))
+            to_outer.append(int(measured["resize_to_outer_bytes_ns"]))
+            outer_bytes.append(int(measured["outer_bytes"]))
+            outer_geometry.append([columns, rows])
+            pane_geometry.append([pane_columns, pane_rows])
+        return {
+            "status": "completed",
+            "observer": "native_poll",
+            "clock": "steady_clock",
+            "trigger": "outer PTY TIOCSWINSZ alternating 100x30 and 80x24",
+            "resize_to_pty": summary(to_pty),
+            "resize_to_outer_bytes": summary(to_outer),
+            "outer_bytes": outer_bytes,
+            "median_outer_bytes": percentile(outer_bytes, 0.50),
+            "outer_geometry": outer_geometry,
+            "pane_geometry": pane_geometry,
+            "workload_cpu": {
+                **workload_cpu(runtime, cpu_before, repetitions),
+                "includes": "untimed per-sample fixture arming and probe launch",
+            },
+        }
+    finally:
+        receipts.close()
+
+
 class WorkloadFailure(RuntimeError):
     def __init__(self, message: str, result: dict[str, Any]) -> None:
         super().__init__(message)
@@ -2808,7 +3356,9 @@ def wait_for_profile_panes(
     session: str,
     panes: int,
 ) -> None:
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + (
+        ZELLIJ_PANE_LISTING_SECONDS if isinstance(runtime, ZellijRuntime) else 5.0
+    )
     while time.monotonic() < deadline:
         client.drain(0.005)
         if isinstance(runtime, LemmaRuntime):
@@ -2835,10 +3385,28 @@ def wait_for_profile_shell(
     client: PtyProcess,
     pane_index: int,
 ) -> None:
+    # Pane publication only proves that the PTY child exists; sampling before login-shell
+    # startup settles otherwise charges setup CPU to the nominally idle interval.
+    if screen_renders_markers(runtime):
+        # Rendered frames can omit a marker that a wrapped echo and multi-line host prompt
+        # scroll out of a short pane before the next frame. A file the shell creates proves
+        # execution without depending on pane height or prompt shape.
+        ready = (
+            Path(runtime.environment["TMPDIR"]) / f"profile-pane-{pane_index:04d}.ready"
+        )
+        client.write_all(f"touch {shlex.quote(str(ready))}\r".encode(), 2.0)
+        deadline = time.monotonic() + 5.0
+        while not ready.exists():
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"profile pane {pane_index} shell did not execute input"
+                )
+            client.drain(0.005)
+        client.drain(0.005)
+        return
     marker = f"__LEMMA_PROFILE_PANE_{pane_index:04d}_READY__".encode()
     # Keep the complete marker out of the echoed command so observation proves the shell executed
-    # it. Pane publication only proves that the PTY child exists; sampling before login-shell
-    # startup settles otherwise charges setup CPU to the nominally idle interval.
+    # it.
     command = f"printf '__LEMMA_PROFILE_PANE_%04d_READY__\\n' {pane_index}\r".encode()
     wait_for_shell_execution(runtime, client, marker, command)
 
@@ -3448,6 +4016,11 @@ def main() -> int:
         "interactive_open_loop": interactive_open_loop,
         "tui_redraw": tui_redraw,
         "tui_wheel_burst": tui_wheel_burst,
+        "session_switch": session_switch,
+        "tab_switch": tab_switch,
+        "new_pane": new_pane,
+        "new_tab": new_tab,
+        "resize_reflow": resize_reflow,
         "idle_resources": idle_resources,
         "blocked_pty": blocked_pty,
         "blocked_client": blocked_client,
@@ -3478,12 +4051,7 @@ def main() -> int:
     for scenario, operation in selected:
         name = scenario["id"]
         if arguments.multiplexer not in scenario["subjects"]:
-            workloads[name] = {
-                "status": "unsupported",
-                "reason": (
-                    f"{name} is not defined for the {arguments.multiplexer} subject"
-                ),
-            }
+            workloads[name] = unsupported_result(scenario, arguments.multiplexer)
             continue
         if name != "attach_to_visible":
             workloads[name] = classify_failure(name, run_operation(operation))
