@@ -1608,7 +1608,8 @@ TEST_F(PaneCursorOcclusionTest, FocusedSurfaceBlockYieldsToPaneCursorShape) {
     oracle.invalidate_ansi_render_state();
     const auto projected = oracle.render_ansi(output, true);
     EXPECT_TRUE(projected.has_value());
-    return std::string(as_text(std::span(output).first(projected.value_or({}).bytes)));
+    return std::string(
+        as_text(std::span(output).first(projected.value_or(vt::AnsiRenderResult{}).bytes)));
   };
 
   EXPECT_THAT(present(false, true), testing::HasSubstr("\x1b[6 q"));

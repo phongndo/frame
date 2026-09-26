@@ -428,7 +428,8 @@ TEST(TerminalTest, ProjectsEveryCursorShapeAndBlinkStateOnlyWhenChanged) {
     const auto rendered = terminal.render_ansi(output, full);
     EXPECT_TRUE(rendered.has_value());
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-    return std::string(reinterpret_cast<const char*>(output.data()), rendered.value_or({}).bytes);
+    return std::string(reinterpret_cast<const char*>(output.data()),
+                       rendered.value_or(AnsiRenderResult{}).bytes);
   };
   static_cast<void>(render(true));
 
