@@ -22,6 +22,7 @@
 #include "core/frame_scheduler.hpp"
 #include "core/input.hpp"
 #include "core/layout.hpp"
+#include "core/outer_attention.hpp"
 #include "core/presentation_gate.hpp"
 #include "core/pty_writer.hpp"
 #include "core/session.hpp"
@@ -67,8 +68,10 @@
 #include <variant>
 #include <vector>
 
+#include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -254,6 +257,26 @@ private:
   return active_reactor_environment->outer_title;
 }
 
+[[nodiscard]] auto reactor_outer_bell() noexcept -> bool {
+  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  return active_reactor_environment->outer_bell;
+}
+
+[[nodiscard]] auto reactor_outer_notifications() noexcept -> bool {
+  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  return active_reactor_environment->outer_notifications;
+}
+
+[[nodiscard]] auto reactor_outer_progress() noexcept -> bool {
+  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  return active_reactor_environment->outer_progress;
+}
+
+[[nodiscard]] auto reactor_outer_cwd() noexcept -> bool {
+  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  return active_reactor_environment->outer_cwd;
+}
+
 [[nodiscard]] auto reactor_poll(const std::span<pollfd> descriptors,
                                 const int timeout_milliseconds) noexcept -> int {
   LEMMA_ASSERT(active_reactor_environment != nullptr);
@@ -344,6 +367,7 @@ struct PtyDrainResult final {
   bool force_full{false};
   bool damage_capture_failed{false};
   bool bell{false};
+  bool notification{false};
   bool title_changed{false};
   bool signal{false};
 #ifdef LEMMA_ENABLE_LATENCY_TRACE
@@ -410,10 +434,11 @@ process_pty_output(const int pty, vt::Terminal& terminal, PresentationGate& pres
                                    trace_correlation);
   write_pty_output(terminal, presentation_gate, bytes, capture_damage, drain);
   const auto effects = terminal.take_effects();
-  // Desktop notifications use the same bounded visible-attention policy as BEL. Title, PWD, and
-  // progress changes invalidate status metadata; denied clipboard and unknown sequences are
-  // intentionally drained and dropped by policy at the adapter boundary.
-  drain.bell = drain.bell || effects.bells > 0 || effects.desktop_notifications > 0;
+  // Bells and desktop notifications are forwarded to the attached client's outer terminal. Title,
+  // PWD, and progress changes invalidate status metadata; denied clipboard and unknown sequences
+  // are intentionally drained and dropped by policy at the adapter boundary.
+  drain.bell = drain.bell || effects.bells > 0;
+  drain.notification = drain.notification || effects.desktop_notifications > 0;
   drain.title_changed = drain.title_changed || effects.title_changes > 0 ||
                         effects.pwd_changes > 0 || effects.progress_reports > 0;
   // Signal values stay in the terminal's latest-value record; the drain only notes a change.
@@ -899,7 +924,9 @@ struct EncodedContextId final {
     const std::span<const std::byte> environment, const LaunchEnvironmentMode environment_mode,
     const vt::TerminalTheme& theme, const SessionId session_id, const std::string_view session_name,
     const TabId tab_id, const PaneId pane_id, const std::span<const std::byte> launch_command = {},
-    const protocol::CellSize cell = {}) noexcept -> std::unique_ptr<PaneRuntime> {
+    const protocol::CellSize cell = {},
+    const std::string_view fallback_working_directory = {}) noexcept
+    -> std::unique_ptr<PaneRuntime> {
   vt::TerminalOptions options;
   options.size = {
       .columns = columns, .rows = rows, .cell_width_px = cell.width, .cell_height_px = cell.height};
@@ -928,9 +955,9 @@ struct EncodedContextId final {
       platform::EnvironmentVariable{.name = "LEMMA_TAB_ID", .value = encoded_tab.view()},
       platform::EnvironmentVariable{.name = "LEMMA_PANE_ID", .value = encoded_pane.view()},
   };
-  runtime->child =
-      platform::spawn_process(runtime->pty, working_directory, environment,
-                              platform_environment_mode(environment_mode), launch_command, overlay);
+  runtime->child = platform::spawn_process(runtime->pty, working_directory, environment,
+                                           platform_environment_mode(environment_mode),
+                                           launch_command, overlay, fallback_working_directory);
   if (runtime->child <= 0 || !set_nonblocking(runtime->pty) ||
       !platform::resize_pty(runtime->pty, columns, rows, options.size.cell_width_px,
                             options.size.cell_height_px)) {
@@ -1131,11 +1158,11 @@ struct ProductionSessionRuntimeContext final {
       !owner.runtimes->can_reserve_scrollback(limits::terminal_scrollback_bytes_default)) {
     return RuntimeEffectStatus::rejected;
   }
-  auto runtime =
-      create_pane_runtime(effect.rectangle.columns, effect.rectangle.rows, effect.working_directory,
-                          session.launch_environment(), session.environment_mode, session.theme,
-                          session.id, session.session_name(), effect.tab, effect.pane,
-                          effect.command, session.attachment_runtime.cell_size);
+  auto runtime = create_pane_runtime(
+      effect.rectangle.columns, effect.rectangle.rows, effect.working_directory,
+      session.launch_environment(), session.environment_mode, session.theme, session.id,
+      session.session_name(), effect.tab, effect.pane, effect.command,
+      session.attachment_runtime.cell_size, effect.fallback_working_directory);
   if (runtime == nullptr) {
     return RuntimeEffectStatus::rejected;
   }
@@ -2581,6 +2608,51 @@ void service_copy_input_timeout(SessionRecord& session, PaneRuntimeStore& runtim
   }
 }
 
+using InheritedDirectory = std::array<char, limits::working_directory_bytes_max + 1U>;
+
+struct LaunchDirectory final {
+  std::string_view directory;
+  // Entered instead if an inherited directory cannot be entered at spawn.
+  std::string_view fallback;
+};
+
+// A new Pane without an explicit directory starts where the reference Pane last reported through
+// OSC 7, when that names a directory on this host that the daemon's user can enter. Otherwise the
+// configured launch default applies. Remote (SSH), stale, and unenterable reports fall back rather
+// than failing spawn; the child repeats the fallback if the directory changes before it enters.
+[[nodiscard]] auto launch_directory(const SessionRecord& session, const PaneRuntimeStore& runtimes,
+                                    const Pane* const reference,
+                                    const std::string_view explicit_cwd,
+                                    InheritedDirectory& storage) noexcept -> LaunchDirectory {
+  if (!explicit_cwd.empty()) {
+    return {.directory = explicit_cwd, .fallback = {}};
+  }
+  const auto fallback = reactor_default_cwd();
+  const LaunchDirectory configured{.directory = fallback, .fallback = {}};
+  const auto* const runtime =
+      reference == nullptr ? nullptr : find_pane_runtime(runtimes, session, *reference);
+  const auto uri =
+      runtime == nullptr ? std::expected<std::string_view, vt::Error>{} : runtime->terminal.pwd();
+  if (!uri.has_value() || uri->empty()) {
+    return configured;
+  }
+  std::array<char, 256> host{};
+  const auto host_size =
+      ::gethostname(host.data(), host.size() - 1U) == 0 ? std::strlen(host.data()) : 0U;
+  const auto directory = local_directory_from_osc7(*uri, std::string_view(host.data(), host_size),
+                                                   std::span(storage).first(storage.size() - 1U));
+  if (!directory.has_value()) {
+    return configured;
+  }
+  std::span(storage).subspan(directory->size(), 1).front() = '\0';
+  struct stat status{};
+  if (::stat(storage.data(), &status) != 0 || !S_ISDIR(status.st_mode) ||
+      ::faccessat(AT_FDCWD, storage.data(), X_OK, AT_EACCESS) != 0) {
+    return configured;
+  }
+  return {.directory = *directory, .fallback = fallback.empty() ? session.cwd() : fallback};
+}
+
 [[nodiscard]] auto create_tab(SessionRecord& session, PaneRuntimeStore& runtimes,
                               const std::span<const std::byte> launch_command = {},
                               const std::string_view working_directory = {},
@@ -2589,9 +2661,15 @@ void service_copy_input_timeout(SessionRecord& session, PaneRuntimeStore& runtim
   ProductionSessionRuntimeContext runtime_context{.session = &session, .runtimes = &runtimes};
   SessionMachine machine(session, production_session_options(runtime_context));
   const auto command = launch_command.empty() ? reactor_default_program() : launch_command;
-  const auto directory = working_directory.empty() ? reactor_default_cwd() : working_directory;
+  InheritedDirectory inherited;
+  const auto* const current = active_tab(session);
+  const auto directory = launch_directory(
+      session, runtimes,
+      current == nullptr ? nullptr : find_pane(session, *current, current->focused_pane),
+      working_directory, inherited);
   const auto transition = machine.create_tab({.command = command,
-                                              .working_directory = directory,
+                                              .working_directory = directory.directory,
+                                              .fallback_working_directory = directory.fallback,
                                               .exit_policy = exit_policy,
                                               .activate = activate});
   apply_session_change(session, runtimes, transition.change);
@@ -2610,10 +2688,13 @@ void service_copy_input_timeout(SessionRecord& session, PaneRuntimeStore& runtim
   ProductionSessionRuntimeContext runtime_context{.session = &session, .runtimes = &runtimes};
   SessionMachine machine(session, production_session_options(runtime_context));
   const auto command = launch_command.empty() ? reactor_default_program() : launch_command;
-  const auto directory = working_directory.empty() ? reactor_default_cwd() : working_directory;
+  InheritedDirectory inherited;
+  const auto directory = launch_directory(session, runtimes, find_pane(session, tab, source_pane),
+                                          working_directory, inherited);
   const auto transition = machine.split_pane(tab.id, source_pane, axis,
                                              {.command = command,
-                                              .working_directory = directory,
+                                              .working_directory = directory.directory,
+                                              .fallback_working_directory = directory.fallback,
                                               .exit_policy = exit_policy,
                                               .focus_created = focus_created});
   apply_session_change(session, runtimes, transition.change);
@@ -5679,12 +5760,37 @@ void record_reaped_child(Sessions& sessions, PaneRuntimeStore& runtimes,
   return reaped;
 }
 
+[[nodiscard]] auto queue_outer_progress_removal(SessionRecord& session) noexcept -> bool;
+[[nodiscard]] auto write_attached_client(void* context, std::span<const std::byte> bytes) noexcept
+    -> ClientFrameWriteAttempt;
+
+// An ending Session closes its client without a disconnect exchange. Progress has no outer
+// save/restore, so a presented indicator gets one nonblocking removal attempt first; a busy or
+// full socket leaves it.
+void remove_outer_progress_before_close(SessionRecord& session) noexcept {
+  auto& attachment = session.attachment_runtime;
+  if (attachment.client < 0 || attachment.output.busy() ||
+      attachment.outer_attention.progress == vt::ProgressState::none ||
+      !queue_outer_progress_removal(session)) {
+    return;
+  }
+  attachment.output.mark_write_ready();
+  ClientFrameFlushTarget target{.descriptor = attachment.client,
+                                .frame = &attachment.frame,
+                                .output = &attachment.output,
+                                .write = &write_attached_client,
+                                .context = &session};
+  std::size_t budget = attached_client_write_bytes_per_client_turn_max;
+  static_cast<void>(flush_client_frame(target, budget, reactor_now()));
+}
+
 void reclaim_inactive_sessions(Sessions& sessions, PaneRuntimeStore& runtimes,
                                extension::Runtime& extensions) noexcept {
   for (auto& session : sessions) {
     if (session != nullptr && !session->active &&
         session->attachment_runtime.pending_attach_slot ==
             std::numeric_limits<std::uint32_t>::max()) {
+      remove_outer_progress_before_close(*session);
       const auto id = session->id;
       extensions.revoke_session(id);
       runtimes.erase_session(id);
@@ -8946,6 +9052,24 @@ void process_pending_read(PendingConnections& connections, Sessions& sessions,
 void handle_client_parse_result(SessionRecord& session, PaneRuntimeStore& runtimes,
                                 ParseResult result) noexcept;
 
+// A connection presents attention that arrives while it is attached. It does not replay bells or
+// notifications from before it arrived; Pane signal records retain those for observers.
+void start_outer_attention(SessionRecord& session, PaneRuntimeStore& runtimes) noexcept {
+  for (const auto& slot : session.panes) {
+    if (slot.pane == nullptr) {
+      continue;
+    }
+    if (auto* const runtime = find_pane_runtime(runtimes, session, *slot.pane);
+        runtime != nullptr) {
+      runtime->outer_notifications = runtime->terminal.signals().notifications;
+    }
+  }
+  auto& attachment = session.attachment_runtime;
+  attachment.bell_pending = false;
+  attachment.outer_attention.notification_pending = false;
+  attachment.outer_attention.retry_at.reset();
+}
+
 void handoff_attached_connection(PendingConnections& connections, const std::size_t slot,
                                  Sessions& sessions, PaneRuntimeStore& runtimes,
                                  extension::Runtime& extensions,
@@ -8985,6 +9109,7 @@ void handoff_attached_connection(PendingConnections& connections, const std::siz
 #ifdef LEMMA_ENABLE_LATENCY_TRACE
   session->attachment_runtime.frame_trace_correlation = 0;
 #endif
+  start_outer_attention(*session, runtimes);
   if (!compose_session_frame(*session, runtimes, extensions, true, reactor_now())) {
     detach_attachment(*session, runtimes);
     return;
@@ -9186,6 +9311,8 @@ void flush_capacity_rejection_output(CapacityRejectionConnections& connections,
         (session->attachment.status_message_visible &&
          tighten(session->attachment_runtime.status_message_deadline)) ||
         tighten(session->attachment_runtime.frame_scheduler.deadline(frame_sink_state(*session))) ||
+        (session->attachment_runtime.client >= 0 &&
+         tighten(session->attachment_runtime.outer_attention.retry_at)) ||
         tighten(session->attachment_runtime.output.deadline()) ||
         (session->attachment_runtime.client >= 0 && !session->attachment_runtime.output.busy() &&
          tighten(session->attachment_runtime.graphics.deadline()))) {
@@ -9362,6 +9489,10 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
       clipboard_eligible && active_reactor_environment->clipboard_read,
       clipboard_eligible && active_reactor_environment->clipboard_write);
   const auto pane_budget_before = pane_budget;
+  // A Pane already waiting to forward a notification keeps its place: later ones coalesce into
+  // the latest text without moving it behind other waiting Panes.
+  const bool notification_waiting =
+      runtime.outer_notifications != runtime.terminal.signals().notifications;
   const auto drained =
       drain_pty(runtime.pty, runtime.terminal, runtime.presentation_gate, runtime.pending_writes,
                 pane_budget, track_interactive_damage, trace_matcher);
@@ -9376,10 +9507,21 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
   if (drained.failure.has_value()) {
     runtime.fail(*drained.failure);
   }
-  session.attachment_runtime.bell_pending = session.attachment_runtime.bell_pending || drained.bell;
+  // Attention reaches only a connected client; attaching starts from the current values. A
+  // notification also rings the bell, which every outer terminal presents.
+  const bool attention =
+      session.attachment_runtime.client >= 0 && (drained.bell || drained.notification);
+  if (attention) {
+    session.attachment_runtime.bell_pending = true;
+    session.attachment_runtime.outer_attention.notification_pending =
+        session.attachment_runtime.outer_attention.notification_pending || drained.notification;
+  }
   if (drained.signal) {
     runtime.signal_stamp = runtimes.issue_signal_stamp();
     session.signal_stamp = runtime.signal_stamp;
+  }
+  if (drained.notification && !notification_waiting) {
+    runtime.notification_stamp = runtime.signal_stamp;
   }
   if (drained.title_changed) {
     session.attachment_runtime.status_valid = false;
@@ -9400,22 +9542,50 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
     session.attachment_runtime.frame_trace_correlation = drained.correlation;
   }
 #endif
-  if (session.attachment.message_view.active && !drained.bell && !process_changed &&
+  if (session.attachment.message_view.active && !attention && !process_changed &&
       !damage.status_changed) {
     return;
   }
-  if (tab.id == session.active_tab && (!drained.presentation_deferred || drained.bell ||
-                                       process_changed || damage.status_changed)) {
+  if (tab.id == session.active_tab &&
+      (!drained.presentation_deferred || attention || process_changed || damage.status_changed)) {
     schedule_frame(session, frame_urgency(drained, process_changed, damage),
                    drained.damage_capture_failed || drained.force_full, pane.id);
-  } else if (damage.status_changed) {
+  } else if (damage.status_changed || attention) {
     schedule_frame(session, FrameUrgency::state_change, false);
   }
+}
+
+// Progress has no outer-terminal save/restore. Before a requested detach, remove a presented
+// indicator so the outer terminal does not keep reporting a Pane it no longer shows.
+[[nodiscard]] auto queue_outer_progress_removal(SessionRecord& session) noexcept -> bool {
+  auto& attachment = session.attachment_runtime;
+  attachment.outer_attention.progress = vt::ProgressState::none;
+  attachment.outer_attention.progress_percent.reset();
+  std::size_t used = 0;
+  if (!append_outer_progress(attachment.frame.writable(), used, vt::ProgressState::none,
+                             std::nullopt)) {
+    return false;
+  }
+  const auto messages = ClientFrameOutput::frame_message_count(used);
+  if (attachment.server_sequence == 0 || messages == 0 ||
+      messages > std::numeric_limits<std::uint32_t>::max() - attachment.server_sequence ||
+      !attachment.output.queue_frame(used, attachment.server_sequence,
+                                     attachment.full_redraw_generation, false, reactor_now())) {
+    return false;
+  }
+  attachment.server_sequence += static_cast<std::uint32_t>(messages);
+  return true;
 }
 
 void queue_client_disconnect_if_ready(SessionRecord& session, PaneRuntimeStore& runtimes) noexcept {
   if (session.attachment_runtime.client_close_state != ConnectionCloseState::queue_disconnect ||
       session.attachment_runtime.output.busy()) {
+    return;
+  }
+  // Disconnect follows once the removal frame drains. Removal is best effort: a frame that cannot
+  // be queued leaves the indicator rather than preventing detach.
+  if (session.attachment_runtime.outer_attention.progress != vt::ProgressState::none &&
+      queue_outer_progress_removal(session)) {
     return;
   }
   const auto reason = session.attachment_runtime.client_close_reason;
@@ -9720,6 +9890,8 @@ void finish_command_line_error(SessionRecord& session, const std::string_view me
   const auto outer_title = source_runtime.outer_title;
   const auto outer_title_size = source_runtime.outer_title_size;
   const bool outer_title_presented = source_runtime.outer_title_presented;
+  // Presented progress/directory and attention pacing also belong to the connection.
+  const auto outer_attention = source_runtime.outer_attention;
   // A retained Surface record must revalidate its old owner after the connection moves.
   const bool client_work_pending =
       source_runtime.client_work_pending || source_runtime.surface_paste.has_value();
@@ -9748,6 +9920,8 @@ void finish_command_line_error(SessionRecord& session, const std::string_view me
   target_runtime.outer_title = outer_title;
   target_runtime.outer_title_size = outer_title_size;
   target_runtime.outer_title_presented = outer_title_presented;
+  target_runtime.outer_attention = outer_attention;
+  start_outer_attention(target, runtimes);
   target_runtime.client_work_pending = client_work_pending;
   target_runtime.surface_paste = surface_paste;
   target_runtime.kitty_clipboard_supported = kitty_clipboard_supported;
@@ -10136,6 +10310,15 @@ void reconcile_extension_geometry(
   }
 }
 
+// Paced or remaining outer attention requests a frame once its retry time arrives.
+void wake_outer_attention(SessionRecord& session, const FrameScheduler::TimePoint now) noexcept {
+  auto& retry_at = session.attachment_runtime.outer_attention.retry_at;
+  if (retry_at.has_value() && now >= *retry_at) {
+    retry_at.reset();
+    schedule_frame(session, FrameUrgency::state_change, false);
+  }
+}
+
 void queue_due_frames(Sessions& sessions, PaneRuntimeStore& runtimes,
                       extension::Runtime& extensions) noexcept {
   const auto now = reactor_now();
@@ -10144,6 +10327,9 @@ void queue_due_frames(Sessions& sessions, PaneRuntimeStore& runtimes,
         !session->attachment_runtime.output.busy() &&
         session->attachment_runtime.graphics.wake(now)) {
       schedule_frame(*session, FrameUrgency::burst, false);
+    }
+    if (session != nullptr && session->active && session->attachment_runtime.client >= 0) {
+      wake_outer_attention(*session, now);
     }
     if (session == nullptr || !session->active ||
         session->attachment_runtime.client_close_state != ConnectionCloseState::none ||
@@ -10482,7 +10668,12 @@ void service_configuration_reload(ReactorEnvironment& environment, ReloadState& 
     environment.scrollback_lines = generation.scrollback_lines();
     environment.clipboard_read = generation.clipboard_read();
     environment.clipboard_write = generation.clipboard_write();
-    environment.outer_title = generation.outer_title();
+    const auto outer = generation.outer();
+    environment.outer_title = outer.title;
+    environment.outer_bell = outer.bell;
+    environment.outer_notifications = outer.notifications;
+    environment.outer_progress = outer.progress;
+    environment.outer_cwd = outer.cwd;
     environment.default_program = generation.default_program();
     environment.default_cwd = generation.default_cwd();
     environment.command_history_file = generation.history_file();

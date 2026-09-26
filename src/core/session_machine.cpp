@@ -662,6 +662,7 @@ auto SessionMachine::create_tab(const CreateTabOptions options) noexcept -> Sess
       .rectangle = pane->rectangle,
       .working_directory = pane->launch_working_directory(),
       .command = pane->launch_command(),
+      .fallback_working_directory = options.fallback_working_directory,
   };
   const auto spawned = options_.runtime.spawn(options_.runtime.context, spawn);
   if (spawned != RuntimeEffectStatus::applied) {
@@ -745,6 +746,7 @@ auto SessionMachine::split_pane(const TabId tab_id, const PaneId source, const S
       .rectangle = *rectangle,
       .working_directory = pane->launch_working_directory(),
       .command = pane->launch_command(),
+      .fallback_working_directory = options.fallback_working_directory,
   };
   const auto spawned = options_.runtime.spawn(options_.runtime.context, spawn);
   if (spawned != RuntimeEffectStatus::applied) {

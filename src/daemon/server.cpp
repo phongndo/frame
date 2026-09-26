@@ -606,7 +606,12 @@ void release_owned_endpoint(void* const context) noexcept {
     reactor_environment.default_cwd = configured_runtime.generation->default_cwd();
     reactor_environment.command_history_file = configured_runtime.generation->history_file();
     reactor_environment.status_line = configured_runtime.generation->status_line();
-    reactor_environment.outer_title = configured_runtime.generation->outer_title();
+    const auto outer = configured_runtime.generation->outer();
+    reactor_environment.outer_title = outer.title;
+    reactor_environment.outer_bell = outer.bell;
+    reactor_environment.outer_notifications = outer.notifications;
+    reactor_environment.outer_progress = outer.progress;
+    reactor_environment.outer_cwd = outer.cwd;
     reactor_environment.clipboard_read = configured_runtime.generation->clipboard_read();
     reactor_environment.clipboard_write = configured_runtime.generation->clipboard_write();
     if (!configured_runtime.commands.empty()) {

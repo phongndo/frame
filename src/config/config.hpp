@@ -28,9 +28,20 @@ struct TerminalConfiguration final {
   bool clipboard_write{false};
 };
 
+// Attention and context forwarded to the attached client's outer terminal. See
+// docs/usage.md#attention-and-directory and #window-title.
+struct OuterPresentation final {
+  bool title{true};
+  bool bell{true};
+  bool notifications{true};
+  // Off by default: terminals without OSC 9;4 can show each report as an OSC 9 notification.
+  bool progress{false};
+  bool cwd{true};
+};
+
 struct UiConfiguration final {
   bool status_line{true};
-  bool outer_title{true};
+  OuterPresentation outer;
 };
 
 struct LaunchConfiguration final {
@@ -86,12 +97,12 @@ public:
              bool status_line, std::string&& default_cwd, std::vector<std::byte>&& default_program,
              std::string&& history_file, std::vector<ExtensionConfiguration> extensions = {},
              bool clipboard_read = false, bool clipboard_write = false,
-             bool outer_title = true) noexcept
+             OuterPresentation outer = {}) noexcept
       : input_map_(std::move(input_map)), scrollback_lines_(scrollback_lines),
         default_cwd_(std::move(default_cwd)), default_program_(std::move(default_program)),
         history_file_(std::move(history_file)), extensions_(std::move(extensions)),
         status_line_(status_line), clipboard_read_(clipboard_read),
-        clipboard_write_(clipboard_write), outer_title_(outer_title) {}
+        clipboard_write_(clipboard_write), outer_(outer) {}
   Generation(const Generation&) = delete;
   auto operator=(const Generation&) -> Generation& = delete;
   Generation(Generation&&) noexcept = default;
@@ -112,7 +123,7 @@ public:
   [[nodiscard]] auto history_file() const noexcept -> std::string_view { return history_file_; }
   [[nodiscard]] auto clipboard_read() const noexcept -> bool { return clipboard_read_; }
   [[nodiscard]] auto clipboard_write() const noexcept -> bool { return clipboard_write_; }
-  [[nodiscard]] auto outer_title() const noexcept -> bool { return outer_title_; }
+  [[nodiscard]] auto outer() const noexcept -> OuterPresentation { return outer_; }
 
   [[nodiscard]] auto extensions() const noexcept -> std::span<const ExtensionConfiguration> {
     return extensions_;
@@ -128,7 +139,7 @@ private:
   bool status_line_{true};
   bool clipboard_read_{false};
   bool clipboard_write_{false};
-  bool outer_title_{true};
+  OuterPresentation outer_;
 };
 
 [[nodiscard]] auto parse_key(std::string_view value) noexcept -> std::optional<input::InputChord>;

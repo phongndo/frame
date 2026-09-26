@@ -19,10 +19,11 @@ inline constexpr std::size_t frame_bytes_max = limits::frame_transaction_bytes_m
 inline constexpr std::size_t frame_bytes_min = std::size_t{64} * 1'024U;
 inline constexpr std::size_t frame_bytes_per_viewport_cell = vt::pane_ansi_bytes_per_cell_max;
 // Covers outer synchronized-update framing, focused cursor/mode state, compositor control bytes,
-// and one outer window title appended after composition, so a worst-case frame still has room for
-// it.
-inline constexpr std::size_t frame_fixed_overhead_bytes =
-    (std::size_t{4} * 1'024U) + limits::outer_title_frame_bytes_max;
+// and the outer attention and window title appended after composition, so a worst-case frame
+// still has room for them.
+inline constexpr std::size_t frame_fixed_overhead_bytes = (std::size_t{4} * 1'024U) +
+                                                          limits::outer_attention_frame_bytes_max +
+                                                          limits::outer_title_frame_bytes_max;
 
 static_assert(frame_bytes_min < frame_bytes_max);
 static_assert(frame_fixed_overhead_bytes < frame_bytes_min);

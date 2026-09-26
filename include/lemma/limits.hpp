@@ -69,6 +69,20 @@ inline constexpr std::size_t frame_output_queue_bytes_max = std::size_t{8} * 1'0
 // Sanitized outer window title, and its OSC 2 framing (`ESC ] 2 ;` ... `ESC \`) within a frame.
 inline constexpr std::size_t outer_title_bytes_max = 256;
 inline constexpr std::size_t outer_title_frame_bytes_max = outer_title_bytes_max + 6U;
+// Forwarded outer-terminal notification fields and OSC 7 working-directory URI.
+inline constexpr std::size_t outer_notification_title_bytes_max = 256;
+inline constexpr std::size_t outer_notification_body_bytes_max = 1'024;
+inline constexpr std::size_t outer_cwd_bytes_max = 2'048;
+// Attention appended to one frame after composition: BEL; one notification
+// (`ESC ] 777 ; notify ;` TITLE `;` BODY `ESC \`); progress (at most `ESC ] 9 ; 4 ; 1 ; 100 ESC
+// \`); and a working directory (`ESC ] 7 ;` URI `ESC \`).
+inline constexpr std::size_t outer_notification_frame_bytes_max =
+    13U + outer_notification_title_bytes_max + 1U + outer_notification_body_bytes_max + 2U;
+inline constexpr std::size_t outer_progress_frame_bytes_max = 13;
+inline constexpr std::size_t outer_cwd_frame_bytes_max = outer_cwd_bytes_max + 6U;
+inline constexpr std::size_t outer_attention_frame_bytes_max =
+    1U + outer_notification_frame_bytes_max + outer_progress_frame_bytes_max +
+    outer_cwd_frame_bytes_max;
 // Retained frame storage is shared across all attached and pending-attached sessions. This bound
 // admits several protocol-maximum viewports while preventing the session limit from multiplying
 // the per-frame transaction ceiling into multi-gigabyte daemon retention.
