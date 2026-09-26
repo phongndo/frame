@@ -72,6 +72,7 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -289,11 +290,17 @@ private:
                                           timeout_milliseconds);
 }
 
+[[nodiscard]] auto reactor_send(const int descriptor, const std::span<const std::byte> head,
+                                const std::span<const std::byte> tail, const int flags) noexcept
+    -> ReactorIoResult {
+  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  return active_reactor_environment->send(active_reactor_environment->context, descriptor, head,
+                                          tail, flags);
+}
+
 [[nodiscard]] auto reactor_send(const int descriptor, const std::span<const std::byte> bytes,
                                 const int flags) noexcept -> ReactorIoResult {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
-  return active_reactor_environment->send(active_reactor_environment->context, descriptor, bytes,
-                                          flags);
+  return reactor_send(descriptor, bytes, {}, flags);
 }
 
 [[nodiscard]] auto production_poll([[maybe_unused]] void* context,
@@ -308,9 +315,25 @@ private:
 }
 
 [[nodiscard]] auto production_send([[maybe_unused]] void* context, const int descriptor,
-                                   const std::span<const std::byte> bytes, const int flags) noexcept
+                                   const std::span<const std::byte> head,
+                                   const std::span<const std::byte> tail, const int flags) noexcept
     -> ReactorIoResult {
-  const auto sent = ::send(descriptor, bytes.data(), bytes.size(), flags);
+  if (head.empty() || tail.empty()) {
+    const auto bytes = head.empty() ? tail : head;
+    const auto sent = ::send(descriptor, bytes.data(), bytes.size(), flags);
+    return {.bytes = sent, .error = sent < 0 ? errno : 0};
+  }
+  // iovec is a C ABI that never writes through iov_base for sendmsg.
+  // NOLINTBEGIN(cppcoreguidelines-pro-type-const-cast)
+  std::array<iovec, 2> vectors{{
+      {.iov_base = const_cast<std::byte*>(head.data()), .iov_len = head.size()},
+      {.iov_base = const_cast<std::byte*>(tail.data()), .iov_len = tail.size()},
+  }};
+  // NOLINTEND(cppcoreguidelines-pro-type-const-cast)
+  msghdr message{};
+  message.msg_iov = vectors.data();
+  message.msg_iovlen = vectors.size();
+  const auto sent = ::sendmsg(descriptor, &message, flags);
   return {.bytes = sent, .error = sent < 0 ? errno : 0};
 }
 
@@ -1024,6 +1047,8 @@ refresh_process_name_if_due(PaneRuntime& runtime,
 }
 
 void note_compression_activity(PaneRuntime& runtime) noexcept;
+void refresh_copy_selection_after_reflow(SessionRecord& session,
+                                         PaneRuntimeStore& runtimes) noexcept;
 
 struct PaneResizePlanEntry final {
   PaneRuntime* runtime{nullptr};
@@ -1151,6 +1176,8 @@ void schedule_frame(SessionRecord& session, const FrameUrgency urgency, const bo
 struct ProductionSessionRuntimeContext final {
   SessionRecord* session{nullptr};
   PaneRuntimeStore* runtimes{nullptr};
+  // A resize effect reflowed the copy-mode Pane's terminal, whether or not the batch committed.
+  bool copy_target_reflowed{false};
 };
 
 [[nodiscard]] auto production_spawn_pane(void* const context,
@@ -1175,6 +1202,23 @@ struct ProductionSessionRuntimeContext final {
                                 std::move(runtime))
              ? RuntimeEffectStatus::applied
              : RuntimeEffectStatus::rejected;
+}
+
+// Plan entries correspond to effects by index. A rolled-back entry reflowed twice, so its
+// selection snapshot is as stale as a committed one.
+void note_copy_target_reflow(ProductionSessionRuntimeContext& owner,
+                             const std::span<const ResizePaneEffect> effects,
+                             const std::span<const PaneResizePlanEntry> plan) noexcept {
+  const auto& attachment = owner.session->attachment;
+  if (!attachment.copy_mode.active() || !attachment.selection_target.has_value()) {
+    return;
+  }
+  for (std::size_t index = 0; index < plan.size(); ++index) {
+    if (effects.subspan(index, 1).front().pane == attachment.selection_target->pane &&
+        plan.subspan(index, 1).front().runtime_touched) {
+      owner.copy_target_reflowed = true;
+    }
+  }
 }
 
 [[nodiscard]] auto production_resize_panes(void* const context,
@@ -1208,6 +1252,7 @@ struct ProductionSessionRuntimeContext final {
       finish_resize_mutation(entry);
     }
   }
+  note_copy_target_reflow(owner, effects, std::span(plan).first(count));
   return status;
 }
 
@@ -1254,8 +1299,14 @@ void production_hold_pane(void* const context, const SessionId session, const Pa
   };
 }
 
-void apply_session_change(SessionRecord& session, PaneRuntimeStore& runtimes,
+void apply_session_change(ProductionSessionRuntimeContext& context,
                           const SessionChange change) noexcept {
+  LEMMA_ASSERT(context.session != nullptr && context.runtimes != nullptr);
+  auto& session = *context.session;
+  auto& runtimes = *context.runtimes;
+  if (std::exchange(context.copy_target_reflowed, false)) {
+    refresh_copy_selection_after_reflow(session, runtimes);
+  }
   if (change.status_changed) {
     session.attachment_runtime.status_valid = false;
   }
@@ -1403,6 +1454,33 @@ void leave_copy_mode(SessionRecord& session, PaneRuntimeStore& runtimes) noexcep
   session.attachment.copy_mode = {};
   session.attachment_runtime.copy_mode = {};
   if (changed) {
+    schedule_frame(session, FrameUrgency::state_change, true);
+  }
+}
+
+// Reflow moves Ghostty's tracked selection endpoints, but the renderer draws an installed selection
+// snapshot and copy mode pins its viewport by absolute history offset, which now names different
+// content. Reinstall the selection, keep it visible, and record the new offset, or leave copy mode.
+void refresh_copy_selection_after_reflow(SessionRecord& session,
+                                         PaneRuntimeStore& runtimes) noexcept {
+  auto* const runtime = copy_mode_runtime(session, runtimes);
+  if (runtime == nullptr) {
+    leave_copy_mode(session, runtimes);
+    return;
+  }
+  const auto refreshed = runtime->terminal.refresh_selection();
+  const auto scrolled =
+      refreshed.has_value() && *refreshed
+          ? runtime->terminal.scroll_selection_into_view()
+          : std::expected<bool, vt::Error>{std::unexpected(vt::Error::invalid_state)};
+  if (!scrolled.has_value() || !update_copy_viewport_offset(session, *runtime)) {
+    leave_copy_mode(session, runtimes);
+    return;
+  }
+  if (*scrolled) {
+    record_terminal_observation(*runtime);
+  }
+  if (session.active) {
     schedule_frame(session, FrameUrgency::state_change, true);
   }
 }
@@ -2677,7 +2755,7 @@ struct LaunchDirectory final {
                                               .fallback_working_directory = directory.fallback,
                                               .exit_policy = exit_policy,
                                               .activate = activate});
-  apply_session_change(session, runtimes, transition.change);
+  apply_session_change(runtime_context, transition.change);
   return transition.result.status == CommandStatus::applied
              ? find_tab(session, transition.created_tab)
              : nullptr;
@@ -2702,7 +2780,7 @@ struct LaunchDirectory final {
                                               .fallback_working_directory = directory.fallback,
                                               .exit_policy = exit_policy,
                                               .focus_created = focus_created});
-  apply_session_change(session, runtimes, transition.change);
+  apply_session_change(runtime_context, transition.change);
   return transition.result.status == CommandStatus::applied
              ? find_pane(session, transition.created_pane)
              : nullptr;
@@ -3095,7 +3173,7 @@ struct SessionCommandContext final {
                                             command_context.name_conflict_context));
     const auto transition = machine.dispatch(command);
     LEMMA_ASSERT(transition.handled);
-    apply_session_change(session, runtimes, transition.change);
+    apply_session_change(runtime_context, transition.change);
     return transition.result;
   }
   if (command.kind == CommandKind::detach_client) {
@@ -3891,7 +3969,7 @@ void process_typed_command_line_input(SessionRecord& session, const std::span<co
     return false;
   }
   const auto transition = machine.resize_attachment(columns, rows, *content);
-  apply_session_change(session, runtimes, transition.change);
+  apply_session_change(runtime_context, transition.change);
   return transition.result.status == CommandStatus::applied ||
          transition.result.status == CommandStatus::no_effect;
 }
@@ -5766,7 +5844,7 @@ void record_reaped_child(Sessions& sessions, PaneRuntimeStore& runtimes,
 }
 
 [[nodiscard]] auto queue_outer_progress_removal(SessionRecord& session) noexcept -> bool;
-[[nodiscard]] auto write_attached_client(void* context, std::span<const std::byte> bytes) noexcept
+[[nodiscard]] auto write_attached_client(void* context, ClientFrameBytes bytes) noexcept
     -> ClientFrameWriteAttempt;
 
 // An ending Session closes its client without a disconnect exchange. Progress has no outer
@@ -7189,13 +7267,13 @@ encode_proc_result(const ProcExecutionState& state,
     SessionMachine machine(*session, production_session_options(runtime_context));
     const auto transition =
         machine.resize_attachment(session->attachment.columns, session->attachment.rows, *content);
-    apply_session_change(*session, runtimes, transition.change);
+    apply_session_change(runtime_context, transition.change);
     if (transition.result.status != CommandStatus::applied &&
         transition.result.status != CommandStatus::no_effect) {
       static_cast<void>(extensions.rollback_surface_transaction(owner.generation));
       const auto restored = machine.resize_attachment(session->attachment.columns,
                                                       session->attachment.rows, *previous_content);
-      apply_session_change(*session, runtimes, restored.change);
+      apply_session_change(runtime_context, restored.change);
       execution.status = transition.result.status;
       return execution;
     }
@@ -10134,7 +10212,7 @@ void apply_pane_runtime_outcome(SessionRecord& session, Tab& tab, PaneRuntimeSto
   const auto transition =
       machine.runtime_failed(pane->id, outcome.process_exit.value_or(ProcessExit{}),
                              outcome.failure == PaneRuntimeFailure::child_exit);
-  apply_session_change(session, runtimes, transition.change);
+  apply_session_change(runtime_context, transition.change);
 }
 
 // Removal may rewrite tab and pane ownership while traversing fixed Session pane slots.
@@ -10297,18 +10375,18 @@ void reconcile_extension_geometry(
     if (!content.has_value()) {
       continue;
     }
-    auto* const tab = active_tab(*session);
-    if (tab == nullptr) {
+    if (active_tab(*session) == nullptr) {
       continue;
     }
-    if (tab->layout_column != content->column || tab->layout_row != content->row ||
-        tab->layout_columns != content->columns || tab->layout_rows != content->rows) {
+    // Tab activation and creation already fit the committed content viewport; only a changed
+    // Surface placement requires another Pane resize.
+    if (session->attachment.content_viewport != *content) {
       ProductionSessionRuntimeContext runtime_context{.session = session.get(),
                                                       .runtimes = &runtimes};
       SessionMachine machine(*session, production_session_options(runtime_context));
       const auto transition = machine.resize_attachment(session->attachment.columns,
                                                         session->attachment.rows, *content);
-      apply_session_change(*session, runtimes, transition.change);
+      apply_session_change(runtime_context, transition.change);
       if (transition.result.status != CommandStatus::applied &&
           transition.result.status != CommandStatus::no_effect) {
         continue;
@@ -10357,11 +10435,11 @@ void queue_due_frames(Sessions& sessions, PaneRuntimeStore& runtimes,
   }
 }
 
-[[nodiscard]] auto write_attached_client(void* const context,
-                                         const std::span<const std::byte> bytes) noexcept
+[[nodiscard]] auto write_attached_client(void* const context, const ClientFrameBytes bytes) noexcept
     -> ClientFrameWriteAttempt {
   auto& session = *static_cast<SessionRecord*>(context);
-  const auto sent = reactor_send(session.attachment_runtime.client, bytes, MSG_NOSIGNAL);
+  const auto sent =
+      reactor_send(session.attachment_runtime.client, bytes.head, bytes.tail, MSG_NOSIGNAL);
   return {.bytes = sent.bytes, .error = sent.error};
 }
 

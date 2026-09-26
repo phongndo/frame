@@ -243,10 +243,36 @@ void commit_projection(Session& session, const LayoutProjection& projection,
   return request_projection(session, runtime, tab, projection, staged);
 }
 
+void commit_tab_viewport(Tab& tab, const PaneRectangle viewport) noexcept {
+  tab.layout_column = viewport.column;
+  tab.layout_row = viewport.row;
+  tab.layout_columns = viewport.columns;
+  tab.layout_rows = viewport.rows;
+  tab.layout_suspended = false;
+}
+
+// Resizes a Tab's Panes into viewport and presents it there, or suspends the Tab when the layout
+// does not fit or Runtime rejects the resize.
+[[nodiscard]] auto present_tab(Session& session, const SessionRuntimeEffects& runtime, Tab& tab,
+                               const std::optional<LayoutProjection>& projection,
+                               const PaneRectangle viewport) noexcept -> RuntimeEffectStatus {
+  if (!projection.has_value()) {
+    tab.layout_suspended = true;
+    return RuntimeEffectStatus::rejected;
+  }
+  const auto status = request_projection(session, runtime, tab, *projection);
+  if (status == RuntimeEffectStatus::applied) {
+    commit_projection(session, *projection);
+    commit_tab_viewport(tab, viewport);
+  } else if (status == RuntimeEffectStatus::rejected) {
+    tab.layout_suspended = true;
+  }
+  return status;
+}
+
 [[nodiscard]] auto fit_tab(Session& session, const SessionRuntimeEffects& runtime, Tab& tab,
                            const bool suspend_on_rejection) noexcept -> RuntimeEffectStatus {
-  const PaneRectangle viewport{.columns = session.attachment.columns,
-                               .rows = session.attachment.rows};
+  const auto viewport = session.attachment.content_viewport;
   const auto projection = tab.layout.project(viewport);
   if (!projection.has_value()) {
     tab.layout_suspended = true;
@@ -254,11 +280,7 @@ void commit_projection(Session& session, const LayoutProjection& projection,
   }
   const auto status = request_projection(session, runtime, tab, *projection);
   if (status == RuntimeEffectStatus::applied) {
-    tab.layout_column = viewport.column;
-    tab.layout_row = viewport.row;
-    tab.layout_columns = viewport.columns;
-    tab.layout_rows = viewport.rows;
-    tab.layout_suspended = false;
+    commit_tab_viewport(tab, viewport);
     commit_projection(session, *projection);
   } else if (status == RuntimeEffectStatus::rejected && suspend_on_rejection) {
     tab.layout_suspended = true;
@@ -354,9 +376,13 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
   if (!focus_candidate.has_value()) {
     return {.result = {.status = CommandStatus::failed}, .handled = true};
   }
-  const auto viewport = tab_viewport(tab);
+  // A presented Tab keeps its viewport, which is the content viewport while it is active. A
+  // suspended active Tab instead refits the content viewport now that it has fewer Panes; if it
+  // still does not fit, the Pane leaves without resizing its siblings and the Tab stays suspended.
+  const bool refit = tab.layout_suspended && session.active_tab == tab.id;
+  const auto viewport = refit ? session.attachment.content_viewport : tab_viewport(tab);
   const auto projection = proposed.project(viewport);
-  if (!projection.has_value()) {
+  if (!projection.has_value() && !refit) {
     return {.result = {.status = CommandStatus::failed}, .handled = true};
   }
   const bool was_focused = tab.focused_pane == pane_id;
@@ -376,13 +402,8 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
     session.attachment.selection_target.reset();
     session.attachment.copy_mode = {};
   }
-  const auto resized = request_projection(session, runtime, tab, *projection);
-  if (resized == RuntimeEffectStatus::applied) {
-    commit_projection(session, *projection);
-    tab.layout_suspended = false;
-  } else if (resized == RuntimeEffectStatus::rejected) {
-    tab.layout_suspended = true;
-  } else {
+  const auto resized = present_tab(session, runtime, tab, projection, viewport);
+  if (resized == RuntimeEffectStatus::consistency_lost) {
     session.active = false;
   }
   return {.result = {.status = resized == RuntimeEffectStatus::consistency_lost
@@ -642,7 +663,7 @@ auto SessionMachine::create_tab(const CreateTabOptions options) noexcept -> Sess
     pane = std::make_unique<Pane>(Pane{
         .id = pane_id,
         .tab = tab_id,
-        .rectangle = {.columns = session_.attachment.columns, .rows = session_.attachment.rows},
+        .rectangle = session_.attachment.content_viewport,
         .launch_intent = std::move(launch),
         .process_exit = std::nullopt,
         .exit_policy = options.exit_policy,
@@ -787,7 +808,8 @@ auto SessionMachine::split_pane(const TabId tab_id, const PaneId source, const S
 
 auto SessionMachine::resize_attachment(const std::uint16_t columns,
                                        const std::uint16_t rows) noexcept -> SessionTransition {
-  if (session_.attachment.columns == columns && session_.attachment.rows == rows) {
+  if (session_.attachment.columns == columns && session_.attachment.rows == rows &&
+      session_.attachment.content_viewport == PaneRectangle{.columns = columns, .rows = rows}) {
     return {.result = {.status = CommandStatus::no_effect},
             .change = {.frame_requested = true, .force_full_frame = true},
             .handled = true};
@@ -814,6 +836,7 @@ auto SessionMachine::resize_attachment(const std::uint16_t columns, const std::u
   if (!tab->layout.project(viewport).has_value()) {
     session_.attachment.columns = columns;
     session_.attachment.rows = rows;
+    session_.attachment.content_viewport = viewport;
     tab->layout_suspended = true;
     return finish(
         {.result = {.status = CommandStatus::applied},
@@ -836,11 +859,8 @@ auto SessionMachine::resize_attachment(const std::uint16_t columns, const std::u
   }
   session_.attachment.columns = columns;
   session_.attachment.rows = rows;
-  tab->layout_column = viewport.column;
-  tab->layout_row = viewport.row;
-  tab->layout_columns = viewport.columns;
-  tab->layout_rows = viewport.rows;
-  tab->layout_suspended = false;
+  session_.attachment.content_viewport = viewport;
+  commit_tab_viewport(*tab, viewport);
   commit_projection(session_, *projection);
   return finish(
       {.result = {.status = CommandStatus::applied},
@@ -1183,6 +1203,10 @@ auto session_invariant_name(const SessionInvariantError error) noexcept -> std::
     return "process exit exists outside hold policy";
   case SessionInvariantError::attachment_identity:
     return "Attachment identity does not match its Session";
+  case SessionInvariantError::attachment_viewport:
+    return "Attachment content viewport is empty or outside its geometry";
+  case SessionInvariantError::active_tab_viewport:
+    return "active Tab is presented outside the Attachment content viewport";
   case SessionInvariantError::attachment_target:
     return "Attachment target does not resolve";
   case SessionInvariantError::mouse_capture_target:
@@ -1298,6 +1322,19 @@ auto check_session_invariants(const Session& session) noexcept
   }
   if (session.attachment.id.is_valid() && session.attachment.session != session.id) {
     return SessionInvariantError::attachment_identity;
+  }
+  const auto content = session.attachment.content_viewport;
+  if (content.columns == 0 || content.rows == 0 ||
+      static_cast<std::uint32_t>(content.column) + content.columns > session.attachment.columns ||
+      static_cast<std::uint32_t>(content.row) + content.rows > session.attachment.rows) {
+    return SessionInvariantError::attachment_viewport;
+  }
+  // The content viewport is the one geometry authority for the active Tab: a presented active
+  // Tab is laid out in exactly that rectangle. Inactive Tabs retain their last usable geometry.
+  if (const auto* const active = find_tab(session, session.active_tab);
+      session.active && active != nullptr && !active->layout_suspended &&
+      tab_viewport(*active) != content) {
+    return SessionInvariantError::active_tab_viewport;
   }
   if (session.attachment.selection_target.has_value()) {
     const auto* const tab = find_tab(session, session.attachment.selection_target->tab);

@@ -29,6 +29,9 @@ class AnsiScreenTracker:
         self.row = 0
         self.column = 0
         self.saved = (0, 0)
+        # Inclusive zero-based DECSTBM margins.
+        self.top = 0
+        self.bottom = rows - 1
         self.observed_fixture_rows: deque[bytes] = deque(maxlen=64)
         self.state = "ground"
         self.csi = bytearray()
@@ -45,13 +48,23 @@ class AnsiScreenTracker:
         self.cells = resized
         self.row = min(self.row, rows - 1)
         self.column = min(self.column, columns - 1)
+        self.top = 0
+        self.bottom = rows - 1
+
+    def _scroll(self, amount: int) -> None:
+        """Scroll the margin region up by a positive amount or down by a negative one."""
+        height = self.bottom - self.top + 1
+        amount = max(-height, min(height, amount))
+        region = self.cells[self.top : self.bottom + 1]
+        blank = [bytearray(b" " * self.columns) for _ in range(abs(amount))]
+        region = region[amount:] + blank if amount > 0 else blank + region[:amount]
+        self.cells[self.top : self.bottom + 1] = region
 
     def _line_feed(self) -> None:
-        if self.row + 1 < self.rows:
+        if self.row == self.bottom:
+            self._scroll(1)
+        elif self.row + 1 < self.rows:
             self.row += 1
-            return
-        self.cells.pop(0)
-        self.cells.append(bytearray(b" " * self.columns))
 
     @staticmethod
     def _parameters(encoded: bytes) -> list[int]:
@@ -117,6 +130,18 @@ class AnsiScreenTracker:
                     self.synchronized_text = self.text()
                 elif final == ord("l"):
                     self.synchronized_text = None
+        elif final == ord("S") and not self.csi.startswith(b"?"):
+            self._scroll(first)
+        elif final == ord("T") and not self.csi.startswith(b"?"):
+            self._scroll(-first)
+        elif final == ord("r") and not self.csi.startswith(b"?"):
+            top = (parameters[0] or 1) - 1
+            bottom = (
+                parameters[1] if len(parameters) > 1 and parameters[1] else self.rows
+            ) - 1
+            if 0 <= top < bottom < self.rows:
+                self.top, self.bottom = top, bottom
+                self.row, self.column = 0, 0
         elif final == ord("s"):
             self.saved = (self.row, self.column)
         elif final == ord("u"):

@@ -123,6 +123,8 @@ enum class SessionInvariantError : std::uint8_t {
   previous_pane,
   process_exit_policy,
   attachment_identity,
+  attachment_viewport,
+  active_tab_viewport,
   attachment_target,
   mouse_capture_target,
 };

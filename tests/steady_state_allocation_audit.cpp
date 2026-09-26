@@ -67,7 +67,7 @@ struct WriteAudit final {
 };
 
 [[nodiscard]] auto audited_write(void* const context,
-                                 const std::span<const std::byte> bytes) noexcept
+                                 const lemma::core::ClientFrameBytes bytes) noexcept
     -> lemma::core::ClientFrameWriteAttempt {
   auto& audit = *static_cast<WriteAudit*>(context);
   audit.bytes += bytes.size();

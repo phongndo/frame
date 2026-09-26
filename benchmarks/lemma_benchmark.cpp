@@ -677,10 +677,9 @@ void benchmark_terminal_ansi_text_scroll_frames(benchmark::State& state) {
       benchmark::Counter(static_cast<double>(output_bytes), benchmark::Counter::kAvgIterations);
 }
 
-// A focused 80x23 pane above the native status row, as in the interactive-under-output workload:
-// the pane does not fill the viewport, so its output cannot use a terminal scroll and each frame
-// is a redraw of every row. Argument 0 repeats one line (the workload's background output);
-// argument 1 writes distinct lines, which repaint the whole pane.
+// A focused 80x23 pane that cannot use a terminal scroll, as when another pane shares its rows:
+// each frame is a redraw of every row. Argument 0 repeats one line (the interactive-under-output
+// workload's background output); argument 1 writes distinct lines, which repaint the whole pane.
 void benchmark_terminal_pane_output_frames(benchmark::State& state) {
   const bool distinct = state.range(0) != 0;
   vt::TerminalOptions options;
