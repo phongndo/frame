@@ -484,6 +484,33 @@ TEST(TerminalTest, DetectsAndEncodesVerticalScroll) {
   EXPECT_THAT(encoded, testing::HasSubstr("five"));
 }
 
+// Shell output writes the cursor row and then scrolls it into the overlap. The scroll still keeps
+// every other row, and margins confine it to a pane below a docked row.
+TEST(TerminalTest, ScrollsOutputThatEditedTheCursorRowInsideMargins) {
+  TerminalOptions options;
+  options.size = {.columns = 20, .rows = 4};
+  auto terminal = make_terminal(options);
+  write_text(terminal, "one\r\ntwo\r\nthree\r\n");
+  const PaneRenderOptions pane{
+      .row = 1, .focused = true, .terminal_scroll = TerminalScroll::margins};
+
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  auto full = pane;
+  full.force_full = true;
+  ASSERT_TRUE(terminal.render_pane_ansi(output, full).has_value());
+  write_text(terminal, "four\r\n");
+  const auto changed = terminal.render_pane_ansi(output, pane);
+  ASSERT_TRUE(changed.has_value());
+  EXPECT_EQ(changed->scrolled_rows, 1);
+  EXPECT_EQ(changed->encoded_rows, 2U);
+
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const std::string_view encoded(reinterpret_cast<const char*>(output.data()), changed->bytes);
+  EXPECT_THAT(encoded, testing::StartsWith("\x1B[2;5r\x1B[1S\x1B[r"));
+  EXPECT_THAT(encoded, testing::HasSubstr("\x1B[4;1H\x1B[0mfour"));
+  EXPECT_THAT(encoded, testing::Not(testing::HasSubstr("three")));
+}
+
 // Scroll candidates are rejected by their edge rows first; a candidate whose edges align must still
 // match every row between them.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)

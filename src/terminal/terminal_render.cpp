@@ -877,6 +877,27 @@ private:
       return -static_cast<std::int32_t>(amount);
     }
   }
+  // Output usually writes the cursor row before a newline scrolls it into the overlap, so the
+  // overlap row nearest the rows scrolled in may differ; it is re-encoded like any changed row.
+  // Such a scroll must still keep more rows than presenting in place, and the kept rows only
+  // shrink as the amount grows.
+  std::size_t in_place = 0;
+  for (std::size_t row = 0; row < row_hash_count; ++row) {
+    in_place += static_cast<std::size_t>(current.subspan(row, 1).front() ==
+                                         previous.subspan(row, 1).front());
+  }
+  for (std::size_t amount = 1; amount + 1 < row_hash_count; ++amount) {
+    const auto kept = row_hash_count - amount - 1U;
+    if (kept <= in_place) {
+      break;
+    }
+    if (aligned(current.first(kept), previous.subspan(amount, kept))) {
+      return static_cast<std::int32_t>(amount);
+    }
+    if (aligned(current.subspan(amount + 1U), previous.subspan(1, kept))) {
+      return -static_cast<std::int32_t>(amount);
+    }
+  }
   return 0;
 }
 
