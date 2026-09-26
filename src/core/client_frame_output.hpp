@@ -50,8 +50,7 @@ public:
   [[nodiscard]] auto queue_disconnect(protocol::DisconnectReason reason,
                                       std::string_view diagnostic, std::uint32_t sequence,
                                       TimePoint now) noexcept -> bool;
-  [[nodiscard]] auto readable(const render::FrameBuffer& frame) const noexcept
-      -> ClientFrameBytes;
+  [[nodiscard]] auto readable(const render::FrameBuffer& frame) const noexcept -> ClientFrameBytes;
   [[nodiscard]] auto busy() const noexcept -> bool { return offset_ < size_; }
   [[nodiscard]] auto size() const noexcept -> std::size_t { return size_; }
   [[nodiscard]] auto frame_bytes() const noexcept -> std::size_t { return frame_bytes_; }
@@ -110,7 +109,7 @@ struct ClientFrameWriteAttempt final {
 };
 
 using ClientFrameWriteOperation = ClientFrameWriteAttempt (*)(void* context,
-                                                             ClientFrameBytes bytes) noexcept;
+                                                              ClientFrameBytes bytes) noexcept;
 
 enum class ClientFrameFlushStatus : std::uint8_t {
   not_attempted,

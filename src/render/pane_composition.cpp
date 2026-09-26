@@ -370,9 +370,9 @@ void invalidate_focused_cursor_projection(const std::span<const PaneSurface> pan
             return !grid.opaque && grid.grid->damaged() &&
                    rectangles_overlap(pane.rectangle, grid.rectangle);
           });
-      const auto rendered = render_surface(pane, output, used, force_full || repair_transparency,
-                                           scroll, column_offset, row_offset,
-                                           composition, pane_cursor);
+      const auto rendered =
+          render_surface(pane, output, used, force_full || repair_transparency, scroll,
+                         column_offset, row_offset, composition, pane_cursor);
       if (!rendered.has_value()) {
         invalidate_scene(scene);
         return rendered;

@@ -1336,8 +1336,8 @@ TEST(PaneCompositionTest, ScrollsFullWidthPaneInsideMarginsBesideDockedGrid) {
   auto outer = make_terminal(8, 4);
   std::array<std::byte, 8'192> output{};
   const auto present = [&](const bool full) {
-    const auto composed = compose_scene({.panes = panes, .grids = grids},
-                                        {.columns = 8, .rows = 4}, output, full);
+    const auto composed =
+        compose_scene({.panes = panes, .grids = grids}, {.columns = 8, .rows = 4}, output, full);
     EXPECT_TRUE(composed.has_value());
     const auto bytes = std::span(output).first(composed.has_value() ? composed->bytes : 0U);
     outer.write(bytes);

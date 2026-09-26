@@ -891,7 +891,7 @@ private:
     if (kept <= in_place) {
       break;
     }
-    if (aligned(current.first(kept), previous.subspan(amount, kept))) {
+    if (aligned(current.first(kept), previous.subspan(amount).first(kept))) {
       return static_cast<std::int32_t>(amount);
     }
     if (aligned(current.subspan(amount + 1U), previous.subspan(1, kept))) {

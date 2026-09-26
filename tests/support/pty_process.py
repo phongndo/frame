@@ -136,7 +136,9 @@ class AnsiScreenTracker:
             self._scroll(-first)
         elif final == ord("r") and not self.csi.startswith(b"?"):
             top = (parameters[0] or 1) - 1
-            bottom = (parameters[1] if len(parameters) > 1 and parameters[1] else self.rows) - 1
+            bottom = (
+                parameters[1] if len(parameters) > 1 and parameters[1] else self.rows
+            ) - 1
             if 0 <= top < bottom < self.rows:
                 self.top, self.bottom = top, bottom
                 self.row, self.column = 0, 0
