@@ -17,8 +17,9 @@ Lemma state -> Event -> extension state -> Surface update -> native Scene -> use
 
 V1 supports full-duplex framed connections, capability negotiation, Procs, Attachment-scoped Grids,
 dock/float/overlay placement, and owner-directed input. A Surface is not a Pane, PTY, or terminal
-emulator. A terminal remains a real Pane using the ordinary process, Ghostty, and lifecycle machinery.
-Floating terminal creation and shared/Session-scoped Surfaces are not supported.
+emulator. A terminal remains a real Pane using the ordinary process, Ghostty, and lifecycle machinery;
+a floating terminal is a [floating Pane](api.md#floating-panes), not a Surface. Shared/Session-scoped
+Surfaces are not supported.
 
 Runtime extensions can use any language that speaks the protocol. The separate
 [configuration and command host](configuration.md#external-command-programs) can declare and launch

@@ -124,6 +124,55 @@ by the native Session switcher. Tab and Pane selection compose as preceding `tab
 `pane.focus` Commands. As always, a Proc is ordered, not atomic. Switching cancels invocations tied
 to the old connection; an invocation performing its own switch may exit before consuming its result.
 
+## Floating Panes
+
+The API currently provides floating Pane lifecycle, geometry, and focus state. Native drawing,
+interactive hit testing, and shell-popup bindings are not yet implemented; use these commands for
+API-driven process management until presentation support is available.
+
+A Tab owns a float layer above its tiled layout: up to eight floating Panes, back to front. A
+float is an ordinary Pane with its own process, PTY, and terminal. It follows ordinary Pane
+exit/hold policy, survives disconnection of the extension that opened it, and counts toward the
+Session's 64-Pane limit.
+
+```json
+{"command":"pane.float","session":{"name":"work"},"tab":{"position":1},
+ "placement":{"kind":"centered","columns":100,"rows":30},"argv":["htop"]}
+```
+
+`pane.float` accepts `argv`, `cwd`, `hold`, and `focus` like `pane.split` and returns the new
+`pane`. `placement` describes the float's outer rectangle, including a one-cell native frame; the
+Pane's PTY is the rectangle inside that frame. Every extent is at least 3 cells.
+
+| `kind` | Fields | Outer rectangle |
+| --- | --- | --- |
+| `absolute` | `column`, `row`, `columns`, `rows` | At that offset from the Tab viewport's origin |
+| `centered` | `columns`, `rows` | Centered in the Tab viewport |
+| `relative` | `width_percent`, `height_percent` (1-100) | That share of the Tab viewport, rounded and centered |
+
+Placements resolve against the Tab viewport (the Pane area left by docks) whenever it changes, and
+float PTYs resize in the same transaction as the tiled Panes. A float that does not fit is
+suspended: it is neither clipped nor moved, keeps its PTY size, and loses focus. It returns when it
+fits again, without retaking focus. Suspending or hiding a float ends its copy mode and clears its
+selection. `pane.place` changes an existing float's placement. Creating or
+placing a float requires the placement to fit; otherwise the result is `unavailable` with reason
+`float_suspended`.
+
+Keyboard focus belongs to one layer at a time. Focusing a float, by creating it with the default
+`focus` or with `pane.focus`, raises it to the top. Focusing a tiled Pane leaves floats visible.
+`tab.floats` with `visible: false` hides a Tab's floats and returns focus to the tiled layer;
+hidden floats reject focus with reason `floats_hidden`, and opening a float shows the layer again.
+Closing the focused float returns focus to the previously focused Pane when it can take focus,
+and otherwise to the tiled layer. Closing a Tab's last tiled Pane closes the Tab and its floats.
+
+Splitting, zooming, swapping, and resizing belong to the tiled layout: on a float they return
+`unavailable` with reason `floating_pane`, and `pane.place` on a tiled Pane returns `tiled_pane`.
+Next-Pane and directional focus stay within the focused layer.
+
+`pane.list` and `pane.inspect` report each Pane's `layer` (`tiled` or `float`). A float also
+reports `z` (0 is the bottom), `suspended`, and its `placement`. `tab.inspect` reports `floats`:
+`visible` and the float `panes`, back to front.
+
 ## Multi-Command Procs
 
 A Proc contains at most 64 Commands. This [runnable job](../examples/job.json) starts a held Pane,

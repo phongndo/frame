@@ -2,6 +2,7 @@
 #include "random.hpp"
 #include "trace.hpp"
 
+#include "core/float_layer.hpp"
 #include "core/layout.hpp"
 #include "core/session.hpp"
 #include "lemma/command.hpp"
@@ -48,6 +49,79 @@ struct TabToken final {
   return rectangle.value_or(PaneRectangle{});
 }
 
+// Independent float placement rules: validity at construction and resolution in a viewport.
+struct PlacementModel final {
+  core::FloatPlacementKind kind{core::FloatPlacementKind::centered};
+  std::uint16_t column{0};
+  std::uint16_t row{0};
+  std::uint16_t columns{0};
+  std::uint16_t rows{0};
+
+  [[nodiscard]] auto valid() const noexcept -> bool {
+    constexpr std::uint32_t maximum = 1'000;
+    switch (kind) {
+    case core::FloatPlacementKind::absolute:
+      return columns >= 3U && rows >= 3U && std::uint32_t{column} + columns <= maximum &&
+             std::uint32_t{row} + rows <= maximum;
+    case core::FloatPlacementKind::centered:
+      return columns >= 3U && rows >= 3U && columns <= maximum && rows <= maximum;
+    case core::FloatPlacementKind::relative:
+      return columns >= 1U && columns <= 100U && rows >= 1U && rows <= 100U;
+    }
+    return false;
+  }
+
+  [[nodiscard]] auto build() const noexcept -> std::optional<core::FloatPlacement> {
+    switch (kind) {
+    case core::FloatPlacementKind::absolute:
+      return core::FloatPlacement::absolute(column, row, columns, rows);
+    case core::FloatPlacementKind::centered:
+      return core::FloatPlacement::centered(columns, rows);
+    case core::FloatPlacementKind::relative:
+      return core::FloatPlacement::relative(columns, rows);
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] static auto percent(const std::uint16_t available, const std::uint16_t share)
+      -> std::uint16_t {
+    // Round half up to whole cells, then keep the minimum and the viewport bound.
+    const auto cells =
+        static_cast<std::uint16_t>(((std::uint32_t{available} * share) + 50U) / 100U);
+    return std::min(available, std::max<std::uint16_t>(cells, 3U));
+  }
+
+  [[nodiscard]] auto resolve(const PaneRectangle viewport) const -> std::optional<PaneRectangle> {
+    auto width = columns;
+    auto height = rows;
+    if (kind == core::FloatPlacementKind::relative) {
+      if (viewport.columns < 3U || viewport.rows < 3U) {
+        return std::nullopt;
+      }
+      width = percent(viewport.columns, columns);
+      height = percent(viewport.rows, rows);
+    }
+    if (kind == core::FloatPlacementKind::absolute) {
+      if (std::uint32_t{column} + width > viewport.columns ||
+          std::uint32_t{row} + height > viewport.rows) {
+        return std::nullopt;
+      }
+      return PaneRectangle{.column = static_cast<std::uint16_t>(viewport.column + column),
+                           .row = static_cast<std::uint16_t>(viewport.row + row),
+                           .columns = width,
+                           .rows = height};
+    }
+    if (width > viewport.columns || height > viewport.rows) {
+      return std::nullopt;
+    }
+    return PaneRectangle{
+        .column = static_cast<std::uint16_t>(viewport.column + ((viewport.columns - width) / 2U)),
+        .row = static_cast<std::uint16_t>(viewport.row + ((viewport.rows - height) / 2U)),
+        .columns = width,
+        .rows = height};
+  }
+};
+
 template <typename Id, std::size_t Capacity> class StaleIds final {
 public:
   void retain(const Id id) noexcept {
@@ -86,7 +160,7 @@ public:
   }
 
   [[nodiscard]] auto apply(Random& random, Operation& operation) -> std::optional<std::string> {
-    switch (random.index(12)) {
+    switch (random.index(16)) {
     case 0:
       return split_pane(random, operation);
     case 1:
@@ -111,6 +185,14 @@ public:
       return place_tab(random, operation);
     case 11:
       return probe_stale_tab(random, operation);
+    case 12:
+      return push_float(random, operation);
+    case 13:
+      return erase_float(random, operation);
+    case 14:
+      return raise_float(random, operation);
+    case 15:
+      return place_float(random, operation);
     default:
       break;
     }
@@ -124,6 +206,9 @@ public:
     if (const auto error = validate_projection(); error.has_value()) {
       return error;
     }
+    if (const auto error = validate_floats(); error.has_value()) {
+      return error;
+    }
     return validate_tab_order();
   }
 
@@ -131,6 +216,11 @@ public:
     auto hash = layout_model_->hash();
     hash = hash_mix(hash, tab_model_.hash());
     hash = hash_mix(hash, viewport_.columns);
+    for (const auto& entry : float_model_) {
+      hash = hash_mix(hash, (static_cast<std::uint64_t>(entry.first.generation()) << 32U) |
+                                entry.first.slot());
+      hash = hash_mix(hash, (std::uint64_t{entry.second.columns} << 16U) | entry.second.rows);
+    }
     return hash_mix(hash, viewport_.rows);
   }
 
@@ -212,6 +302,195 @@ private:
       if (projection->rectangle(stale_panes_.at(index)).has_value()) {
         return std::string{"a stale Pane ID appeared in a projection"};
       }
+    }
+    return std::nullopt;
+  }
+
+  // The production layer matches the back-to-front model, and every resolved placement equals the
+  // independent resolution: inside the viewport with a nonempty inner Pane, or suspended.
+  [[nodiscard]] auto validate_floats() const -> std::optional<std::string> {
+    const auto entries = floats_.entries();
+    if (entries.size() != float_model_.size() ||
+        floats_.top() !=
+            (float_model_.empty() ? std::nullopt : std::optional{float_model_.back().first})) {
+      return std::string{"float layer size or top differs from the model"};
+    }
+    for (std::size_t index = 0; index < entries.size(); ++index) {
+      const auto& entry = entries.subspan(index, 1).front();
+      const auto& [pane, model] = float_model_.at(index);
+      if (entry.pane != pane || floats_.z(pane) != index || !floats_.contains(pane) ||
+          model.build() != entry.placement) {
+        return std::string{"float layer order or placement differs from the model"};
+      }
+      if (const auto error = validate_float_geometry(entry.placement, model); error.has_value()) {
+        return error;
+      }
+    }
+    for (std::size_t index = 0; index < stale_floats_.size(); ++index) {
+      if (floats_.contains(stale_floats_.at(index))) {
+        return std::string{"an erased float remained in the layer"};
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] auto validate_float_geometry(const core::FloatPlacement placement,
+                                             const PlacementModel& model) const
+      -> std::optional<std::string> {
+    const auto resolved = placement.resolve(viewport_);
+    if (resolved != model.resolve(viewport_)) {
+      return std::string{"float placement resolution differs from the model"};
+    }
+    if (resolved.has_value()) {
+      const auto inner = core::float_inner_rectangle(*resolved);
+      if (!valid_rectangle(*resolved, viewport_) || inner.columns == 0 || inner.rows == 0) {
+        return std::string{"resolved float is outside the viewport or has no Pane cell"};
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] static auto random_placement(Random& random) -> PlacementModel {
+    constexpr std::array<std::uint16_t, 7> extents{0, 2, 3, 4, 60, 999, 1'000};
+    constexpr std::array<std::uint16_t, 6> offsets{0, 1, 17, 996, 997, 998};
+    constexpr std::array<std::uint16_t, 6> percents{0, 1, 33, 50, 100, 101};
+    PlacementModel model;
+    switch (random.index(3)) {
+    case 0:
+      model.kind = core::FloatPlacementKind::absolute;
+      model.column = offsets.at(random.index(offsets.size()));
+      model.row = offsets.at(random.index(offsets.size()));
+      model.columns = extents.at(random.index(extents.size()));
+      model.rows = extents.at(random.index(extents.size()));
+      break;
+    case 1:
+      model.kind = core::FloatPlacementKind::centered;
+      model.columns =
+          random.boolean() ? extents.at(random.index(extents.size())) : random.between(3, 120);
+      model.rows =
+          random.boolean() ? extents.at(random.index(extents.size())) : random.between(3, 80);
+      break;
+    default:
+      model.kind = core::FloatPlacementKind::relative;
+      model.columns = percents.at(random.index(percents.size()));
+      model.rows = percents.at(random.index(percents.size()));
+      break;
+    }
+    return model;
+  }
+
+  [[nodiscard]] auto random_float(Random& random) const -> PaneId {
+    if (float_model_.empty() || random.index(8) == 0) {
+      return stale_floats_.empty() ? PaneId{}
+                                   : stale_floats_.at(random.index(stale_floats_.size()));
+    }
+    return float_model_.at(random.index(float_model_.size())).first;
+  }
+
+  [[nodiscard]] auto model_index(const PaneId pane) const -> std::optional<std::size_t> {
+    for (std::size_t index = 0; index < float_model_.size(); ++index) {
+      if (float_model_.at(index).first == pane) {
+        return index;
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] auto push_float(Random& random, Operation& operation)
+      -> std::optional<std::string> {
+    operation.kind = OperationKind::float_push;
+    const auto model = random_placement(random);
+    const auto placement = model.build();
+    operation.argument_0 = model.columns;
+    operation.argument_1 = model.rows;
+    if (placement.has_value() != model.valid()) {
+      return std::string{"float placement validity differs from the model"};
+    }
+    if (!placement.has_value()) {
+      return std::nullopt;
+    }
+    const auto added =
+        float_ids_.insert(std::make_unique<PaneToken>(PaneToken{.serial = next_serial_++}));
+    if (!added.has_value()) {
+      return std::string{"float ID store exhausted before its bound"};
+    }
+    operation.pane = *added;
+    const auto before = floats_;
+    const bool actual = floats_.push(*added, *placement);
+    const bool expected = float_model_.size() < core::floats_per_tab_max;
+    operation.result = static_cast<std::int32_t>(actual);
+    if (actual != expected || (!actual && floats_ != before)) {
+      return std::string{"float push outcome differs from the capacity model"};
+    }
+    if (actual) {
+      float_model_.emplace_back(*added, model);
+    } else if (!float_ids_.erase(*added)) {
+      return std::string{"rejected float could not release its ID"};
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] auto erase_float(Random& random, Operation& operation)
+      -> std::optional<std::string> {
+    operation.kind = OperationKind::float_erase;
+    operation.pane = random_float(random);
+    const auto index = model_index(operation.pane);
+    const auto before = floats_;
+    const bool actual = floats_.erase(operation.pane);
+    operation.result = static_cast<std::int32_t>(actual);
+    if (actual != index.has_value() || (!actual && floats_ != before)) {
+      return std::string{"float erase outcome differs from the model"};
+    }
+    if (actual) {
+      float_model_.erase(float_model_.begin() + static_cast<std::ptrdiff_t>(*index));
+      if (!float_ids_.erase(operation.pane)) {
+        return std::string{"erased float ID remained live"};
+      }
+      stale_floats_.retain(operation.pane);
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] auto raise_float(Random& random, Operation& operation)
+      -> std::optional<std::string> {
+    operation.kind = OperationKind::float_raise;
+    operation.pane = random_float(random);
+    const auto index = model_index(operation.pane);
+    const bool actual = floats_.raise(operation.pane);
+    operation.result = static_cast<std::int32_t>(actual);
+    if (actual != index.has_value()) {
+      return std::string{"float raise outcome differs from the model"};
+    }
+    if (actual) {
+      const auto raised = float_model_.at(*index);
+      float_model_.erase(float_model_.begin() + static_cast<std::ptrdiff_t>(*index));
+      float_model_.push_back(raised);
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] auto place_float(Random& random, Operation& operation)
+      -> std::optional<std::string> {
+    operation.kind = OperationKind::float_place;
+    operation.pane = random_float(random);
+    const auto model = random_placement(random);
+    const auto placement = model.build();
+    operation.argument_0 = model.columns;
+    operation.argument_1 = model.rows;
+    if (placement.has_value() != model.valid()) {
+      return std::string{"float placement validity differs from the model"};
+    }
+    if (!placement.has_value()) {
+      return std::nullopt;
+    }
+    const auto index = model_index(operation.pane);
+    const bool actual = floats_.place(operation.pane, *placement);
+    operation.result = static_cast<std::int32_t>(actual);
+    if (actual != index.has_value()) {
+      return std::string{"float place outcome differs from the model"};
+    }
+    if (actual) {
+      float_model_.at(*index).second = model;
     }
     return std::nullopt;
   }
@@ -562,6 +841,11 @@ private:
   TabOrderModel tab_model_;
   StaleIds<PaneId, 1'024> stale_panes_;
   StaleIds<TabId, 256> stale_tabs_;
+  // Twice the layer capacity, so pushes also probe a full layer with a fresh ID.
+  BoundedGenerationalStore<PaneToken, PaneId, core::floats_per_tab_max * 2U> float_ids_;
+  core::FloatLayer floats_;
+  std::vector<std::pair<PaneId, PlacementModel>> float_model_;
+  StaleIds<PaneId, 64> stale_floats_;
   PaneRectangle viewport_{.columns = 120, .rows = 80};
   std::uint64_t next_serial_{1};
 };

@@ -1,5 +1,7 @@
 #include "core/copy_mode.hpp"
+#include "core/float_layer.hpp"
 #include "core/session.hpp"
+#include "core/session_machine.hpp"
 #include "lemma/command.hpp"
 #include "lemma/generational_store.hpp"
 #include "lemma/id.hpp"
@@ -13,11 +15,22 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
+#include <stdexcept>
 #include <type_traits>
+#include <utility>
 
 namespace lemma {
 namespace {
+
+[[nodiscard]] auto checked_placement(const std::optional<core::FloatPlacement> placement)
+    -> core::FloatPlacement {
+  if (!placement.has_value()) {
+    throw std::logic_error("test requires a valid float placement");
+  }
+  return *placement;
+}
 
 using core::Attachment;
 using core::CopyModePhase;
@@ -478,6 +491,498 @@ TEST(BoundedGenerationalStoreTest, RejectsStaleIdsAndReportsCapacity) {
   EXPECT_EQ(store.get(replacement_id)->number, 11);
   EXPECT_FALSE(store.erase(first_id));
 }
+
+// Float tests name only the fields they exercise in Commands and effect options.
+#ifdef __clang__
+#if __has_warning("-Wmissing-designated-field-initializers")
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-designated-field-initializers"
+#endif
+#endif
+
+// Records Runtime effects and each Pane's committed PTY size, with one-shot rejections.
+class FloatRuntime final {
+public:
+  [[nodiscard]] auto effects() noexcept -> core::SessionRuntimeEffects {
+    return {.context = this,
+            .spawn = &spawn_callback,
+            .resize = &resize_callback,
+            .retire = &retire_callback,
+            .hold = &hold_callback};
+  }
+
+  void reject_next_spawn() noexcept { reject_spawn_ = true; }
+  void reject_next_resize() noexcept { reject_resize_ = true; }
+  [[nodiscard]] auto size(const PaneId pane) const noexcept -> PaneRectangle {
+    return std::span(sizes_).subspan(pane.slot(), 1).front();
+  }
+  [[nodiscard]] auto live(const PaneId pane) const noexcept -> bool {
+    return std::span(live_).subspan(pane.slot(), 1).front();
+  }
+  [[nodiscard]] constexpr auto resize_batches() const noexcept -> std::size_t {
+    return resize_batches_;
+  }
+  [[nodiscard]] constexpr auto last_batch_size() const noexcept -> std::size_t {
+    return last_batch_size_;
+  }
+  [[nodiscard]] constexpr auto retired() const noexcept -> std::size_t { return retired_; }
+
+private:
+  static auto spawn_callback(void* const context, const core::SpawnPaneEffect& effect) noexcept
+      -> core::RuntimeEffectStatus {
+    auto& runtime = *static_cast<FloatRuntime*>(context);
+    if (std::exchange(runtime.reject_spawn_, false)) {
+      return core::RuntimeEffectStatus::rejected;
+    }
+    std::span(runtime.sizes_).subspan(effect.pane.slot(), 1).front() = effect.rectangle;
+    std::span(runtime.live_).subspan(effect.pane.slot(), 1).front() = true;
+    return core::RuntimeEffectStatus::applied;
+  }
+
+  static auto resize_callback(void* const context,
+                              const std::span<const core::ResizePaneEffect> effects) noexcept
+      -> core::RuntimeEffectStatus {
+    auto& runtime = *static_cast<FloatRuntime*>(context);
+    ++runtime.resize_batches_;
+    runtime.last_batch_size_ = effects.size();
+    if (std::exchange(runtime.reject_resize_, false)) {
+      return core::RuntimeEffectStatus::rejected;
+    }
+    for (const auto& effect : effects) {
+      std::span(runtime.sizes_).subspan(effect.pane.slot(), 1).front() = effect.target;
+    }
+    return core::RuntimeEffectStatus::applied;
+  }
+
+  static void retire_callback(void* const context, [[maybe_unused]] const SessionId session,
+                              const PaneId pane) noexcept {
+    auto& runtime = *static_cast<FloatRuntime*>(context);
+    std::span(runtime.live_).subspan(pane.slot(), 1).front() = false;
+    ++runtime.retired_;
+  }
+
+  static void hold_callback([[maybe_unused]] void* const context,
+                            [[maybe_unused]] const SessionId session,
+                            [[maybe_unused]] const PaneId pane,
+                            [[maybe_unused]] const core::ProcessExit process) noexcept {}
+
+  std::array<PaneRectangle, core::panes_per_session_max> sizes_{};
+  std::array<bool, core::panes_per_session_max> live_{};
+  std::size_t resize_batches_{0};
+  std::size_t last_batch_size_{0};
+  std::size_t retired_{0};
+  bool reject_spawn_{false};
+  bool reject_resize_{false};
+};
+
+// A 100x30 Attachment with a one-row top dock and one tiled Pane.
+class FloatSessionTest : public testing::Test {
+public:
+  FloatSessionTest() : session_("floats", {}, {}, LaunchEnvironmentMode::inherit) {
+    session_.id = SessionId::from_parts(0, 1);
+    session_.attachment.id = AttachmentId::from_parts(0, 1);
+    session_.attachment.session = session_.id;
+    session_.attachment.columns = 100;
+    session_.attachment.rows = 30;
+    session_.attachment.content_viewport = viewport;
+    const auto created = machine().create_tab();
+    EXPECT_EQ(created.result.status, CommandStatus::applied);
+    tab_id_ = created.created_tab;
+    tiled_ = created.created_pane;
+  }
+
+  static constexpr PaneRectangle viewport{.column = 0, .row = 1, .columns = 100, .rows = 29};
+
+  [[nodiscard]] auto machine() noexcept -> core::SessionMachine {
+    return core::SessionMachine(session_, {.runtime = runtime_.effects()});
+  }
+  [[nodiscard]] auto tab() noexcept -> Tab& {
+    auto& slot = std::span(session_.tabs).subspan(tab_id_.slot(), 1).front();
+    return *slot.tab;
+  }
+  [[nodiscard]] auto pane(const PaneId id) noexcept -> const Pane* {
+    const auto& slot = std::span(session_.panes).subspan(id.slot(), 1).front();
+    return slot.pane != nullptr && slot.pane->id == id ? slot.pane.get() : nullptr;
+  }
+  [[nodiscard]] auto open_float(const core::FloatPlacement placement, const bool focus = true)
+      -> PaneId {
+    const auto created =
+        machine().float_pane(tab_id_, {.placement = placement, .focus_created = focus});
+    EXPECT_EQ(created.result.status, CommandStatus::applied);
+    return created.created_pane;
+  }
+  [[nodiscard]] auto dispatch(const CommandKind kind, const PaneId target,
+                              const CommandPayload payload = {}) -> core::SessionTransition {
+    return machine().dispatch({.kind = kind,
+                               .origin = CommandOrigin::internal,
+                               .target = {.session = session_.id, .tab = tab_id_, .pane = target},
+                               .payload = payload});
+  }
+  void expect_invariants() const {
+    EXPECT_EQ(core::check_session_invariants(session_), std::nullopt)
+        << core::session_invariant_name(core::check_session_invariants(session_).value_or(
+               core::SessionInvariantError::invalid_session_id));
+  }
+
+  Session session_;
+  FloatRuntime runtime_;
+  TabId tab_id_;
+  PaneId tiled_;
+};
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(FloatSessionTest, FloatsJoinTheTabAboveItsLayoutWithAFramedPty) {
+  const auto placement = checked_placement(core::FloatPlacement::centered(40, 12));
+  const auto created = machine().float_pane(tab_id_, {.placement = placement});
+  ASSERT_EQ(created.result.status, CommandStatus::applied);
+  const auto floating = created.created_pane;
+  EXPECT_EQ(created.created_tab, tab_id_);
+  EXPECT_TRUE(tab().floats.contains(floating));
+  EXPECT_FALSE(tab().layout.contains(floating));
+  EXPECT_EQ(tab().layout.pane_count(), 1U);
+  // The placement names the outer rectangle; the PTY is the inner one inside the native frame.
+  constexpr PaneRectangle inner{.column = 31, .row = 10, .columns = 38, .rows = 10};
+  ASSERT_NE(pane(floating), nullptr);
+  EXPECT_EQ(pane(floating)->rectangle, inner);
+  EXPECT_EQ(runtime_.size(floating), inner);
+  EXPECT_EQ(tab().focused_pane(), floating);
+  EXPECT_EQ(tab().tiled_focus(), tiled_);
+  EXPECT_EQ(tab().previous_pane, tiled_);
+  expect_invariants();
+
+  // Floats count against the per-Tab layer and the Session Pane limit.
+  for (std::size_t count = 1; count < core::floats_per_tab_max; ++count) {
+    static_cast<void>(open_float(placement, false));
+  }
+  EXPECT_EQ(machine().float_pane(tab_id_, {.placement = placement}).result.status,
+            CommandStatus::capacity);
+  std::size_t panes = core::floats_per_tab_max + 1U;
+  while (panes < core::panes_per_session_max) {
+    const auto next = machine().create_tab({.activate = false});
+    ASSERT_EQ(next.result.status, CommandStatus::applied);
+    ++panes;
+    for (std::size_t count = 0;
+         count < core::floats_per_tab_max && panes < core::panes_per_session_max; ++count) {
+      ASSERT_EQ(machine()
+                    .float_pane(next.created_tab, {.placement = placement, .focus_created = false})
+                    .result.status,
+                CommandStatus::applied);
+      ++panes;
+    }
+  }
+  const auto last = session_.tab_order.at(session_.tab_order.size() - 1U);
+  ASSERT_TRUE(last.has_value());
+  EXPECT_EQ(machine().float_pane(last.value_or(TabId{}), {.placement = placement}).result.status,
+            CommandStatus::capacity);
+  expect_invariants();
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(FloatSessionTest, FocusMovesBetweenLayersAndHidingReturnsItToTheTiledLayer) {
+  const auto lower = open_float(checked_placement(core::FloatPlacement::absolute(0, 0, 20, 10)));
+  const auto upper = open_float(checked_placement(core::FloatPlacement::absolute(40, 0, 20, 10)));
+  ASSERT_EQ(tab().floats.top(), upper);
+
+  // Focusing a lower float raises it.
+  EXPECT_EQ(dispatch(CommandKind::focus_pane, lower).result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().focused_pane(), lower);
+  EXPECT_EQ(tab().floats.top(), lower);
+  EXPECT_EQ(tab().previous_pane, upper);
+
+  // Focusing the tiled layer keeps floats visible.
+  EXPECT_EQ(dispatch(CommandKind::focus_pane, tiled_).result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().focused_pane(), tiled_);
+  EXPECT_FALSE(tab().float_focused());
+  EXPECT_TRUE(tab().floats_visible());
+  expect_invariants();
+
+  EXPECT_EQ(dispatch(CommandKind::focus_pane, upper).result.status, CommandStatus::applied);
+  const auto hidden = machine().set_floats_visible(tab_id_, false);
+  EXPECT_EQ(hidden.result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().focused_pane(), tiled_);
+  EXPECT_EQ(machine().set_floats_visible(tab_id_, false).result.status, CommandStatus::no_effect);
+  const auto refused = dispatch(CommandKind::focus_pane, lower);
+  EXPECT_EQ(refused.result.status, CommandStatus::unavailable);
+  EXPECT_EQ(refused.reason, core::TransitionReason::floats_hidden);
+  expect_invariants();
+
+  // Showing floats does not take focus back.
+  EXPECT_EQ(machine().set_floats_visible(tab_id_, true).result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().focused_pane(), tiled_);
+  expect_invariants();
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(FloatSessionTest, ClosingAFocusedFloatFallsBackToPreviousThenTiledFocus) {
+  const auto first = open_float(checked_placement(core::FloatPlacement::centered(20, 8)));
+  const auto second = open_float(checked_placement(core::FloatPlacement::centered(30, 8)));
+  ASSERT_EQ(tab().previous_pane, first);
+
+  // The previous Pane is an eligible float, so it takes focus and is raised.
+  EXPECT_EQ(dispatch(CommandKind::close_pane, second).result.status, CommandStatus::applied);
+  EXPECT_EQ(pane(second), nullptr);
+  EXPECT_FALSE(runtime_.live(second));
+  EXPECT_EQ(tab().focused_pane(), first);
+  EXPECT_EQ(tab().previous_pane, first);
+  expect_invariants();
+
+  // With no eligible previous Pane, focus returns to the tiled focus.
+  EXPECT_EQ(dispatch(CommandKind::close_pane, first).result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().focused_pane(), tiled_);
+  EXPECT_TRUE(tab().floats.empty());
+  expect_invariants();
+
+  // A previous tiled Pane regains focus when a float opened from it closes.
+  const auto split = machine().split_pane(tab_id_, tiled_, core::SplitAxis::left_right);
+  ASSERT_EQ(split.result.status, CommandStatus::applied);
+  ASSERT_EQ(dispatch(CommandKind::focus_pane, tiled_).result.status, CommandStatus::applied);
+  const auto third = open_float(checked_placement(core::FloatPlacement::centered(20, 8)));
+  ASSERT_EQ(dispatch(CommandKind::focus_pane, split.created_pane).result.status,
+            CommandStatus::applied);
+  ASSERT_EQ(dispatch(CommandKind::focus_pane, third).result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().previous_pane, split.created_pane);
+  // An exited float with the close policy is removed like a closed one.
+  const auto exited = machine().runtime_failed(third, {}, true);
+  EXPECT_EQ(exited.result.status, CommandStatus::applied);
+  EXPECT_EQ(pane(third), nullptr);
+  EXPECT_EQ(tab().focused_pane(), split.created_pane);
+  EXPECT_EQ(tab().layout.pane_count(), 2U);
+  expect_invariants();
+}
+
+TEST_F(FloatSessionTest, ClosingTheLastTiledPaneClosesTheTabWithItsFloats) {
+  const auto second_tab = machine().create_tab();
+  ASSERT_EQ(second_tab.result.status, CommandStatus::applied);
+  ASSERT_EQ(dispatch(CommandKind::select_tab, {}).result.status, CommandStatus::applied);
+  const auto floating = open_float(checked_placement(core::FloatPlacement::relative(50, 50)));
+  const auto retired = runtime_.retired();
+
+  EXPECT_EQ(dispatch(CommandKind::close_pane, tiled_).result.status, CommandStatus::applied);
+  EXPECT_EQ(std::span(session_.tabs).subspan(tab_id_.slot(), 1).front().tab, nullptr);
+  EXPECT_EQ(pane(floating), nullptr);
+  EXPECT_FALSE(runtime_.live(floating));
+  EXPECT_EQ(runtime_.retired(), retired + 2U);
+  EXPECT_EQ(session_.active_tab, second_tab.created_tab);
+  expect_invariants();
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(FloatSessionTest, RejectedEffectsPublishNoFloatState) {
+  const auto before = core::session_state_hash(session_);
+  runtime_.reject_next_spawn();
+  const auto rejected = machine().float_pane(
+      tab_id_, {.placement = checked_placement(core::FloatPlacement::centered(10, 5))});
+  EXPECT_EQ(rejected.result.status, CommandStatus::unavailable);
+  EXPECT_TRUE(tab().floats.empty());
+  EXPECT_EQ(core::session_state_hash(session_), before);
+
+  const auto placement = checked_placement(core::FloatPlacement::centered(10, 5));
+  const auto floating = open_float(placement);
+  const auto placed = pane(floating)->rectangle;
+  runtime_.reject_next_resize();
+  const auto moved = machine().place_float(
+      tab_id_, floating, checked_placement(core::FloatPlacement::absolute(0, 0, 20, 20)));
+  EXPECT_EQ(moved.result.status, CommandStatus::unavailable);
+  EXPECT_EQ(tab().floats.placement(floating), placement);
+  EXPECT_EQ(pane(floating)->rectangle, placed);
+
+  const auto geometry = core::session_state_hash(session_);
+  runtime_.reject_next_resize();
+  EXPECT_EQ(machine().resize_attachment(120, 40).result.status, CommandStatus::unavailable);
+  EXPECT_EQ(core::session_state_hash(session_), geometry);
+  EXPECT_EQ(runtime_.size(floating), placed);
+  expect_invariants();
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(FloatSessionTest, ViewportChangesResizeFloatsInTheSameBatchOrSuspendThem) {
+  const auto fixed =
+      open_float(checked_placement(core::FloatPlacement::absolute(50, 10, 40, 15)), false);
+  const auto relative = open_float(checked_placement(core::FloatPlacement::relative(50, 50)));
+  const auto batches = runtime_.resize_batches();
+
+  // Growing the Attachment resizes the tiled layout and both floats in one Runtime batch.
+  ASSERT_EQ(machine().resize_attachment(120, 40).result.status, CommandStatus::applied);
+  EXPECT_EQ(runtime_.resize_batches(), batches + 1U);
+  EXPECT_EQ(runtime_.last_batch_size(), 3U);
+  EXPECT_EQ(runtime_.size(relative),
+            (PaneRectangle{.column = 31, .row = 11, .columns = 58, .rows = 18}));
+  expect_invariants();
+
+  // A float that no longer fits is suspended: it keeps its PTY size and loses focus.
+  ASSERT_EQ(dispatch(CommandKind::focus_pane, fixed).result.status, CommandStatus::applied);
+  const auto fixed_size = runtime_.size(fixed);
+  ASSERT_EQ(machine().resize_attachment(60, 20).result.status, CommandStatus::applied);
+  EXPECT_EQ(runtime_.size(fixed), fixed_size);
+  EXPECT_EQ(pane(fixed)->rectangle, fixed_size);
+  EXPECT_EQ(tab().focused_pane(), tiled_);
+  EXPECT_TRUE(tab().floats.contains(fixed));
+  const auto refused = dispatch(CommandKind::focus_pane, fixed);
+  EXPECT_EQ(refused.reason, core::TransitionReason::float_suspended);
+  expect_invariants();
+
+  // It reappears when it fits again without retaking focus.
+  ASSERT_EQ(machine().resize_attachment(120, 40).result.status, CommandStatus::applied);
+  EXPECT_EQ(runtime_.size(fixed),
+            (PaneRectangle{.column = 51, .row = 11, .columns = 38, .rows = 13}));
+  EXPECT_EQ(tab().focused_pane(), tiled_);
+  expect_invariants();
+}
+
+TEST_F(FloatSessionTest, SuspendedTabsReturnFloatFocusToTilesUntilExplicitlyRefocused) {
+  ASSERT_EQ(machine().split_pane(tab_id_, tiled_, core::SplitAxis::left_right).result.status,
+            CommandStatus::applied);
+  ASSERT_EQ(dispatch(CommandKind::focus_pane, tiled_).result.status, CommandStatus::applied);
+  const auto first = open_float(checked_placement(core::FloatPlacement::relative(50, 50)));
+  const auto second = open_float(checked_placement(core::FloatPlacement::centered(20, 8)));
+  const auto previous_size = runtime_.size(second);
+
+  ASSERT_EQ(machine().resize_attachment(1, 1).result.status, CommandStatus::applied);
+  EXPECT_TRUE(tab().layout_suspended);
+  EXPECT_EQ(tab().focused_pane(), tiled_);
+  EXPECT_FALSE(tab().float_focused());
+  EXPECT_EQ(runtime_.size(second), previous_size);
+  EXPECT_EQ(dispatch(CommandKind::focus_pane, first).reason,
+            core::TransitionReason::float_suspended);
+  expect_invariants();
+
+  ASSERT_EQ(machine().resize_attachment(100, 30).result.status, CommandStatus::applied);
+  EXPECT_FALSE(tab().layout_suspended);
+  EXPECT_EQ(tab().focused_pane(), tiled_);
+  EXPECT_EQ(dispatch(CommandKind::focus_pane, first).result.status, CommandStatus::applied);
+  expect_invariants();
+}
+
+TEST_F(FloatSessionTest, SelectingATabThatCannotFitSuspendsItsFloats) {
+  ASSERT_EQ(machine().split_pane(tab_id_, tiled_, core::SplitAxis::left_right).result.status,
+            CommandStatus::applied);
+  const auto tile = tab().tiled_focus();
+  const auto floating = open_float(checked_placement(core::FloatPlacement::relative(50, 50)));
+  ASSERT_EQ(machine().create_tab().result.status, CommandStatus::applied);
+  ASSERT_EQ(machine().resize_attachment(1, 1).result.status, CommandStatus::applied);
+  ASSERT_EQ(dispatch(CommandKind::select_tab, {}).result.status, CommandStatus::applied);
+  EXPECT_TRUE(tab().layout_suspended);
+  EXPECT_EQ(tab().focused_pane(), tile);
+  EXPECT_EQ(dispatch(CommandKind::focus_pane, floating).reason,
+            core::TransitionReason::float_suspended);
+  expect_invariants();
+
+  ASSERT_EQ(machine().resize_attachment(100, 30).result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().focused_pane(), tile);
+  expect_invariants();
+}
+
+TEST_F(FloatSessionTest, RejectedReflowAfterClosingATileSuspendsItsFloats) {
+  const auto split = machine().split_pane(tab_id_, tiled_, core::SplitAxis::left_right);
+  ASSERT_EQ(split.result.status, CommandStatus::applied);
+  const auto floating = open_float(checked_placement(core::FloatPlacement::relative(50, 50)));
+  runtime_.reject_next_resize();
+  ASSERT_EQ(dispatch(CommandKind::close_pane, tiled_).result.status, CommandStatus::applied);
+  EXPECT_TRUE(tab().layout_suspended);
+  EXPECT_EQ(tab().focused_pane(), split.created_pane);
+  EXPECT_EQ(dispatch(CommandKind::focus_pane, floating).reason,
+            core::TransitionReason::float_suspended);
+  expect_invariants();
+}
+
+TEST_F(FloatSessionTest, PlacingAFloatWithoutRuntimeEffectsDoesNotPublishState) {
+  const auto floating = open_float(checked_placement(core::FloatPlacement::centered(20, 8)));
+  const auto before = core::session_state_hash(session_);
+  core::SessionMachine without_runtime(session_, {});
+  const auto placed = without_runtime.place_float(
+      tab_id_, floating, checked_placement(core::FloatPlacement::centered(30, 10)));
+  EXPECT_EQ(placed.result.status, CommandStatus::unavailable);
+  EXPECT_EQ(core::session_state_hash(session_), before);
+  expect_invariants();
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(FloatSessionTest, TiledLayoutCommandsDoNotApplyToFloats) {
+  const auto floating = open_float(checked_placement(core::FloatPlacement::centered(20, 8)), false);
+  const auto split = machine().split_pane(tab_id_, floating, core::SplitAxis::left_right);
+  EXPECT_EQ(split.result.status, CommandStatus::unavailable);
+  EXPECT_EQ(split.reason, core::TransitionReason::floating_pane);
+  for (const auto kind :
+       {CommandKind::toggle_zoom, CommandKind::resize_left, CommandKind::resize_down}) {
+    const auto rejected = dispatch(kind, floating);
+    EXPECT_EQ(rejected.result.status, CommandStatus::unavailable);
+    EXPECT_EQ(rejected.reason, core::TransitionReason::floating_pane);
+  }
+  const auto swapped =
+      dispatch(CommandKind::swap_panes, tiled_, PaneSwapCommand{.other = floating});
+  EXPECT_EQ(swapped.reason, core::TransitionReason::floating_pane);
+  const auto divider = machine().dispatch(
+      {.kind = CommandKind::resize_left_right_divider,
+       .origin = CommandOrigin::internal,
+       .target = {.session = session_.id, .tab = tab_id_, .pane = tiled_, .peer_pane = floating},
+       .payload = CommandCoordinate{.value = 10}});
+  EXPECT_EQ(divider.reason, core::TransitionReason::floating_pane);
+  const auto placed = machine().place_float(
+      tab_id_, tiled_, checked_placement(core::FloatPlacement::centered(20, 8)));
+  EXPECT_EQ(placed.reason, core::TransitionReason::tiled_pane);
+  EXPECT_EQ(
+      machine()
+          .place_float(tab_id_, floating, checked_placement(core::FloatPlacement::centered(20, 8)))
+          .result.status,
+      CommandStatus::no_effect);
+  EXPECT_EQ(
+      machine()
+          .place_float(tab_id_, floating, checked_placement(core::FloatPlacement::centered(200, 8)))
+          .reason,
+      core::TransitionReason::float_suspended);
+  EXPECT_EQ(machine()
+                .float_pane(tab_id_, {.placement = checked_placement(
+                                          core::FloatPlacement::absolute(90, 0, 20, 8))})
+                .reason,
+            core::TransitionReason::float_suspended);
+  expect_invariants();
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(FloatSessionTest, CyclingAndDirectionalFocusStayWithinTheFocusedLayer) {
+  const auto right = machine().split_pane(tab_id_, tiled_, core::SplitAxis::left_right);
+  ASSERT_EQ(right.result.status, CommandStatus::applied);
+  const auto west = open_float(checked_placement(core::FloatPlacement::absolute(0, 5, 20, 8)));
+  const auto east = open_float(checked_placement(core::FloatPlacement::absolute(70, 5, 20, 8)));
+  const auto middle = open_float(checked_placement(core::FloatPlacement::absolute(35, 5, 20, 8)));
+  ASSERT_EQ(tab().focused_pane(), middle);
+
+  EXPECT_EQ(core::pane_in_direction(session_, tab(), middle, core::PaneDirection::left), west);
+  EXPECT_EQ(core::pane_in_direction(session_, tab(), middle, core::PaneDirection::right), east);
+  EXPECT_EQ(core::pane_in_direction(session_, tab(), right.created_pane, core::PaneDirection::left),
+            tiled_);
+  EXPECT_FALSE(
+      core::pane_in_direction(session_, tab(), tiled_, core::PaneDirection::up).has_value());
+
+  // Cycling from the top float focuses the bottom one; raising it makes the cycle visit all.
+  EXPECT_EQ(dispatch(CommandKind::focus_next, {}).result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().focused_pane(), west);
+  EXPECT_EQ(dispatch(CommandKind::focus_next, {}).result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().focused_pane(), east);
+  EXPECT_EQ(dispatch(CommandKind::focus_next, {}).result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().focused_pane(), middle);
+
+  // The tiled layer cycles among layout Panes only.
+  ASSERT_EQ(dispatch(CommandKind::focus_pane, tiled_).result.status, CommandStatus::applied);
+  EXPECT_EQ(dispatch(CommandKind::focus_next, {}).result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().focused_pane(), right.created_pane);
+  EXPECT_EQ(dispatch(CommandKind::focus_next, {}).result.status, CommandStatus::applied);
+  EXPECT_EQ(tab().focused_pane(), tiled_);
+  expect_invariants();
+}
+
+#ifdef __clang__
+#if __has_warning("-Wmissing-designated-field-initializers")
+#pragma clang diagnostic pop
+#endif
+#endif
 
 } // namespace
 } // namespace lemma

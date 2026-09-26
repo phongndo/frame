@@ -33,6 +33,7 @@ struct PublicCaptureFormatting final {
 };
 
 [[nodiscard]] auto refresh_process_name(PaneRuntime& runtime) noexcept -> bool;
+[[nodiscard]] auto pane_presented(const Tab& active, const Pane& pane) noexcept -> bool;
 [[nodiscard]] auto current_status_signature(const SessionRecord& session,
                                             const PaneRuntimeStore& runtimes) noexcept
     -> std::uint64_t;

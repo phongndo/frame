@@ -1,6 +1,7 @@
 #ifndef LEMMA_CORE_SESSION_MACHINE_HPP
 #define LEMMA_CORE_SESSION_MACHINE_HPP
 
+#include "core/float_layer.hpp"
 #include "core/layout.hpp"
 #include "core/session.hpp"
 #include "lemma/command.hpp"
@@ -78,8 +79,24 @@ struct SessionChange final {
   bool layout_changed{false};
 };
 
+// Why a well-formed transition could not apply, when the status alone does not say.
+enum class TransitionReason : std::uint8_t {
+  none,
+  // Tiled layout operations (split, zoom, swap, divider resize) do not apply to a floating Pane.
+  floating_pane,
+  // Float placement applies only to floating Panes.
+  tiled_pane,
+  // The float placement does not fit the presented Tab viewport, which would suspend the float.
+  float_suspended,
+  // The Tab's floats are hidden and cannot take focus.
+  floats_hidden,
+};
+
+[[nodiscard]] auto transition_reason_name(TransitionReason reason) noexcept -> std::string_view;
+
 struct SessionTransition final {
   CommandResult result;
+  TransitionReason reason{TransitionReason::none};
   SessionChange change;
   TabId created_tab;
   PaneId created_pane;
@@ -105,6 +122,16 @@ struct SplitPaneOptions final {
   bool focus_created{true};
 };
 
+struct FloatPaneOptions final {
+  FloatPlacement placement;
+  std::span<const std::byte> command;
+  std::string_view working_directory;
+  // Entered instead when working_directory cannot be entered at spawn; empty requires it.
+  std::string_view fallback_working_directory{}; // NOLINT(readability-redundant-member-init)
+  PaneExitPolicy exit_policy{PaneExitPolicy::close};
+  bool focus_created{true};
+};
+
 enum class SessionInvariantError : std::uint8_t {
   invalid_session_id,
   tab_count,
@@ -122,6 +149,9 @@ enum class SessionInvariantError : std::uint8_t {
   focused_pane,
   previous_pane,
   process_exit_policy,
+  float_membership,
+  float_focus,
+  float_rectangle,
   attachment_identity,
   attachment_viewport,
   active_tab_viewport,
@@ -142,9 +172,10 @@ enum class PaneDirection : std::uint8_t {
   down,
 };
 
-// The nearest Pane of `tab` in `direction` from `source`, scored over the unzoomed tiled layout in
-// the Tab's viewport. Directional focus and directional swap share this rule so a modifier never
-// retargets a different Pane; zoom and Runtime geometry never participate.
+// The nearest Pane of `tab` in `direction` from `source`, within source's layer: the unzoomed tiled
+// layout, or the presented floats' outer rectangles, both in the Tab's viewport. Directional focus
+// and directional swap share this rule so a modifier never retargets a different Pane; zoom and
+// Runtime geometry never participate.
 [[nodiscard]] auto pane_in_direction(const Session& session, const Tab& tab, PaneId source,
                                      PaneDirection direction) noexcept -> std::optional<PaneId>;
 
@@ -159,6 +190,12 @@ public:
   [[nodiscard]] auto create_tab(CreateTabOptions options = {}) noexcept -> SessionTransition;
   [[nodiscard]] auto split_pane(TabId tab, PaneId source, SplitAxis axis,
                                 SplitPaneOptions options = {}) noexcept -> SessionTransition;
+  // Spawns a floating Pane above tab's tiled layout; its PTY takes the placement's inner rectangle.
+  [[nodiscard]] auto float_pane(TabId tab, const FloatPaneOptions& options) noexcept
+      -> SessionTransition;
+  [[nodiscard]] auto place_float(TabId tab, PaneId pane, FloatPlacement placement) noexcept
+      -> SessionTransition;
+  [[nodiscard]] auto set_floats_visible(TabId tab, bool visible) noexcept -> SessionTransition;
   [[nodiscard]] auto resize_attachment(std::uint16_t columns, std::uint16_t rows) noexcept
       -> SessionTransition;
   [[nodiscard]] auto resize_attachment(std::uint16_t columns, std::uint16_t rows,

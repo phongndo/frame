@@ -22,7 +22,7 @@ execution semantics in [Automation API](api.md), and external UI contracts in
 The kernel hierarchy is `Session -> Tab -> Pane`:
 
 - A **Session** owns launch context, ordered Tabs, identity, lifecycle, and attachment policy.
-- A **Tab** owns pane layout, focus, zoom, ordering, and title policy.
+- A **Tab** owns its tiled pane layout, float layer, focus, zoom, ordering, and title policy.
 - A **Pane** is the semantic identity of one process surface.
 - An **Attachment** is the controller's view and interaction state for a Session.
 
@@ -107,7 +107,7 @@ Lemma-facing types and borrowed views make lifetimes explicit.
 
 | Mutable state | Authoritative owner |
 | --- | --- |
-| Sessions, Tabs, Panes, layout, focus, zoom, stable IDs | Core |
+| Sessions, Tabs, Panes, layout, float layers, focus, zoom, stable IDs | Core |
 | Attachment view, copy/editor state, command history, and message log | Core |
 | Key bindings, context options, transitions, and transient routing state | Input policy |
 | Lua VM, coroutine state, and uncommitted configuration draft | Isolated host process |
@@ -202,10 +202,13 @@ hidden Panes keep only canonical terminal state; presenting one again rebuilds t
 Attachment geometry -> Surface placement -> Core layout -> Pane geometry -> PTY size -> Ghostty size
 ```
 
-Docks change the effective pane viewport; floats and overlays do not. The child PTY receives target
-dimensions before Ghostty parses output at those dimensions. Multi-pane resize publishes semantic
-geometry only after dependent runtime work succeeds. Attached clients also report cell pixel size;
-that geometry follows the connection during Session transfer and participates in native resize.
+Docks change the effective pane viewport; float and overlay Surfaces do not. Floating Panes resolve
+their placement against that viewport, and their PTYs resize in the same effect batch as the tiled
+layout. Focus is one derived value: the Tab's top float while its float layer holds focus, else the
+tiled focus. The child PTY receives target dimensions before Ghostty parses output at those
+dimensions. Multi-pane resize publishes semantic geometry only after dependent runtime work
+succeeds. Attached clients also report cell pixel size; that geometry follows the connection
+during Session transfer and participates in native resize.
 
 The client sends an outer-terminal size change immediately. While a window drag continues, it
 coalesces SIGWINCH and in-band size reports (mode 2048) into at most one geometry per 16 ms display

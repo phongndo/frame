@@ -37,8 +37,18 @@ enum class MuxOperationKind : std::uint8_t {
   child_exit,
   runtime_error,
   attachment_resize,
+  // argument_0 bit 0 focuses the float and bit 1 holds its exit; argument_1 selects a placement.
+  float_create,
+  // argument_1 selects a placement.
+  float_place,
+  // argument_0 is the requested visibility.
+  float_visibility,
   idle,
 };
+
+inline constexpr std::uint16_t mux_float_placements = 6;
+inline constexpr std::uint16_t mux_float_focus = 1U << 0U;
+inline constexpr std::uint16_t mux_float_hold = 1U << 1U;
 
 // Every target, argument, and Runtime outcome is concrete. Replaying this value does not invoke the
 // generator, so traces remain meaningful when generator probabilities or draw order change.

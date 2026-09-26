@@ -63,6 +63,62 @@
       "properties": { "id": { "$ref": "#/$defs/id" } },
       "additionalProperties": false
     },
+    "floatPlacement": {
+      "description": "Outer rectangle of a floating Pane, including its one-cell native frame; the Pane is the inner rectangle. Absolute origins are relative to the Tab viewport, and column + columns and row + rows are at most 1000.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "column", "row", "columns", "rows"],
+          "properties": {
+            "kind": { "const": "absolute" },
+            "column": { "type": "integer", "minimum": 0, "maximum": 997 },
+            "row": { "type": "integer", "minimum": 0, "maximum": 997 },
+            "columns": { "type": "integer", "minimum": 3, "maximum": 1000 },
+            "rows": { "type": "integer", "minimum": 3, "maximum": 1000 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "columns", "rows"],
+          "properties": {
+            "kind": { "const": "centered" },
+            "columns": { "type": "integer", "minimum": 3, "maximum": 1000 },
+            "rows": { "type": "integer", "minimum": 3, "maximum": 1000 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "width_percent", "height_percent"],
+          "properties": {
+            "kind": { "const": "relative" },
+            "width_percent": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "height_percent": { "type": "integer", "minimum": 1, "maximum": 100 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "paneLayer": {
+      "description": "A Pane is tiled or floating. A float reports its z-order (0 is the bottom), whether its Tab viewport suspends it, and its placement.",
+      "oneOf": [
+        {
+          "properties": { "layer": { "const": "tiled" } },
+          "not": {
+            "anyOf": [
+              { "required": ["z"] },
+              { "required": ["suspended"] },
+              { "required": ["placement"] }
+            ]
+          }
+        },
+        {
+          "properties": { "layer": { "const": "float" } },
+          "required": ["z", "suspended", "placement"]
+        }
+      ]
+    },
     "surfacePlacement": {
       "oneOf": [
         {
@@ -335,7 +391,7 @@
     },
     "tabInspection": {
       "type": "object",
-      "required": ["id", "position", "title", "active", "focused_pane", "previous_pane", "zoomed", "layout_suspended", "geometry", "layout"],
+      "required": ["id", "position", "title", "active", "focused_pane", "previous_pane", "zoomed", "layout_suspended", "geometry", "layout", "floats"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "position": { "type": "integer", "minimum": 1, "maximum": 16 },
@@ -354,7 +410,17 @@
           },
           "additionalProperties": false
         },
-        "layout": { "$ref": "#/$defs/layoutNode" }
+        "layout": { "$ref": "#/$defs/layoutNode" },
+        "floats": {
+          "description": "The Tab's floating Panes, back to front.",
+          "type": "object",
+          "required": ["visible", "panes"],
+          "properties": {
+            "visible": { "type": "boolean" },
+            "panes": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
@@ -457,7 +523,8 @@
       "properties": {
         "pane": {
           "type": "object",
-          "required": ["id", "tab", "rectangle"],
+          "required": ["id", "tab", "rectangle", "layer"],
+          "allOf": [{ "$ref": "#/$defs/paneLayer" }],
           "properties": {
             "id": { "$ref": "#/$defs/id" },
             "tab": { "$ref": "#/$defs/id" },
@@ -471,7 +538,11 @@
                 "rows": { "type": "integer", "minimum": 1, "maximum": 200 }
               },
               "additionalProperties": false
-            }
+            },
+            "layer": { "enum": ["tiled", "float"] },
+            "z": { "type": "integer", "minimum": 0, "maximum": 7 },
+            "suspended": { "type": "boolean" },
+            "placement": { "$ref": "#/$defs/floatPlacement" }
           },
           "additionalProperties": false
         },
@@ -548,7 +619,8 @@
     },
     "paneListing": {
       "type": "object",
-      "required": ["id", "tab", "tab_position", "focused", "column", "row", "columns", "rows", "process", "terminal_generation", "observed_title", "signals"],
+      "required": ["id", "tab", "tab_position", "focused", "column", "row", "columns", "rows", "layer", "process", "terminal_generation", "observed_title", "signals"],
+      "allOf": [{ "$ref": "#/$defs/paneLayer" }],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "tab": { "$ref": "#/$defs/id" },
@@ -558,6 +630,10 @@
         "row": { "type": "integer", "minimum": 0, "maximum": 65535 },
         "columns": { "type": "integer", "minimum": 0, "maximum": 65535 },
         "rows": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "layer": { "enum": ["tiled", "float"] },
+        "z": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "suspended": { "type": "boolean" },
+        "placement": { "$ref": "#/$defs/floatPlacement" },
         "process": { "$ref": "#/$defs/paneProcess" },
         "terminal_generation": { "type": "integer", "minimum": 1 },
         "observed_title": { "type": "string" },
@@ -793,6 +869,22 @@
         },
         {
           "type": "object",
+          "required": ["command", "tab", "visible"],
+          "anyOf": [
+            { "required": ["session"] },
+            { "properties": { "tab": { "$ref": "#/$defs/resultReference" } } }
+          ],
+          "properties": {
+            "command": { "const": "tab.floats" },
+            "session": { "$ref": "#/$defs/procSessionSelector" },
+            "if_session_revision": { "type": "integer", "minimum": 1 },
+            "tab": { "$ref": "#/$defs/procTabSelector" },
+            "visible": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
           "required": ["command", "pane", "direction"],
           "anyOf": [
             { "required": ["session"] },
@@ -809,6 +901,43 @@
             "hold": { "type": "boolean", "default": false },
             "argv": { "$ref": "#/$defs/argv" },
             "focus": { "$ref": "#/$defs/focusPolicy" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["command", "tab", "placement"],
+          "anyOf": [
+            { "required": ["session"] },
+            { "properties": { "tab": { "$ref": "#/$defs/resultReference" } } }
+          ],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,32}$" },
+            "command": { "const": "pane.float" },
+            "session": { "$ref": "#/$defs/procSessionSelector" },
+            "if_session_revision": { "type": "integer", "minimum": 1 },
+            "tab": { "$ref": "#/$defs/procTabSelector" },
+            "placement": { "$ref": "#/$defs/floatPlacement" },
+            "cwd": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^/" },
+            "hold": { "type": "boolean", "default": false },
+            "argv": { "$ref": "#/$defs/argv" },
+            "focus": { "$ref": "#/$defs/focusPolicy" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["command", "pane", "placement"],
+          "anyOf": [
+            { "required": ["session"] },
+            { "properties": { "pane": { "$ref": "#/$defs/resultReference" } } }
+          ],
+          "properties": {
+            "command": { "const": "pane.place" },
+            "session": { "$ref": "#/$defs/procSessionSelector" },
+            "if_session_revision": { "type": "integer", "minimum": 1 },
+            "pane": { "$ref": "#/$defs/procPaneSelector" },
+            "placement": { "$ref": "#/$defs/floatPlacement" }
           },
           "additionalProperties": false
         },

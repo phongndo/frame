@@ -79,6 +79,9 @@ template <typename Id> void write_id(std::ostream& stream, const Id id) {
       std::pair{"child-exit"sv, MuxOperationKind::child_exit},
       std::pair{"runtime-error"sv, MuxOperationKind::runtime_error},
       std::pair{"attachment-resize"sv, MuxOperationKind::attachment_resize},
+      std::pair{"float-create"sv, MuxOperationKind::float_create},
+      std::pair{"float-place"sv, MuxOperationKind::float_place},
+      std::pair{"float-visibility"sv, MuxOperationKind::float_visibility},
       std::pair{"idle"sv, MuxOperationKind::idle},
   };
   for (const auto& [name, candidate] : values) {
@@ -184,6 +187,13 @@ template <typename Id> void write_id(std::ostream& stream, const Id id) {
            operation.argument_1 <= static_cast<std::uint16_t>(core::PaneExitPolicy::hold);
   case MuxOperationKind::create_tab:
     return operation.argument_0 <= static_cast<std::uint16_t>(core::PaneExitPolicy::hold);
+  case MuxOperationKind::float_create:
+    return operation.argument_0 <= (mux_float_focus | mux_float_hold) &&
+           operation.argument_1 < mux_float_placements;
+  case MuxOperationKind::float_place:
+    return operation.argument_1 < mux_float_placements;
+  case MuxOperationKind::float_visibility:
+    return operation.argument_0 <= 1U;
   case MuxOperationKind::resize:
     return operation.argument_0 >= static_cast<std::uint16_t>(CommandKind::resize_left) &&
            operation.argument_0 <= static_cast<std::uint16_t>(CommandKind::resize_down) &&
@@ -284,6 +294,12 @@ template <typename Id> void write_id(std::ostream& stream, const Id id) {
     return "runtime-error";
   case MuxOperationKind::attachment_resize:
     return "attachment-resize";
+  case MuxOperationKind::float_create:
+    return "float-create";
+  case MuxOperationKind::float_place:
+    return "float-place";
+  case MuxOperationKind::float_visibility:
+    return "float-visibility";
   case MuxOperationKind::idle:
     return "idle";
   }

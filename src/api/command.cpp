@@ -1,6 +1,7 @@
 #include "api/command.hpp"
 
 #include "api/json.hpp"
+#include "core/float_layer.hpp"
 #include "lemma/command.hpp"
 #include "lemma/id.hpp"
 #include "lemma/limits.hpp"
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -189,6 +191,54 @@ template <typename Id>
   }
   const auto dock = decode_dock_placement(*value, *kind);
   return dock.has_value() ? dock : decode_floating_placement(*value, *kind);
+}
+
+[[nodiscard]] auto json_extent(const JsonValue& value, const std::string_view field) noexcept
+    -> std::optional<std::uint16_t> {
+  const auto number = json_unsigned(value, field);
+  return number.has_value() && *number <= std::numeric_limits<std::uint16_t>::max()
+             ? std::optional{static_cast<std::uint16_t>(*number)}
+             : std::nullopt;
+}
+
+// Every member is required and closed per kind; the Core factories own the value bounds.
+[[nodiscard]] auto decode_float_placement(const JsonValue& document)
+    -> std::optional<core::FloatPlacement> {
+  const auto* const value = json_member(document, "placement");
+  if (value == nullptr || value->kind != JsonKind::object) {
+    return std::nullopt;
+  }
+  const auto kind = json_string(*value, "kind");
+  if (kind == std::optional<std::string_view>{"absolute"}) {
+    const auto column = json_extent(*value, "column");
+    const auto row = json_extent(*value, "row");
+    const auto columns = json_extent(*value, "columns");
+    const auto rows = json_extent(*value, "rows");
+    if (unknown_field(*value, {"kind", "column", "row", "columns", "rows"}).has_value() ||
+        !column.has_value() || !row.has_value() || !columns.has_value() || !rows.has_value()) {
+      return std::nullopt;
+    }
+    return core::FloatPlacement::absolute(*column, *row, *columns, *rows);
+  }
+  if (kind == std::optional<std::string_view>{"centered"}) {
+    const auto columns = json_extent(*value, "columns");
+    const auto rows = json_extent(*value, "rows");
+    if (unknown_field(*value, {"kind", "columns", "rows"}).has_value() || !columns.has_value() ||
+        !rows.has_value()) {
+      return std::nullopt;
+    }
+    return core::FloatPlacement::centered(*columns, *rows);
+  }
+  if (kind == std::optional<std::string_view>{"relative"}) {
+    const auto width = json_extent(*value, "width_percent");
+    const auto height = json_extent(*value, "height_percent");
+    if (unknown_field(*value, {"kind", "width_percent", "height_percent"}).has_value() ||
+        !width.has_value() || !height.has_value()) {
+      return std::nullopt;
+    }
+    return core::FloatPlacement::relative(*width, *height);
+  }
+  return std::nullopt;
 }
 
 [[nodiscard]] auto decode_arguments(const JsonValue& document, Command& command) -> bool {
@@ -429,6 +479,51 @@ static_assert(input_key_names.size() == static_cast<std::size_t>(InputKey::f12) 
 
 } // namespace
 
+auto format_float_placement(const core::FloatPlacement placement,
+                            const std::span<char, float_placement_json_bytes_max> output) noexcept
+    -> std::string_view {
+  std::size_t used = 0;
+  const auto text = [&](const std::string_view value) noexcept {
+    if (value.size() <= output.size() - used) {
+      std::ranges::copy(value, output.subspan(used).begin());
+      used += value.size();
+    }
+  };
+  const auto number = [&](const std::uint16_t value) noexcept {
+    const auto remaining = output.subspan(used);
+    const auto converted = std::to_chars(remaining.data(), std::to_address(remaining.end()), value);
+    if (converted.ec == std::errc{}) {
+      used += static_cast<std::size_t>(converted.ptr - remaining.data());
+    }
+  };
+  switch (placement.kind()) {
+  case core::FloatPlacementKind::absolute:
+    text(R"({"kind":"absolute","column":)");
+    number(placement.column());
+    text(R"(,"row":)");
+    number(placement.row());
+    text(R"(,"columns":)");
+    number(placement.columns());
+    text(R"(,"rows":)");
+    number(placement.rows());
+    break;
+  case core::FloatPlacementKind::centered:
+    text(R"({"kind":"centered","columns":)");
+    number(placement.columns());
+    text(R"(,"rows":)");
+    number(placement.rows());
+    break;
+  case core::FloatPlacementKind::relative:
+    text(R"({"kind":"relative","width_percent":)");
+    number(placement.columns());
+    text(R"(,"height_percent":)");
+    number(placement.rows());
+    break;
+  }
+  text("}");
+  return {output.data(), used};
+}
+
 auto parse_input_key_name(const std::string_view value) noexcept -> std::optional<InputKey> {
   const auto* const found = std::ranges::find(input_key_names, value);
   if (found == input_key_names.end()) {
@@ -493,12 +588,18 @@ auto command_name(const CommandKind kind) noexcept -> std::string_view {
     return "tab.rename";
   case CommandKind::tab_kill:
     return "tab.kill";
+  case CommandKind::tab_floats:
+    return "tab.floats";
   case CommandKind::pane_list:
     return "pane.list";
   case CommandKind::pane_inspect:
     return "pane.inspect";
   case CommandKind::pane_split:
     return "pane.split";
+  case CommandKind::pane_float:
+    return "pane.float";
+  case CommandKind::pane_place:
+    return "pane.place";
   case CommandKind::pane_focus:
     return "pane.focus";
   case CommandKind::pane_swap:
@@ -636,6 +737,22 @@ auto command_name(const CommandKind kind) noexcept -> std::string_view {
                 std::to_string(placement.columns) + R"(,"rows":)" + std::to_string(placement.rows) +
                 "}";
     }
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+[[nodiscard]] auto append_float_placement(std::string& output, const core::FloatPlacement placement)
+    -> bool {
+  std::array<char, float_placement_json_bytes_max> encoded{};
+  const auto json = format_float_placement(placement, encoded);
+  if (json.empty()) {
+    return false;
+  }
+  try {
+    output += R"(,"placement":)";
+    output += json;
     return true;
   } catch (...) {
     return false;
@@ -853,7 +970,8 @@ auto encode_command(const Command& command) -> std::optional<std::string> {
     }
     if (command.kind == CommandKind::tab_inspect || command.kind == CommandKind::tab_select ||
         command.kind == CommandKind::tab_move || command.kind == CommandKind::tab_rename ||
-        command.kind == CommandKind::tab_kill) {
+        command.kind == CommandKind::tab_kill || command.kind == CommandKind::tab_floats ||
+        command.kind == CommandKind::pane_float) {
       if (!append_selector(output, "tab", command.tab)) {
         return std::nullopt;
       }
@@ -864,7 +982,7 @@ auto encode_command(const Command& command) -> std::optional<std::string> {
         command.kind == CommandKind::pane_send || command.kind == CommandKind::pane_input ||
         command.kind == CommandKind::pane_paste_image ||
         command.kind == CommandKind::pane_capture || command.kind == CommandKind::pane_wait ||
-        command.kind == CommandKind::pane_kill) {
+        command.kind == CommandKind::pane_kill || command.kind == CommandKind::pane_place) {
       if (!append_selector(output, "pane", command.pane)) {
         return std::nullopt;
       }
@@ -874,7 +992,7 @@ auto encode_command(const Command& command) -> std::optional<std::string> {
       return std::nullopt;
     }
     if (command.kind == CommandKind::session_start || command.kind == CommandKind::tab_new ||
-        command.kind == CommandKind::pane_split) {
+        command.kind == CommandKind::pane_split || command.kind == CommandKind::pane_float) {
       if (!command.working_directory.empty() &&
           !append_string_field(output, "cwd", command.working_directory)) {
         return std::nullopt;
@@ -897,7 +1015,8 @@ auto encode_command(const Command& command) -> std::optional<std::string> {
         !append_string_field(output, "title", command.title)) {
       return std::nullopt;
     }
-    if ((command.kind == CommandKind::tab_new || command.kind == CommandKind::pane_split) &&
+    if ((command.kind == CommandKind::tab_new || command.kind == CommandKind::pane_split ||
+         command.kind == CommandKind::pane_float) &&
         command.focus != FocusPolicy::created &&
         !append_string_field(output, "focus", focus_name(command.focus))) {
       return std::nullopt;
@@ -919,6 +1038,15 @@ auto encode_command(const Command& command) -> std::optional<std::string> {
     }
     if (command.kind == CommandKind::pane_zoom) {
       output += command.enabled ? R"(,"enabled":true)" : R"(,"enabled":false)";
+    }
+    if (command.kind == CommandKind::tab_floats) {
+      output += command.visible ? R"(,"visible":true)" : R"(,"visible":false)";
+    }
+    if (command.kind == CommandKind::pane_float || command.kind == CommandKind::pane_place) {
+      if (!command.float_placement.has_value() ||
+          !append_float_placement(output, *command.float_placement)) {
+        return std::nullopt;
+      }
     }
     if (command.kind == CommandKind::pane_send &&
         !append_string_field(output, "text", command.text)) {
@@ -1225,6 +1353,64 @@ auto decode_command(const JsonValue& document) -> CommandDecodeResult {
     if (!decode_focus_policy(document, command)) {
       return failure("invalid_field", "focus");
     }
+  } else if (*name == "pane.float") {
+    if (auto rejected = reject_unknown({"command", "session", "tab", "placement", "cwd", "hold",
+                                        "argv", "focus", "if_session_revision"});
+        rejected.has_value()) {
+      return *rejected;
+    }
+    command.kind = CommandKind::pane_float;
+    if (auto invalid = require_session(document, command); invalid.has_value()) {
+      return *invalid;
+    }
+    if (auto invalid = require_tab(document, command); invalid.has_value()) {
+      return *invalid;
+    }
+    command.float_placement = decode_float_placement(document);
+    if (!command.float_placement.has_value()) {
+      return failure("invalid_field", "placement");
+    }
+    if (const auto field = decode_launch(document, command, false); field.has_value()) {
+      return failure("invalid_field", *field);
+    }
+    if (!decode_focus_policy(document, command)) {
+      return failure("invalid_field", "focus");
+    }
+  } else if (*name == "pane.place") {
+    if (auto rejected =
+            reject_unknown({"command", "session", "pane", "placement", "if_session_revision"});
+        rejected.has_value()) {
+      return *rejected;
+    }
+    command.kind = CommandKind::pane_place;
+    if (auto invalid = require_session(document, command); invalid.has_value()) {
+      return *invalid;
+    }
+    if (auto invalid = require_pane(document, command); invalid.has_value()) {
+      return *invalid;
+    }
+    command.float_placement = decode_float_placement(document);
+    if (!command.float_placement.has_value()) {
+      return failure("invalid_field", "placement");
+    }
+  } else if (*name == "tab.floats") {
+    if (auto rejected =
+            reject_unknown({"command", "session", "tab", "visible", "if_session_revision"});
+        rejected.has_value()) {
+      return *rejected;
+    }
+    command.kind = CommandKind::tab_floats;
+    if (auto invalid = require_session(document, command); invalid.has_value()) {
+      return *invalid;
+    }
+    if (auto invalid = require_tab(document, command); invalid.has_value()) {
+      return *invalid;
+    }
+    const auto visible = json_boolean(document, "visible");
+    if (!visible.has_value()) {
+      return failure("invalid_field", "visible");
+    }
+    command.visible = *visible;
   } else if (*name == "pane.focus" || *name == "pane.kill" || *name == "pane.paste-image") {
     if (auto rejected = reject_unknown({"command", "session", "pane", "if_session_revision"});
         rejected.has_value()) {
