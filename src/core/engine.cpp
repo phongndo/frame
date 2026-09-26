@@ -9416,6 +9416,7 @@ struct PaneDamageAssessment final {
 [[nodiscard]] auto assess_pane_damage(SessionRecord& session, const PaneRuntimeStore& runtimes,
                                       PaneRuntime& runtime, const PtyDrainResult& drained,
                                       const bool track_interactive_damage,
+                                      const bool drained_past_backlog,
                                       const std::uint64_t interactive_status_before) noexcept
     -> PaneDamageAssessment {
   const auto status_after = current_status_signature(session, runtimes);
@@ -9425,7 +9426,10 @@ struct PaneDamageAssessment final {
                               status_after != session.attachment_runtime.status_signature;
   const bool visible_damage =
       drained.render_damage || interactive_status_damage || drained.damage_capture_failed;
-  const bool interactive_damage = runtime.interactive_damage.pending() && visible_damage;
+  // Output the child wrote before the input reached it keeps burst cadence; spending the latch on
+  // it would add an intermediate frame just ahead of the response.
+  const bool interactive_damage =
+      runtime.interactive_damage.pending() && drained_past_backlog && visible_damage;
   if (interactive_damage) {
     // Damage in an inactive tab is already covered by its next full redraw. Do not let the input
     // latch promote an unrelated update after the tab becomes active again.
@@ -9500,6 +9504,8 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
     start_clipboard_request(session, pane, runtime);
   }
   const auto bytes_drained = pane_budget_before - pane_budget;
+  const bool drained_past_backlog =
+      track_interactive_damage && runtime.interactive_damage.record_output(bytes_drained);
   global_budget -= bytes_drained;
   if (blocked_sink) {
     blocked_session_budget -= bytes_drained;
@@ -9535,8 +9541,9 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
   if (!pane_event_changed(session, drained, process_changed)) {
     return;
   }
-  const auto damage = assess_pane_damage(session, runtimes, runtime, drained,
-                                         track_interactive_damage, interactive_status_before);
+  const auto damage =
+      assess_pane_damage(session, runtimes, runtime, drained, track_interactive_damage,
+                         drained_past_backlog, interactive_status_before);
 #ifdef LEMMA_ENABLE_LATENCY_TRACE
   if (drained.correlation != 0 && tab.id == session.active_tab && pane.id == tab.focused_pane) {
     session.attachment_runtime.frame_trace_correlation = drained.correlation;
@@ -10076,7 +10083,9 @@ void service_attachment_command_lines(Sessions& sessions, PaneRuntimeStore& runt
   const auto written = ::write(runtime.pty, bytes.data(), bytes.size());
   if (written > 0) {
     const auto size = static_cast<std::size_t>(written);
-    runtime.interactive_damage.record_write(size);
+    if (runtime.interactive_damage.record_write(size)) {
+      runtime.interactive_damage.record_output_backlog(platform::pty_readable_bytes(runtime.pty));
+    }
     std::uint64_t trace_correlation = 0;
 #ifdef LEMMA_ENABLE_LATENCY_TRACE
     trace_correlation = runtime.input_trace_matcher.observe(bytes.first(size));

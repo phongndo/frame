@@ -17,26 +17,48 @@ void InteractiveDamageLatch::await_write(const std::size_t queued_bytes_before,
   }
 }
 
-void InteractiveDamageLatch::record_write(const std::size_t bytes) noexcept {
+[[nodiscard]] auto InteractiveDamageLatch::record_write(const std::size_t bytes) noexcept -> bool {
   if (bytes_until_armed_ == 0) {
-    return;
+    return false;
   }
   if (bytes < bytes_until_armed_) {
     bytes_until_armed_ -= bytes;
-    return;
+    return false;
   }
   bytes_until_armed_ = 0;
+  output_backlog_ = 0;
   pending_ = true;
+  return true;
+}
+
+void InteractiveDamageLatch::record_output_backlog(const std::size_t bytes) noexcept {
+  if (pending_) {
+    output_backlog_ = bytes;
+  }
+}
+
+[[nodiscard]] auto InteractiveDamageLatch::record_output(const std::size_t bytes) noexcept -> bool {
+  if (output_backlog_ == 0) {
+    return true;
+  }
+  if (bytes <= output_backlog_) {
+    output_backlog_ -= bytes;
+    return false;
+  }
+  output_backlog_ = 0;
+  return true;
 }
 
 [[nodiscard]] auto InteractiveDamageLatch::consume() noexcept -> bool {
   const bool consumed = pending_;
   pending_ = false;
+  output_backlog_ = 0;
   return consumed;
 }
 
 void InteractiveDamageLatch::reset() noexcept {
   bytes_until_armed_ = 0;
+  output_backlog_ = 0;
   pending_ = false;
 }
 

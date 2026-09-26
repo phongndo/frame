@@ -80,7 +80,7 @@ struct BoundedPtyWriter final {
   }
   writer.bytes_written += written;
   if (writer.latch != nullptr) {
-    writer.latch->record_write(written);
+    static_cast<void>(writer.latch->record_write(written));
   }
   return {.bytes = static_cast<std::ptrdiff_t>(written)};
 }

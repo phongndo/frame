@@ -29,10 +29,16 @@ inline constexpr std::size_t interactive_input_bytes_max = 64;
 [[nodiscard]] auto latency_sensitive_input(std::size_t bytes) noexcept -> bool;
 
 // Arms an interactive frame only after ordered PTY write progress reaches the accepted input.
+// Child output already readable when it arms was written before the input reached the child, so
+// it cannot be the response; draining that backlog leaves the latch for the output that follows.
 class InteractiveDamageLatch final {
 public:
   void await_write(std::size_t queued_bytes_before, std::size_t queued_bytes_after) noexcept;
-  void record_write(std::size_t bytes) noexcept;
+  // Returns whether this write armed the latch.
+  [[nodiscard]] auto record_write(std::size_t bytes) noexcept -> bool;
+  void record_output_backlog(std::size_t bytes) noexcept;
+  // Returns whether drained output extends past the backlog and can therefore answer the input.
+  [[nodiscard]] auto record_output(std::size_t bytes) noexcept -> bool;
   [[nodiscard]] auto consume() noexcept -> bool;
   [[nodiscard]] auto pending() const noexcept -> bool { return pending_; }
   [[nodiscard]] auto waiting_for_write() const noexcept -> bool { return bytes_until_armed_ > 0; }
@@ -40,6 +46,7 @@ public:
 
 private:
   std::size_t bytes_until_armed_{0};
+  std::size_t output_backlog_{0};
   bool pending_{false};
 };
 

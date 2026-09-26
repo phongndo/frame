@@ -23,16 +23,51 @@ TEST(FrameSchedulerTest, ClassifiesInputAndArmsOnlyAfterItsPtyWriteProgress) {
   EXPECT_FALSE(latch.pending());
   EXPECT_FALSE(latch.consume());
 
-  latch.record_write(3);
+  EXPECT_FALSE(latch.record_write(3));
   EXPECT_TRUE(latch.waiting_for_write());
   EXPECT_FALSE(latch.pending());
   EXPECT_FALSE(latch.consume());
 
-  latch.record_write(1);
+  EXPECT_TRUE(latch.record_write(1));
   EXPECT_FALSE(latch.waiting_for_write());
   EXPECT_TRUE(latch.pending());
   EXPECT_TRUE(latch.consume());
   EXPECT_FALSE(latch.pending());
+}
+
+// GoogleTest assertion macros inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(FrameSchedulerTest, OutputQueuedBeforeInputArmsCannotAnswerIt) {
+  InteractiveDamageLatch latch;
+  latch.await_write(0, 1);
+  ASSERT_TRUE(latch.record_write(1));
+  latch.record_output_backlog(81);
+
+  // The backlog drains in pieces without answering the input; the latch stays armed for the
+  // response behind it.
+  EXPECT_FALSE(latch.record_output(50));
+  EXPECT_FALSE(latch.record_output(31));
+  EXPECT_TRUE(latch.pending());
+  EXPECT_TRUE(latch.record_output(30));
+  EXPECT_TRUE(latch.consume());
+
+  // A read that reaches past the backlog carries output written after the input.
+  latch.await_write(0, 1);
+  ASSERT_TRUE(latch.record_write(1));
+  latch.record_output_backlog(81);
+  EXPECT_TRUE(latch.record_output(111));
+
+  // Consuming or resetting clears the backlog; later output answers the next input directly.
+  latch.record_output_backlog(81);
+  EXPECT_TRUE(latch.consume());
+  latch.await_write(0, 1);
+  ASSERT_TRUE(latch.record_write(1));
+  EXPECT_TRUE(latch.record_output(1));
+
+  // A backlog is recorded only for an armed latch.
+  latch.reset();
+  latch.record_output_backlog(81);
+  EXPECT_TRUE(latch.record_output(1));
 }
 
 TEST(FrameSchedulerTest, HigherUrgencyAdvancesButLaterRequestsNeverPostponeDeadline) {
@@ -146,7 +181,7 @@ TEST(FrameSchedulerTest, BackgroundDamageCannotDelayFollowingInputResponse) {
   prepare_sustained_burst(scheduler);
   InteractiveDamageLatch latch;
   latch.await_write(0, 1);
-  latch.record_write(1);
+  ASSERT_TRUE(latch.record_write(1));
   ASSERT_TRUE(latch.consume());
   const auto first_damage = origin + 55ms;
   scheduler.request(FrameUrgency::interactive, false, first_damage, FrameSinkState::ready, source);
