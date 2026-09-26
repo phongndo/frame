@@ -108,10 +108,11 @@ struct MessageViewStorage final {
   return {.lines = std::span(storage.lines).first(storage.size), .active = true};
 }
 
-// The one presentation predicate for Pane surfaces of an Attachment's active Tab.
+// The one presentation predicate for Pane surfaces of an Attachment's active Tab. Scene does not
+// compose floating Panes yet, so only the tiled layer is presented.
 [[nodiscard]] auto pane_presented(const Tab& active, const Pane& pane) noexcept -> bool {
-  return !active.layout_suspended && pane.tab == active.id &&
-         (!active.zoomed || pane.id == active.focused_pane);
+  return !active.layout_suspended && pane.tab == active.id && !active.is_float(pane.id) &&
+         (!active.zoomed || pane.id == active.tiled_focus());
 }
 
 // A full frame redraws every presented Pane. Panes absent from it keep no retained render rows;
@@ -169,7 +170,7 @@ collect_surfaces(SessionRecord& session, PaneRuntimeStore& runtimes,
         .cursor_override_column = cursor_override ? cursor_point.column : std::uint16_t{0},
         .cursor_override_row =
             cursor_override ? static_cast<std::uint16_t>(cursor_point.row) : std::uint16_t{0},
-        .focused = pane->id == tab->focused_pane,
+        .focused = pane->id == tab->focused_pane(),
         .cursor_override = cursor_override,
         .presentation_suppressed = runtime->presentation_gate.presentation_suppressed(),
         .border_right =
@@ -189,7 +190,7 @@ collect_surfaces(SessionRecord& session, PaneRuntimeStore& runtimes,
   if (!tab.title_override().empty()) {
     return tab.title_override();
   }
-  const auto* const focused = find_pane(session, tab, tab.focused_pane);
+  const auto* const focused = find_pane(session, tab, tab.focused_pane());
   LEMMA_ASSERT(focused != nullptr);
   const auto* const runtime = find_pane_runtime(runtimes, session, tab, *focused);
   LEMMA_ASSERT(runtime != nullptr);
@@ -474,7 +475,7 @@ using OuterTitle = OuterText<limits::outer_title_bytes_max>;
   if (!tab->title_override().empty()) {
     return tab->title_override();
   }
-  const auto* const focused = find_pane(session, *tab, tab->focused_pane);
+  const auto* const focused = find_pane(session, *tab, tab->focused_pane());
   const auto* const runtime =
       focused == nullptr ? nullptr : find_pane_runtime(runtimes, session, *tab, *focused);
   if (runtime == nullptr) {
@@ -604,7 +605,7 @@ struct FocusedPaneRuntime final {
                                         const PaneRuntimeStore& runtimes) noexcept
     -> FocusedPaneRuntime {
   const auto* const tab = active_tab(session);
-  const auto* const pane = tab == nullptr ? nullptr : find_pane(session, *tab, tab->focused_pane);
+  const auto* const pane = tab == nullptr ? nullptr : find_pane(session, *tab, tab->focused_pane());
   return pane == nullptr
              ? FocusedPaneRuntime{}
              : FocusedPaneRuntime{.pane = pane,
@@ -766,7 +767,7 @@ template <typename Id>
   if (tab == nullptr) {
     return false;
   }
-  const auto* const focused = find_pane(session, *tab, tab->focused_pane);
+  const auto* const focused = find_pane(session, *tab, tab->focused_pane());
   LEMMA_ASSERT(focused != nullptr);
   const auto* const runtime = find_pane_runtime(runtimes, session, *tab, *focused);
   LEMMA_ASSERT(runtime != nullptr);
@@ -808,7 +809,7 @@ template <typename Id>
                                                          : "inactive, title \"") ||
         !output.append_title(title_value) || !output.append_text("\", id=") ||
         !append_id(output, tab.id) || !output.append_text(", focused-pane=") ||
-        !append_id(output, tab.focused_pane) || !output.append_text("\n")) {
+        !append_id(output, tab.focused_pane()) || !output.append_text("\n")) {
       return false;
     }
   }
@@ -851,7 +852,7 @@ template <typename Id>
       LEMMA_ASSERT(runtime != nullptr);
       if (!output.append_text("lemma pane ") || !append_id(output, pane.id) ||
           !output.append_text(": tab ") || !output.append_number(tab_position + 1U) ||
-          !output.append_text(pane.id == tab->focused_pane ? ", focused, " : ", unfocused, ") ||
+          !output.append_text(pane.id == tab->focused_pane() ? ", focused, " : ", unfocused, ") ||
           !append_process_state(output, pane, *runtime) || !output.append_text(", ") ||
           !output.append_number(pane.rectangle.columns) || !output.append_text("x") ||
           !output.append_number(pane.rectangle.rows) || !output.append_text(", tab-id=") ||
@@ -889,7 +890,7 @@ template <typename Id>
          output.append_number(session.attachment.columns) && output.append_text(R"(,"rows":)") &&
          output.append_number(session.attachment.rows) && output.append_text(R"(,"active_tab":)") &&
          append_json_id(output, tab->id) && output.append_text(R"(,"focused_pane":)") &&
-         append_json_id(output, tab->focused_pane) && output.append_text("}");
+         append_json_id(output, tab->focused_pane()) && output.append_text("}");
 }
 
 // Closed JSON escaping is deliberately local to the fixed-capacity ConnectionOutput projection.
@@ -938,7 +939,7 @@ template <typename Id>
         !output.append_text(",\"title\":") || !append_connection_json_string(output, title) ||
         !output.append_text(tab->zoomed ? ",\"zoomed\":true" : ",\"zoomed\":false") ||
         !output.append_text(",\"panes\":") || !output.append_number(pane_count(*tab)) ||
-        !output.append_text(",\"focused_pane\":") || !append_json_id(output, tab->focused_pane) ||
+        !output.append_text(",\"focused_pane\":") || !append_json_id(output, tab->focused_pane()) ||
         !output.append_text("}")) {
       return false;
     }
@@ -1077,6 +1078,41 @@ template <typename Output>
          signal_text(output, R"(,"cwd_changes":)") && signal_number(output, signals.cwd_changes);
 }
 
+inline constexpr std::size_t pane_layer_json_bytes_max = 64 + api::float_placement_json_bytes_max;
+
+// Layer members shared by Pane listings and inspection. A float also reports its z-order (0 is the
+// bottom), whether its Tab viewport currently suspends it, and its requested placement.
+[[nodiscard]] auto pane_layer_json(const Tab& tab, const Pane& pane,
+                                   std::array<char, pane_layer_json_bytes_max>& storage) noexcept
+    -> std::string_view {
+  const auto placement = tab.floats.placement(pane.id);
+  if (!placement.has_value()) {
+    return R"(,"layer":"tiled")";
+  }
+  const PaneRectangle viewport{.column = tab.layout_column,
+                               .row = tab.layout_row,
+                               .columns = tab.layout_columns,
+                               .rows = tab.layout_rows};
+  const bool suspended = tab.layout_suspended || !placement->resolve(viewport).has_value();
+  std::array<char, api::float_placement_json_bytes_max> encoded{};
+  const auto json = api::format_float_placement(*placement, encoded);
+  constexpr std::string_view prefix = R"(,"layer":"float","z":)";
+  const std::string_view middle =
+      suspended ? R"(,"suspended":true,"placement":)" : R"(,"suspended":false,"placement":)";
+  auto output = std::span(storage);
+  std::ranges::copy(prefix, output.begin());
+  auto used = prefix.size();
+  const auto z = tab.floats.z(pane.id).value_or(0);
+  const auto converted =
+      std::to_chars(output.subspan(used).data(), std::to_address(output.end()), z);
+  used = static_cast<std::size_t>(converted.ptr - output.data());
+  std::ranges::copy(middle, output.subspan(used).begin());
+  used += middle.size();
+  std::ranges::copy(json, output.subspan(used).begin());
+  used += json.size();
+  return {output.data(), used};
+}
+
 // Structured pane queries traverse the bounded semantic hierarchy once and expose no title-based
 // selectors or terminal-owned representation.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -1098,16 +1134,18 @@ template <typename Output>
       const auto& pane = *pane_slot.pane;
       const auto* const runtime = find_pane_runtime(runtimes, session, *tab, pane);
       LEMMA_ASSERT(runtime != nullptr);
+      std::array<char, pane_layer_json_bytes_max> layer{};
       if ((emitted > 0 && !output.append_text(",")) || !output.append_text("{\"id\":") ||
           !append_json_id(output, pane.id) || !output.append_text(",\"tab\":") ||
           !append_json_id(output, tab->id) || !output.append_text(",\"tab_position\":") ||
           !output.append_number(tab_position + 1U) ||
-          !output.append_text(pane.id == tab->focused_pane ? ",\"focused\":true"
-                                                           : ",\"focused\":false") ||
+          !output.append_text(pane.id == tab->focused_pane() ? ",\"focused\":true"
+                                                             : ",\"focused\":false") ||
           !output.append_text(",\"column\":") || !output.append_number(pane.rectangle.column) ||
           !output.append_text(",\"row\":") || !output.append_number(pane.rectangle.row) ||
           !output.append_text(",\"columns\":") || !output.append_number(pane.rectangle.columns) ||
           !output.append_text(",\"rows\":") || !output.append_number(pane.rectangle.rows) ||
+          !output.append_text(pane_layer_json(*tab, pane, layer)) ||
           !output.append_text(",\"process\":") ||
           !append_structured_process(output, pane, *runtime) ||
           !output.append_text(",\"terminal_generation\":") ||
@@ -1425,7 +1463,7 @@ template <typename Output>
       !api::append_json_string(output, title) || !append_public(output, R"(,"active":)") ||
       !append_public(output, tab.id == session.active_tab ? "true" : "false") ||
       !append_public(output, R"(,"focused_pane":)") ||
-      !append_public_id(output, tab.focused_pane) ||
+      !append_public_id(output, tab.focused_pane()) ||
       !append_public(output, R"(,"previous_pane":)") ||
       !append_public_id(output, tab.previous_pane) || !append_public(output, R"(,"zoomed":)") ||
       !append_public(output, tab.zoomed ? "true" : "false") ||
@@ -1434,7 +1472,20 @@ template <typename Output>
       !append_public(output, R"(,"geometry":{"columns":)") ||
       !append_public_number(output, tab.layout_columns) || !append_public(output, R"(,"rows":)") ||
       !append_public_number(output, tab.layout_rows) || !append_public(output, R"(},"layout":)") ||
-      !append_layout_node(output, *layout, 0) || !append_public(output, "}")) {
+      !append_layout_node(output, *layout, 0) ||
+      !append_public(output, R"(,"floats":{"visible":)") ||
+      !append_public(output, tab.floats_visible() ? "true" : "false") ||
+      !append_public(output, R"(,"panes":[)")) {
+    return {};
+  }
+  bool separator = false;
+  for (const auto& entry : tab.floats.entries()) {
+    if ((separator && !append_public(output, ",")) || !append_public_id(output, entry.pane)) {
+      return {};
+    }
+    separator = true;
+  }
+  if (!append_public(output, "]}}")) {
     return {};
   }
   return output;
@@ -1510,6 +1561,7 @@ template <typename Output>
 
 [[nodiscard]] auto pane_inspection(const Tab& tab, const Pane& pane, const PaneRuntime& runtime)
     -> std::string {
+  std::array<char, pane_layer_json_bytes_max> layer{};
   const auto terminal = runtime.terminal.inspection();
   const auto title = runtime.terminal.title();
   const auto pwd = runtime.terminal.pwd();
@@ -1524,7 +1576,8 @@ template <typename Output>
       !append_public(output, R"(,"columns":)") ||
       !append_public_number(output, pane.rectangle.columns) ||
       !append_public(output, R"(,"rows":)") || !append_public_number(output, pane.rectangle.rows) ||
-      !append_public(output, R"(}},"process":)") ||
+      !append_public(output, "}") || !append_public(output, pane_layer_json(tab, pane, layer)) ||
+      !append_public(output, R"(},"process":)") ||
       !append_process_inspection(output, pane, runtime) ||
       !append_public(output, R"(,"terminal":{"generation":)") ||
       !append_public_number(output, runtime.observation_generation) ||
@@ -2008,7 +2061,7 @@ void find_oldest_signal(const api::EventSubscription& subscription, SessionRecor
         !append_public(output, R"(,"title":)") ||
         !api::append_json_string(output, tab_title(session, *tab, runtimes)) ||
         !append_public(output, R"(,"focused_pane":)") ||
-        !append_public_id(output, tab->focused_pane) || !append_public(output, R"(,"active":)") ||
+        !append_public_id(output, tab->focused_pane()) || !append_public(output, R"(,"active":)") ||
         !append_public(output, tab->id == session.active_tab ? "true}" : "false}")) {
       return false;
     }

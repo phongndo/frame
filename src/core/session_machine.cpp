@@ -1,5 +1,6 @@
 #include "core/session_machine.hpp"
 
+#include "core/float_layer.hpp"
 #include "core/layout.hpp"
 #include "core/session.hpp"
 #include "lemma/assert.hpp"
@@ -161,7 +162,9 @@ void record_mutation(Session& session) noexcept {
   std::size_t members = 0;
   for (std::size_t index = 0; index < session.panes.size(); ++index) {
     const auto& pane_slot = std::span(session.panes).subspan(index, 1).front();
-    const bool belongs = pane_slot.pane != nullptr && pane_slot.pane->tab == tab.id;
+    // Floats belong to the Tab but not to its layout; the layout projects exactly the rest.
+    const bool belongs = pane_slot.pane != nullptr && pane_slot.pane->tab == tab.id &&
+                         !tab.is_float(pane_slot.pane->id);
     const bool staged_here =
         staged != nullptr && staged->tab == tab.id && staged->id.slot() == index;
     const bool included = std::span(projection.included).subspan(index, 1).front();
@@ -179,9 +182,34 @@ void record_mutation(Session& session) noexcept {
   return members == projection.pane_count ? std::optional{projection} : std::nullopt;
 }
 
+// Inner rectangles of the floats that fit a Tab viewport. Suspension is recomputed from the
+// viewport rather than stored: a float that does not fit keeps its PTY size and stays out of the
+// batch.
+struct FloatTargets final {
+  std::array<PaneId, floats_per_tab_max> panes{};
+  std::array<PaneRectangle, floats_per_tab_max> rectangles{};
+  std::size_t size{0};
+};
+
+[[nodiscard]] auto float_targets(const Tab& tab, const PaneRectangle viewport) noexcept
+    -> FloatTargets {
+  FloatTargets targets;
+  for (const auto& entry : tab.floats.entries()) {
+    const auto outer = entry.placement.resolve(viewport);
+    if (!outer.has_value()) {
+      continue;
+    }
+    std::span(targets.panes).subspan(targets.size, 1).front() = entry.pane;
+    std::span(targets.rectangles).subspan(targets.size, 1).front() = float_inner_rectangle(*outer);
+    ++targets.size;
+  }
+  return targets;
+}
+
 [[nodiscard]] auto request_projection(Session& session, const SessionRuntimeEffects& runtime,
                                       const Tab& tab, const LayoutProjection& projection,
-                                      Pane* const staged = nullptr) noexcept
+                                      Pane* const staged = nullptr,
+                                      const FloatTargets& floats = {}) noexcept
     -> RuntimeEffectStatus {
   std::array<ResizePaneEffect, panes_per_session_max> effects{};
   std::size_t count = 0;
@@ -203,13 +231,27 @@ void record_mutation(Session& session) noexcept {
     };
     ++count;
   }
+  for (std::size_t index = 0; index < floats.size; ++index) {
+    const auto pane_id = std::span(floats.panes).subspan(index, 1).front();
+    const auto* const pane = find_pane(session, tab, pane_id);
+    if (pane == nullptr || count == effects.size()) {
+      return RuntimeEffectStatus::consistency_lost;
+    }
+    std::span(effects).subspan(count, 1).front() = {
+        .session = session.id,
+        .pane = pane_id,
+        .previous = pane->rectangle,
+        .target = std::span(floats.rectangles).subspan(index, 1).front(),
+    };
+    ++count;
+  }
   return runtime.resize == nullptr
              ? RuntimeEffectStatus::rejected
              : runtime.resize(runtime.context, std::span(effects).first(count));
 }
 
 void commit_projection(Session& session, const LayoutProjection& projection,
-                       Pane* const staged = nullptr) noexcept {
+                       Pane* const staged = nullptr, const FloatTargets& floats = {}) noexcept {
   for (std::size_t index = 0; index < projection.included.size(); ++index) {
     if (!std::span(projection.included).subspan(index, 1).front()) {
       continue;
@@ -218,6 +260,11 @@ void commit_projection(Session& session, const LayoutProjection& projection,
     auto* const pane = pane_for_projection(session, staged, pane_id);
     LEMMA_ASSERT(pane != nullptr);
     pane->rectangle = std::span(projection.rectangles).subspan(index, 1).front();
+  }
+  for (std::size_t index = 0; index < floats.size; ++index) {
+    auto* const pane = find_pane(session, std::span(floats.panes).subspan(index, 1).front());
+    LEMMA_ASSERT(pane != nullptr);
+    pane->rectangle = std::span(floats.rectangles).subspan(index, 1).front();
   }
 }
 
@@ -243,12 +290,22 @@ void commit_projection(Session& session, const LayoutProjection& projection,
   return request_projection(session, runtime, tab, projection, staged);
 }
 
+void suspend_tab(Tab& tab) noexcept {
+  tab.layout_suspended = true;
+  tab.blur_floats();
+}
+
 void commit_tab_viewport(Tab& tab, const PaneRectangle viewport) noexcept {
   tab.layout_column = viewport.column;
   tab.layout_row = viewport.row;
   tab.layout_columns = viewport.columns;
   tab.layout_rows = viewport.rows;
   tab.layout_suspended = false;
+  // A float suspended by the new viewport keeps its PTY size and loses focus.
+  const auto top = tab.float_focused() ? tab.floats.top() : std::nullopt;
+  if (top.has_value() && !tab.float_presentable(*top)) {
+    tab.blur_floats();
+  }
 }
 
 // Resizes a Tab's Panes into viewport and presents it there, or suspends the Tab when the layout
@@ -257,15 +314,16 @@ void commit_tab_viewport(Tab& tab, const PaneRectangle viewport) noexcept {
                                const std::optional<LayoutProjection>& projection,
                                const PaneRectangle viewport) noexcept -> RuntimeEffectStatus {
   if (!projection.has_value()) {
-    tab.layout_suspended = true;
+    suspend_tab(tab);
     return RuntimeEffectStatus::rejected;
   }
-  const auto status = request_projection(session, runtime, tab, *projection);
+  const auto floats = float_targets(tab, viewport);
+  const auto status = request_projection(session, runtime, tab, *projection, nullptr, floats);
   if (status == RuntimeEffectStatus::applied) {
-    commit_projection(session, *projection);
+    commit_projection(session, *projection, nullptr, floats);
     commit_tab_viewport(tab, viewport);
   } else if (status == RuntimeEffectStatus::rejected) {
-    tab.layout_suspended = true;
+    suspend_tab(tab);
   }
   return status;
 }
@@ -275,15 +333,16 @@ void commit_tab_viewport(Tab& tab, const PaneRectangle viewport) noexcept {
   const auto viewport = session.attachment.content_viewport;
   const auto projection = tab.layout.project(viewport);
   if (!projection.has_value()) {
-    tab.layout_suspended = true;
+    suspend_tab(tab);
     return RuntimeEffectStatus::applied;
   }
-  const auto status = request_projection(session, runtime, tab, *projection);
+  const auto floats = float_targets(tab, viewport);
+  const auto status = request_projection(session, runtime, tab, *projection, nullptr, floats);
   if (status == RuntimeEffectStatus::applied) {
+    commit_projection(session, *projection, nullptr, floats);
     commit_tab_viewport(tab, viewport);
-    commit_projection(session, *projection);
   } else if (status == RuntimeEffectStatus::rejected && suspend_on_rejection) {
-    tab.layout_suspended = true;
+    suspend_tab(tab);
   }
   return status;
 }
@@ -361,6 +420,49 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
   return transition;
 }
 
+void reset_removed_pane_attachment(Session& session, const Tab& tab, const PaneId pane) noexcept {
+  if (session.attachment.selection_target ==
+      std::optional{AttachmentPaneTarget{.tab = tab.id, .pane = pane}}) {
+    session.attachment.selection_target.reset();
+    session.attachment.copy_mode = {};
+  }
+}
+
+// Removing a float changes no tiled geometry. If it held focus, focus returns to the previous Pane
+// when that can still hold it, and otherwise to the tiled focus.
+[[nodiscard]] auto close_float_transition(Session& session, const SessionRuntimeEffects& runtime,
+                                          Tab& tab, const PaneId pane_id) noexcept
+    -> SessionTransition {
+  const bool was_focused = tab.focused_pane() == pane_id;
+  if (was_focused) {
+    tab.blur_floats();
+  }
+  runtime.retire(runtime.context, session.id, pane_id);
+  std::span(session.panes).subspan(pane_id.slot(), 1).front().pane.reset();
+  const bool erased = tab.floats.erase(pane_id);
+  LEMMA_ASSERT(erased);
+  const auto previous = tab.previous_pane;
+  if (was_focused && find_pane(session, tab, previous) != nullptr) {
+    if (!tab.is_float(previous)) {
+      tab.focus_tiled(previous);
+    } else if (tab.float_presentable(previous)) {
+      const bool focused = tab.focus_float(previous);
+      LEMMA_ASSERT(focused);
+    }
+  }
+  if (find_pane(session, tab, tab.previous_pane) == nullptr) {
+    tab.previous_pane = tab.focused_pane();
+  }
+  reset_removed_pane_attachment(session, tab, pane_id);
+  return {.result = {.status = CommandStatus::applied},
+          .change = {.invalidate_terminal = was_focused ? tab.focused_pane() : PaneId{},
+                     .frame_requested = true,
+                     .force_full_frame = true,
+                     .status_changed = true},
+          .handled = true,
+          .mutated = true};
+}
+
 [[nodiscard]] auto close_pane_transition(Session& session, const SessionRuntimeEffects& runtime,
                                          Tab& tab, const PaneId pane_id) noexcept
     -> SessionTransition {
@@ -368,6 +470,10 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
   if (pane == nullptr) {
     return {.result = {.status = CommandStatus::stale_target}, .handled = true};
   }
+  if (tab.is_float(pane_id)) {
+    return close_float_transition(session, runtime, tab, pane_id);
+  }
+  // Closing the last tiled Pane closes the Tab, including its floats.
   if (tab.layout.pane_count() == 1U) {
     return remove_tab_transition(session, runtime, tab.id);
   }
@@ -385,23 +491,18 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
   if (!projection.has_value() && !refit) {
     return {.result = {.status = CommandStatus::failed}, .handled = true};
   }
-  const bool was_focused = tab.focused_pane == pane_id;
   const auto slot = static_cast<std::size_t>(pane_id.slot());
   runtime.retire(runtime.context, session.id, pane_id);
   std::span(session.panes).subspan(slot, 1).front().pane.reset();
   tab.layout = proposed;
   tab.zoomed = false;
-  if (was_focused) {
-    tab.focused_pane = *focus_candidate;
+  if (tab.tiled_focus() == pane_id) {
+    tab.set_tiled_focus(*focus_candidate);
   }
-  if (tab.previous_pane == pane_id || find_pane(session, tab, tab.previous_pane) == nullptr) {
-    tab.previous_pane = tab.focused_pane;
+  if (find_pane(session, tab, tab.previous_pane) == nullptr) {
+    tab.previous_pane = tab.focused_pane();
   }
-  if (session.attachment.selection_target ==
-      std::optional{AttachmentPaneTarget{.tab = tab.id, .pane = pane_id}}) {
-    session.attachment.selection_target.reset();
-    session.attachment.copy_mode = {};
-  }
+  reset_removed_pane_attachment(session, tab, pane_id);
   const auto resized = present_tab(session, runtime, tab, projection, viewport);
   if (resized == RuntimeEffectStatus::consistency_lost) {
     session.active = false;
@@ -417,13 +518,43 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
           .mutated = true};
 }
 
+[[nodiscard]] constexpr auto unavailable_transition(const TransitionReason reason) noexcept
+    -> SessionTransition {
+  return {.result = {.status = CommandStatus::unavailable}, .reason = reason, .handled = true};
+}
+
+// Focusing a float raises it; the tiled focus and any zoom are unchanged underneath.
+[[nodiscard]] auto focus_float_transition(Tab& tab, const PaneId target) noexcept
+    -> SessionTransition {
+  if (!tab.floats_visible()) {
+    return unavailable_transition(TransitionReason::floats_hidden);
+  }
+  if (!tab.float_presentable(target)) {
+    return unavailable_transition(TransitionReason::float_suspended);
+  }
+  const auto previous = tab.focused_pane();
+  const bool focused = tab.focus_float(target);
+  LEMMA_ASSERT(focused);
+  tab.previous_pane = previous;
+  return {.result = {.status = CommandStatus::applied},
+          .change = {.invalidate_terminal = target,
+                     .frame_requested = true,
+                     .force_full_frame = true,
+                     .status_changed = true},
+          .handled = true,
+          .mutated = true};
+}
+
 [[nodiscard]] auto focus_transition(Session& session, const SessionRuntimeEffects& runtime,
                                     Tab& tab, const PaneId target) noexcept -> SessionTransition {
   if (find_pane(session, tab, target) == nullptr) {
     return {.result = {.status = CommandStatus::stale_target}, .handled = true};
   }
-  if (tab.focused_pane == target) {
+  if (tab.focused_pane() == target) {
     return {.result = {.status = CommandStatus::no_effect}, .handled = true};
+  }
+  if (tab.is_float(target)) {
+    return focus_float_transition(tab, target);
   }
   LayoutProjection projection;
   if (tab.zoomed) {
@@ -437,8 +568,8 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
       return effect_failure_transition(resized);
     }
   }
-  tab.previous_pane = tab.focused_pane;
-  tab.focused_pane = target;
+  tab.previous_pane = tab.focused_pane();
+  tab.focus_tiled(target);
   if (tab.zoomed) {
     commit_projection(session, projection);
   }
@@ -455,7 +586,7 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
     -> SessionTransition {
   const auto viewport = tab_viewport(tab);
   LayoutProjection projection;
-  const auto resized = resize_candidate(session, runtime, tab, proposed, false, tab.focused_pane,
+  const auto resized = resize_candidate(session, runtime, tab, proposed, false, tab.tiled_focus(),
                                         viewport, nullptr, projection);
   if (resized != RuntimeEffectStatus::applied) {
     if (resized == RuntimeEffectStatus::consistency_lost) {
@@ -506,7 +637,102 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
 [[nodiscard]] auto targeted_pane(Session& session, Tab& tab, const Command& command) noexcept
     -> Pane* {
   return command.target.pane.is_valid() ? find_pane(session, tab, command.target.pane)
-                                        : find_pane(session, tab, tab.focused_pane);
+                                        : find_pane(session, tab, tab.focused_pane());
+}
+
+// The next presented float above pane in back-to-front order, wrapping. Focusing it raises it, so
+// repeating the step cycles through every presented float.
+[[nodiscard]] auto next_float(const Tab& tab, const PaneId pane) noexcept -> std::optional<PaneId> {
+  const auto entries = tab.floats.entries();
+  const auto current = tab.floats.z(pane);
+  if (!current.has_value()) {
+    return std::nullopt;
+  }
+  for (std::size_t offset = 1; offset < entries.size(); ++offset) {
+    const auto candidate = entries.subspan((*current + offset) % entries.size(), 1).front().pane;
+    if (tab.float_presentable(candidate)) {
+      return candidate;
+    }
+  }
+  return std::nullopt;
+}
+
+// Rank of candidate in direction from current, or nothing when it does not lie that way.
+[[nodiscard]] constexpr auto direction_score(const PaneRectangle current,
+                                             const PaneRectangle candidate,
+                                             const PaneDirection direction) noexcept
+    -> std::optional<std::uint64_t> {
+  const auto current_right = static_cast<std::uint32_t>(current.column) + current.columns;
+  const auto current_bottom = static_cast<std::uint32_t>(current.row) + current.rows;
+  const auto current_x = (static_cast<std::uint32_t>(current.column) * 2U) + current.columns;
+  const auto current_y = (static_cast<std::uint32_t>(current.row) * 2U) + current.rows;
+  const auto right = static_cast<std::uint32_t>(candidate.column) + candidate.columns;
+  const auto bottom = static_cast<std::uint32_t>(candidate.row) + candidate.rows;
+  const auto x = (static_cast<std::uint32_t>(candidate.column) * 2U) + candidate.columns;
+  const auto y = (static_cast<std::uint32_t>(candidate.row) * 2U) + candidate.rows;
+  const auto vertical_offset = y > current_y ? y - current_y : current_y - y;
+  const auto horizontal_offset = x > current_x ? x - current_x : current_x - x;
+  std::uint32_t primary = 0;
+  std::uint32_t secondary = 0;
+  switch (direction) {
+  case PaneDirection::left:
+    if (right > current.column) {
+      return std::nullopt;
+    }
+    primary = current.column - right;
+    secondary = vertical_offset;
+    break;
+  case PaneDirection::right:
+    if (candidate.column < current_right) {
+      return std::nullopt;
+    }
+    primary = candidate.column - current_right;
+    secondary = vertical_offset;
+    break;
+  case PaneDirection::up:
+    if (bottom > current.row) {
+      return std::nullopt;
+    }
+    primary = current.row - bottom;
+    secondary = horizontal_offset;
+    break;
+  case PaneDirection::down:
+    if (candidate.row < current_bottom) {
+      return std::nullopt;
+    }
+    primary = candidate.row - current_bottom;
+    secondary = horizontal_offset;
+    break;
+  }
+  return (static_cast<std::uint64_t>(primary) * 4'096U) + secondary;
+}
+
+[[nodiscard]] auto float_in_direction(const Tab& tab, const PaneId source,
+                                      const PaneDirection direction) noexcept
+    -> std::optional<PaneId> {
+  const auto placement = tab.floats.placement(source);
+  if (!tab.float_presentable(source) || !placement.has_value()) {
+    return std::nullopt;
+  }
+  const auto viewport = tab_viewport(tab);
+  const auto current = placement->resolve(viewport);
+  if (!current.has_value()) {
+    return std::nullopt;
+  }
+  std::uint64_t best_score = std::numeric_limits<std::uint64_t>::max();
+  std::optional<PaneId> best;
+  for (const auto& entry : tab.floats.entries()) {
+    const auto candidate = entry.placement.resolve(viewport);
+    if (entry.pane == source || !candidate.has_value()) {
+      continue;
+    }
+    const auto score = direction_score(*current, *candidate, direction);
+    if (score.has_value() && *score < best_score) {
+      best_score = *score;
+      best = entry.pane;
+    }
+  }
+  return best;
 }
 
 [[nodiscard]] constexpr auto hash_mix(std::uint64_t hash, const std::uint64_t value) noexcept
@@ -568,63 +794,35 @@ auto session_lifecycle_command(const CommandKind kind) noexcept -> bool {
 }
 
 // Directional scoring is semantic and deterministic; Runtime geometry never participates.
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 auto pane_in_direction(const Session& session, const Tab& tab, const PaneId source,
                        const PaneDirection direction) noexcept -> std::optional<PaneId> {
+  std::uint64_t best_score = std::numeric_limits<std::uint64_t>::max();
+  std::optional<PaneId> best;
+  const auto consider = [&](const PaneRectangle current, const PaneRectangle candidate,
+                            const PaneId pane) noexcept {
+    const auto score = direction_score(current, candidate, direction);
+    if (score.has_value() && *score < best_score) {
+      best_score = *score;
+      best = pane;
+    }
+  };
   const auto viewport = tab_viewport(tab);
+  if (tab.is_float(source)) {
+    return float_in_direction(tab, source, direction);
+  }
   const auto projection = tab.layout.project(viewport);
   const auto current = projection.has_value() ? projection->rectangle(source) : std::nullopt;
   if (!projection.has_value() || !current.has_value()) {
     return std::nullopt;
   }
-  const auto current_right = static_cast<std::uint32_t>(current->column) + current->columns;
-  const auto current_bottom = static_cast<std::uint32_t>(current->row) + current->rows;
-  const auto current_x = (static_cast<std::uint32_t>(current->column) * 2U) + current->columns;
-  const auto current_y = (static_cast<std::uint32_t>(current->row) * 2U) + current->rows;
-  std::uint64_t best_score = std::numeric_limits<std::uint64_t>::max();
-  std::optional<PaneId> best;
   for (const auto& pane_slot : session.panes) {
     if (pane_slot.pane == nullptr || pane_slot.pane->tab != tab.id ||
         pane_slot.pane->id == source) {
       continue;
     }
     const auto rectangle = projection->rectangle(pane_slot.pane->id);
-    if (!rectangle.has_value()) {
-      continue;
-    }
-    const auto right = static_cast<std::uint32_t>(rectangle->column) + rectangle->columns;
-    const auto bottom = static_cast<std::uint32_t>(rectangle->row) + rectangle->rows;
-    const auto x = (static_cast<std::uint32_t>(rectangle->column) * 2U) + rectangle->columns;
-    const auto y = (static_cast<std::uint32_t>(rectangle->row) * 2U) + rectangle->rows;
-    bool eligible = false;
-    std::uint32_t primary = 0;
-    std::uint32_t secondary = 0;
-    switch (direction) {
-    case PaneDirection::left:
-      eligible = right <= current->column;
-      primary = eligible ? current->column - right : 0;
-      secondary = y > current_y ? y - current_y : current_y - y;
-      break;
-    case PaneDirection::right:
-      eligible = rectangle->column >= current_right;
-      primary = eligible ? rectangle->column - current_right : 0;
-      secondary = y > current_y ? y - current_y : current_y - y;
-      break;
-    case PaneDirection::up:
-      eligible = bottom <= current->row;
-      primary = eligible ? current->row - bottom : 0;
-      secondary = x > current_x ? x - current_x : current_x - x;
-      break;
-    case PaneDirection::down:
-      eligible = rectangle->row >= current_bottom;
-      primary = eligible ? rectangle->row - current_bottom : 0;
-      secondary = x > current_x ? x - current_x : current_x - x;
-      break;
-    }
-    const auto score = (static_cast<std::uint64_t>(primary) * 4'096U) + secondary;
-    if (eligible && score < best_score) {
-      best_score = score;
-      best = pane_slot.pane->id;
+    if (rectangle.has_value()) {
+      consider(*current, *rectangle, pane_slot.pane->id);
     }
   }
   return best;
@@ -724,6 +922,9 @@ auto SessionMachine::split_pane(const TabId tab_id, const PaneId source, const S
   if (tab == nullptr || find_pane(session_, *tab, source) == nullptr) {
     return {.result = {.status = CommandStatus::stale_target}, .handled = true};
   }
+  if (tab->is_float(source)) {
+    return unavailable_transition(TransitionReason::floating_pane);
+  }
   if (!options_.runtime.valid() || pane_count(session_) >= panes_per_session_max) {
     return {.result = {.status = CommandStatus::capacity}, .handled = true};
   }
@@ -785,14 +986,14 @@ auto SessionMachine::split_pane(const TabId tab_id, const PaneId source, const S
     }
     return finish(effect_failure_transition(resized));
   }
-  const auto previous_focus = tab->focused_pane;
+  const auto previous_focus = tab->focused_pane();
   pane_slot.generation = pane_generation;
   pane_slot.pane = std::move(pane);
   tab->layout = proposed;
   tab->zoomed = false;
   if (options.focus_created) {
     tab->previous_pane = previous_focus;
-    tab->focused_pane = pane_id;
+    tab->focus_tiled(pane_id);
   }
   commit_projection(session_, *projection);
   return finish({.result = {.status = CommandStatus::applied},
@@ -837,7 +1038,7 @@ auto SessionMachine::resize_attachment(const std::uint16_t columns, const std::u
     session_.attachment.columns = columns;
     session_.attachment.rows = rows;
     session_.attachment.content_viewport = viewport;
-    tab->layout_suspended = true;
+    suspend_tab(*tab);
     return finish(
         {.result = {.status = CommandStatus::applied},
          .change = {.frame_requested = true, .force_full_frame = true, .layout_changed = true},
@@ -845,12 +1046,14 @@ auto SessionMachine::resize_attachment(const std::uint16_t columns, const std::u
          .mutated = true});
   }
   const auto projection = make_projection(session_, *tab, tab->layout, tab->zoomed,
-                                          tab->focused_pane, viewport, nullptr);
+                                          tab->tiled_focus(), viewport, nullptr);
   if (!projection.has_value()) {
     session_.active = false;
     return finish(effect_failure_transition(RuntimeEffectStatus::consistency_lost));
   }
-  const auto resized = request_projection(session_, options_.runtime, *tab, *projection);
+  const auto floats = float_targets(*tab, viewport);
+  const auto resized =
+      request_projection(session_, options_.runtime, *tab, *projection, nullptr, floats);
   if (resized != RuntimeEffectStatus::applied) {
     if (resized == RuntimeEffectStatus::consistency_lost) {
       session_.active = false;
@@ -860,8 +1063,8 @@ auto SessionMachine::resize_attachment(const std::uint16_t columns, const std::u
   session_.attachment.columns = columns;
   session_.attachment.rows = rows;
   session_.attachment.content_viewport = viewport;
+  commit_projection(session_, *projection, nullptr, floats);
   commit_tab_viewport(*tab, viewport);
-  commit_projection(session_, *projection);
   return finish(
       {.result = {.status = CommandStatus::applied},
        .change = {.frame_requested = true, .force_full_frame = true, .layout_changed = true},
@@ -1008,12 +1211,19 @@ auto SessionMachine::dispatch(const Command& command) noexcept -> SessionTransit
     return finish(focus_transition(session_, options_.runtime, *tab, tab->previous_pane));
   }
   if (command.kind == CommandKind::focus_next) {
+    // Cycling stays within the focused layer.
+    if (tab->is_float(pane->id)) {
+      const auto next = next_float(*tab, pane->id);
+      return next.has_value() ? finish(focus_transition(session_, options_.runtime, *tab, *next))
+                              : SessionTransition{.result = {.status = CommandStatus::no_effect},
+                                                  .handled = true};
+    }
     auto panes = std::span(session_.panes);
     for (std::size_t offset = 1; offset <= panes.size(); ++offset) {
       const auto slot = (static_cast<std::size_t>(pane->id.slot()) + offset) % panes.size();
       const auto candidate_slot = panes.subspan(slot, 1);
       auto* const candidate = candidate_slot.front().pane.get();
-      if (candidate != nullptr && candidate->tab == tab->id) {
+      if (candidate != nullptr && candidate->tab == tab->id && !tab->is_float(candidate->id)) {
         return finish(focus_transition(session_, options_.runtime, *tab, candidate->id));
       }
     }
@@ -1034,14 +1244,25 @@ auto SessionMachine::dispatch(const Command& command) noexcept -> SessionTransit
                ? finish(focus_transition(session_, options_.runtime, *tab, *target))
                : SessionTransition{.result = {.status = CommandStatus::no_effect}, .handled = true};
   }
+  // Tiled layout operations do not apply to floats.
+  const bool layout_command =
+      command.kind == CommandKind::toggle_zoom || command.kind == CommandKind::set_zoom ||
+      command.kind == CommandKind::swap_panes ||
+      command.kind == CommandKind::resize_left_right_divider ||
+      command.kind == CommandKind::resize_top_bottom_divider ||
+      command.kind == CommandKind::resize_left || command.kind == CommandKind::resize_right ||
+      command.kind == CommandKind::resize_up || command.kind == CommandKind::resize_down;
+  if (layout_command && tab->is_float(pane->id)) {
+    return unavailable_transition(TransitionReason::floating_pane);
+  }
   if (command.kind == CommandKind::toggle_zoom || command.kind == CommandKind::set_zoom) {
     const auto* const requested = std::get_if<PaneZoomCommand>(&command.payload);
     const bool desired = requested == nullptr ? !tab->zoomed : requested->enabled;
     if (requested != nullptr && tab->zoomed == desired &&
-        (!desired || tab->focused_pane == pane->id)) {
+        (!desired || tab->focused_pane() == pane->id)) {
       return {.result = {.status = CommandStatus::no_effect}, .handled = true};
     }
-    const auto focused = desired ? pane->id : tab->focused_pane;
+    const auto focused = desired ? pane->id : tab->tiled_focus();
     const auto viewport = tab_viewport(*tab);
     LayoutProjection projection;
     const auto resized = resize_candidate(session_, options_.runtime, *tab, tab->layout, desired,
@@ -1052,9 +1273,9 @@ auto SessionMachine::dispatch(const Command& command) noexcept -> SessionTransit
       }
       return finish(effect_failure_transition(resized));
     }
-    if (desired && pane->id != tab->focused_pane) {
-      tab->previous_pane = tab->focused_pane;
-      tab->focused_pane = pane->id;
+    if (desired && pane->id != tab->focused_pane()) {
+      tab->previous_pane = tab->focused_pane();
+      tab->focus_tiled(pane->id);
     }
     tab->zoomed = desired;
     commit_projection(session_, projection);
@@ -1068,6 +1289,9 @@ auto SessionMachine::dispatch(const Command& command) noexcept -> SessionTransit
     const auto* const swap = std::get_if<PaneSwapCommand>(&command.payload);
     if (swap == nullptr || find_pane(session_, *tab, swap->other) == nullptr) {
       return {.result = {.status = CommandStatus::stale_target}, .handled = true};
+    }
+    if (tab->is_float(swap->other)) {
+      return unavailable_transition(TransitionReason::floating_pane);
     }
     if (tab->zoomed || tab->layout_suspended) {
       return {.result = {.status = CommandStatus::unavailable}, .handled = true};
@@ -1087,6 +1311,9 @@ auto SessionMachine::dispatch(const Command& command) noexcept -> SessionTransit
     auto* const peer = find_pane(session_, *tab, command.target.peer_pane);
     if (coordinate == nullptr || peer == nullptr) {
       return {.result = {.status = CommandStatus::stale_target}, .handled = true};
+    }
+    if (tab->is_float(peer->id)) {
+      return unavailable_transition(TransitionReason::floating_pane);
     }
     auto proposed = tab->layout;
     const auto viewport = tab_viewport(*tab);
@@ -1142,6 +1369,154 @@ auto SessionMachine::dispatch(const Command& command) noexcept -> SessionTransit
   return {.result = {.status = CommandStatus::invalid_command}, .handled = true};
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+auto SessionMachine::float_pane(const TabId tab_id, const FloatPaneOptions& options) noexcept
+    -> SessionTransition {
+  auto* const tab = find_tab(session_, tab_id);
+  if (tab == nullptr) {
+    return {.result = {.status = CommandStatus::stale_target}, .handled = true};
+  }
+  // Floats count against the Session Pane limit as well as the per-Tab layer capacity.
+  if (!options_.runtime.valid() || pane_count(session_) >= panes_per_session_max ||
+      tab->floats.size() >= floats_per_tab_max) {
+    return {.result = {.status = CommandStatus::capacity}, .handled = true};
+  }
+  const auto outer =
+      tab->layout_suspended ? std::nullopt : options.placement.resolve(tab_viewport(*tab));
+  if (!outer.has_value()) {
+    return unavailable_transition(TransitionReason::float_suspended);
+  }
+  const auto pane_index = empty_pane_slot(session_);
+  if (!pane_index.has_value()) {
+    return {.result = {.status = CommandStatus::capacity}, .handled = true};
+  }
+  auto& pane_slot = std::span(session_.panes).subspan(*pane_index, 1).front();
+  const auto pane_generation = next_generation(pane_slot.generation);
+  const auto pane_id = PaneId::from_parts(static_cast<std::uint32_t>(*pane_index), pane_generation);
+  const auto rectangle = float_inner_rectangle(*outer);
+  auto floats = tab->floats;
+  if (!floats.push(pane_id, options.placement)) {
+    return {.result = {.status = CommandStatus::capacity}, .handled = true};
+  }
+  const auto working_directory =
+      options.working_directory.empty() ? session_.cwd() : options.working_directory;
+  std::unique_ptr<Pane> pane;
+  try {
+    auto launch = std::make_unique<PaneLaunchIntent>();
+    launch->bytes.assign(options.command.begin(), options.command.end());
+    launch->working_directory = working_directory;
+    pane = std::make_unique<Pane>(Pane{.id = pane_id,
+                                       .tab = tab_id,
+                                       .rectangle = rectangle,
+                                       .launch_intent = std::move(launch),
+                                       .process_exit = std::nullopt,
+                                       .exit_policy = options.exit_policy});
+  } catch (...) {
+    return {.result = {.status = CommandStatus::unavailable}, .handled = true};
+  }
+  const SpawnPaneEffect spawn{
+      .session = session_.id,
+      .tab = tab_id,
+      .pane = pane_id,
+      .rectangle = rectangle,
+      .working_directory = pane->launch_working_directory(),
+      .command = pane->launch_command(),
+      .fallback_working_directory = options.fallback_working_directory,
+  };
+  const auto spawned = options_.runtime.spawn(options_.runtime.context, spawn);
+  if (spawned != RuntimeEffectStatus::applied) {
+    if (spawned == RuntimeEffectStatus::consistency_lost) {
+      session_.active = false;
+    }
+    return finish(effect_failure_transition(spawned));
+  }
+  // The pushed float becomes the top, so a focused layer would silently move focus to it.
+  const auto previous = tab->focused_pane();
+  const bool had_float_focus = tab->float_focused();
+  pane_slot.generation = pane_generation;
+  pane_slot.pane = std::move(pane);
+  tab->floats = floats;
+  // Opening a float shows the layer it joins.
+  tab->set_floats_visible(true);
+  if (options.focus_created) {
+    const bool focused = tab->focus_float(pane_id);
+    LEMMA_ASSERT(focused);
+    tab->previous_pane = previous;
+  } else if (had_float_focus) {
+    const bool refocused = tab->focus_float(previous);
+    LEMMA_ASSERT(refocused);
+  }
+  return finish({.result = {.status = CommandStatus::applied},
+                 .change = {.invalidate_terminal = options.focus_created ? pane_id : PaneId{},
+                            .frame_requested = true,
+                            .force_full_frame = true,
+                            .status_changed = true},
+                 .created_tab = tab_id,
+                 .created_pane = pane_id,
+                 .handled = true,
+                 .mutated = true});
+}
+
+auto SessionMachine::place_float(const TabId tab_id, const PaneId pane_id,
+                                 const FloatPlacement placement) noexcept -> SessionTransition {
+  auto* const tab = find_tab(session_, tab_id);
+  auto* const pane = tab == nullptr ? nullptr : find_pane(session_, *tab, pane_id);
+  if (pane == nullptr) {
+    return {.result = {.status = CommandStatus::stale_target}, .handled = true};
+  }
+  const auto current = tab->floats.placement(pane_id);
+  if (!current.has_value()) {
+    return unavailable_transition(TransitionReason::tiled_pane);
+  }
+  if (*current == placement) {
+    return {.result = {.status = CommandStatus::no_effect}, .handled = true};
+  }
+  const auto outer = tab->layout_suspended ? std::nullopt : placement.resolve(tab_viewport(*tab));
+  if (!outer.has_value()) {
+    return unavailable_transition(TransitionReason::float_suspended);
+  }
+  if (!options_.runtime.valid()) {
+    return effect_failure_transition(RuntimeEffectStatus::rejected);
+  }
+  const auto target = float_inner_rectangle(*outer);
+  const std::array effects{ResizePaneEffect{
+      .session = session_.id, .pane = pane_id, .previous = pane->rectangle, .target = target}};
+  const auto resized = options_.runtime.resize(options_.runtime.context, effects);
+  if (resized != RuntimeEffectStatus::applied) {
+    if (resized == RuntimeEffectStatus::consistency_lost) {
+      session_.active = false;
+    }
+    return finish(effect_failure_transition(resized));
+  }
+  const bool placed = tab->floats.place(pane_id, placement);
+  LEMMA_ASSERT(placed);
+  pane->rectangle = target;
+  return finish({.result = {.status = CommandStatus::applied},
+                 .change = {.frame_requested = true, .force_full_frame = true},
+                 .handled = true,
+                 .mutated = true});
+}
+
+auto SessionMachine::set_floats_visible(const TabId tab_id, const bool visible) noexcept
+    -> SessionTransition {
+  auto* const tab = find_tab(session_, tab_id);
+  if (tab == nullptr) {
+    return {.result = {.status = CommandStatus::stale_target}, .handled = true};
+  }
+  if (tab->floats_visible() == visible) {
+    return {.result = {.status = CommandStatus::no_effect}, .handled = true};
+  }
+  const bool had_focus = tab->float_focused();
+  tab->set_floats_visible(visible);
+  return finish({.result = {.status = CommandStatus::applied},
+                 .change = {.invalidate_terminal = had_focus ? tab->focused_pane() : PaneId{},
+                            .frame_requested = true,
+                            .force_full_frame = true,
+                            .status_changed = had_focus},
+                 .handled = true,
+                 .mutated = true});
+}
+
 auto SessionMachine::runtime_failed(const PaneId pane_id, const ProcessExit process,
                                     const bool child_exit) noexcept -> SessionTransition {
   auto* const pane = find_pane(session_, pane_id);
@@ -1165,6 +1540,22 @@ auto SessionMachine::finish(SessionTransition transition) noexcept -> SessionTra
     record_mutation(session_);
   }
   return transition;
+}
+
+auto transition_reason_name(const TransitionReason reason) noexcept -> std::string_view {
+  switch (reason) {
+  case TransitionReason::none:
+    return {};
+  case TransitionReason::floating_pane:
+    return "floating_pane";
+  case TransitionReason::tiled_pane:
+    return "tiled_pane";
+  case TransitionReason::float_suspended:
+    return "float_suspended";
+  case TransitionReason::floats_hidden:
+    return "floats_hidden";
+  }
+  return {};
 }
 
 auto session_invariant_name(const SessionInvariantError error) noexcept -> std::string_view {
@@ -1201,6 +1592,12 @@ auto session_invariant_name(const SessionInvariantError error) noexcept -> std::
     return "previous Pane does not belong to its Tab";
   case SessionInvariantError::process_exit_policy:
     return "process exit exists outside hold policy";
+  case SessionInvariantError::float_membership:
+    return "Tab float layer and Pane membership differ";
+  case SessionInvariantError::float_focus:
+    return "float focus is held by a hidden, suspended, or missing float";
+  case SessionInvariantError::float_rectangle:
+    return "presented float Pane rectangle differs from its resolved placement";
   case SessionInvariantError::attachment_identity:
     return "Attachment identity does not match its Session";
   case SessionInvariantError::attachment_viewport:
@@ -1279,8 +1676,12 @@ auto check_session_invariants(const Session& session) noexcept
     if (tab == nullptr) {
       return SessionInvariantError::pane_tab;
     }
-    if (!tab->layout.contains(pane.id)) {
-      return SessionInvariantError::pane_layout_membership;
+    // Every Tab Pane is in exactly one layer.
+    const auto placement = tab->floats.placement(pane.id);
+    const bool floating = placement.has_value();
+    if (floating == tab->layout.contains(pane.id)) {
+      return floating ? SessionInvariantError::float_membership
+                      : SessionInvariantError::pane_layout_membership;
     }
     ++std::span(tab_panes).subspan(tab->id.slot(), 1).front();
     const auto pane_right =
@@ -1291,8 +1692,14 @@ auto check_session_invariants(const Session& session) noexcept
     if (pane.rectangle.columns == 0 || pane.rectangle.rows == 0) {
       return SessionInvariantError::pane_rectangle_empty;
     }
+    if (placement.has_value() && !tab->layout_suspended) {
+      const auto outer = placement->resolve(tab_viewport(*tab));
+      if (outer.has_value() && pane.rectangle != float_inner_rectangle(*outer)) {
+        return SessionInvariantError::float_rectangle;
+      }
+    }
     const bool pane_presented =
-        !tab->layout_suspended && (!tab->zoomed || pane.id == tab->focused_pane);
+        !tab->layout_suspended && !floating && (!tab->zoomed || pane.id == tab->tiled_focus());
     if (pane_presented &&
         (pane.rectangle.column < tab->layout_column || pane.rectangle.row < tab->layout_row ||
          pane_right > layout_right || pane_bottom > layout_bottom)) {
@@ -1310,11 +1717,23 @@ auto check_session_invariants(const Session& session) noexcept
       continue;
     }
     const auto& tab = *slot.tab;
-    if (tab.layout.pane_count() != std::span(tab_panes).subspan(tab.id.slot(), 1).front()) {
+    if (tab.layout.pane_count() + tab.floats.size() !=
+        std::span(tab_panes).subspan(tab.id.slot(), 1).front()) {
       return SessionInvariantError::pane_count;
     }
-    if (find_pane(session, tab, tab.focused_pane) == nullptr) {
+    for (const auto& entry : tab.floats.entries()) {
+      if (find_pane(session, tab, entry.pane) == nullptr) {
+        return SessionInvariantError::float_membership;
+      }
+    }
+    if (!tab.layout.contains(tab.tiled_focus()) ||
+        find_pane(session, tab, tab.tiled_focus()) == nullptr) {
       return SessionInvariantError::focused_pane;
+    }
+    const auto top = tab.floats.top();
+    if (tab.float_focused() &&
+        (!top.has_value() || !tab.floats_visible() || !tab.float_presentable(*top))) {
+      return SessionInvariantError::float_focus;
     }
     if (find_pane(session, tab, tab.previous_pane) == nullptr) {
       return SessionInvariantError::previous_pane;
@@ -1374,7 +1793,7 @@ auto session_state_hash(const Session& session) noexcept -> std::uint64_t {
     }
     const auto& tab = *tab_slot.tab;
     hash = hash_mix(hash, id_code(tab.id));
-    hash = hash_mix(hash, id_code(tab.focused_pane));
+    hash = hash_mix(hash, id_code(tab.focused_pane()));
     hash = hash_mix(hash, id_code(tab.previous_pane));
     hash = hash_mix(hash, tab.layout_column);
     hash = hash_mix(hash, tab.layout_row);
@@ -1382,6 +1801,20 @@ auto session_state_hash(const Session& session) noexcept -> std::uint64_t {
     hash = hash_mix(hash, tab.layout_rows);
     hash = hash_mix(hash, static_cast<std::uint64_t>(tab.zoomed));
     hash = hash_mix(hash, static_cast<std::uint64_t>(tab.layout_suspended));
+    // Float state contributes only when present, so float-free histories keep their hashes.
+    if (!tab.floats.empty() || !tab.floats_visible()) {
+      hash = hash_mix(hash, id_code(tab.tiled_focus()));
+      hash = hash_mix(hash, (static_cast<std::uint64_t>(tab.float_focused()) << 1U) |
+                                static_cast<std::uint64_t>(tab.floats_visible()));
+      for (const auto& entry : tab.floats.entries()) {
+        hash = hash_mix(hash, id_code(entry.pane));
+        hash = hash_mix(hash, static_cast<std::uint64_t>(entry.placement.kind()));
+        hash = hash_mix(hash, entry.placement.column());
+        hash = hash_mix(hash, entry.placement.row());
+        hash = hash_mix(hash, entry.placement.columns());
+        hash = hash_mix(hash, entry.placement.rows());
+      }
+    }
     const auto snapshot = tab.layout.snapshot();
     if (snapshot.has_value()) {
       for (const auto& node : std::span(snapshot->nodes).first(snapshot->size)) {

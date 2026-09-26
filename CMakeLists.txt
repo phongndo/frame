@@ -188,6 +188,7 @@ add_library(
   lemma_core STATIC
   src/core/command.cpp
   src/core/copy_mode.cpp
+  src/core/float_layer.cpp
   src/core/layout.cpp
   src/core/session.cpp
   src/core/session_machine.cpp
@@ -215,6 +216,8 @@ target_include_directories(lemma_input PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/gene
 lemma_internal_target(lemma_input)
 target_link_libraries(lemma_input PRIVATE lemma_base)
 
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/schema/lemma-api-v1.schema.json")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/schema/lemma-api-v1.schema.json" LEMMA_API_SCHEMA)
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/src/api/schema.cpp.in"

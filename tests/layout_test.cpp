@@ -1,11 +1,23 @@
+#include "core/float_layer.hpp"
 #include "core/layout.hpp"
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <optional>
+#include <stdexcept>
+#include <type_traits>
 
 namespace lemma::core {
 namespace {
+
+[[nodiscard]] auto checked_placement(const std::optional<FloatPlacement> placement)
+    -> FloatPlacement {
+  if (!placement.has_value()) {
+    throw std::logic_error("test requires a valid float placement");
+  }
+  return *placement;
+}
 
 [[nodiscard]] constexpr auto pane(const std::uint32_t slot,
                                   const std::uint32_t generation = 1) noexcept -> PaneId {
@@ -304,8 +316,122 @@ TEST(PaneLayoutTest, SupportsMaximumBoundedDepthAndPaneCount) {
   EXPECT_EQ(projection.value_or(LayoutProjection{}).pane_count, pane_layout_panes_max);
 }
 
+TEST(FloatPlacementTest, FactoriesAcceptOnlyPresentablePlacements) {
+  EXPECT_TRUE(FloatPlacement::absolute(0, 0, 3, 3).has_value());
+  EXPECT_TRUE(FloatPlacement::absolute(997, 997, 3, 3).has_value());
+  // Below the one-cell frame around one terminal cell, or unable to fit the largest viewport.
+  EXPECT_FALSE(FloatPlacement::absolute(0, 0, 2, 3).has_value());
+  EXPECT_FALSE(FloatPlacement::absolute(0, 0, 3, 2).has_value());
+  EXPECT_FALSE(FloatPlacement::absolute(998, 0, 3, 3).has_value());
+  EXPECT_FALSE(FloatPlacement::absolute(0, 998, 3, 3).has_value());
+  EXPECT_FALSE(FloatPlacement::absolute(65'535, 0, 65'535, 3).has_value());
+
+  EXPECT_TRUE(FloatPlacement::centered(3, 3).has_value());
+  EXPECT_TRUE(FloatPlacement::centered(1'000, 1'000).has_value());
+  EXPECT_FALSE(FloatPlacement::centered(2, 10).has_value());
+  EXPECT_FALSE(FloatPlacement::centered(1'001, 10).has_value());
+
+  EXPECT_TRUE(FloatPlacement::relative(1, 100).has_value());
+  EXPECT_FALSE(FloatPlacement::relative(0, 50).has_value());
+  EXPECT_FALSE(FloatPlacement::relative(50, 101).has_value());
+
+  const auto placement = FloatPlacement::absolute(4, 5, 6, 7);
+  ASSERT_TRUE(placement.has_value());
+  EXPECT_EQ(checked_placement(placement).kind(), FloatPlacementKind::absolute);
+  EXPECT_EQ(checked_placement(placement).column(), 4U);
+  EXPECT_EQ(checked_placement(placement).row(), 5U);
+  EXPECT_EQ(checked_placement(placement).columns(), 6U);
+  EXPECT_EQ(checked_placement(placement).rows(), 7U);
+}
+
 // GoogleTest assertions inflate the measured branch count.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(FloatPlacementTest, ResolvesInsideTheViewportOrSuspendsWithoutClipping) {
+  // A docked Tab viewport does not start at the origin.
+  constexpr PaneRectangle viewport{.column = 2, .row = 1, .columns = 80, .rows = 23};
+  const auto absolute = FloatPlacement::absolute(10, 3, 30, 10);
+  ASSERT_TRUE(absolute.has_value());
+  EXPECT_EQ(checked_placement(absolute).resolve(viewport),
+            (PaneRectangle{.column = 12, .row = 4, .columns = 30, .rows = 10}));
+  // Exactly filling the viewport fits; one more cell suspends rather than clips or moves.
+  EXPECT_TRUE(
+      checked_placement(FloatPlacement::absolute(50, 13, 30, 10)).resolve(viewport).has_value());
+  EXPECT_FALSE(
+      checked_placement(FloatPlacement::absolute(51, 13, 30, 10)).resolve(viewport).has_value());
+  EXPECT_FALSE(
+      checked_placement(FloatPlacement::absolute(50, 14, 30, 10)).resolve(viewport).has_value());
+
+  // Centering rounds the odd cell toward the origin.
+  EXPECT_EQ(checked_placement(FloatPlacement::centered(31, 10)).resolve(viewport),
+            (PaneRectangle{.column = 26, .row = 7, .columns = 31, .rows = 10}));
+  EXPECT_EQ(checked_placement(FloatPlacement::centered(80, 23)).resolve(viewport), viewport);
+  EXPECT_FALSE(checked_placement(FloatPlacement::centered(81, 23)).resolve(viewport).has_value());
+
+  // Relative extents round to the nearest cell, never below the minimum or above the viewport.
+  EXPECT_EQ(checked_placement(FloatPlacement::relative(50, 50)).resolve(viewport),
+            (PaneRectangle{.column = 22, .row = 6, .columns = 40, .rows = 12}));
+  EXPECT_EQ(checked_placement(FloatPlacement::relative(1, 1)).resolve(viewport),
+            (PaneRectangle{.column = 40, .row = 11, .columns = 3, .rows = 3}));
+  EXPECT_EQ(checked_placement(FloatPlacement::relative(100, 100)).resolve(viewport), viewport);
+  EXPECT_FALSE(checked_placement(FloatPlacement::relative(100, 100))
+                   .resolve({.columns = 2, .rows = 23})
+                   .has_value());
+  EXPECT_EQ(
+      checked_placement(FloatPlacement::relative(100, 100)).resolve({.columns = 3, .rows = 3}),
+      (PaneRectangle{.columns = 3, .rows = 3}));
+
+  // The Pane inside the native frame keeps at least one cell.
+  EXPECT_EQ(float_inner_rectangle({.column = 12, .row = 4, .columns = 30, .rows = 10}),
+            (PaneRectangle{.column = 13, .row = 5, .columns = 28, .rows = 8}));
+  EXPECT_EQ(float_inner_rectangle({.column = 0, .row = 0, .columns = 3, .rows = 3}),
+            (PaneRectangle{.column = 1, .row = 1, .columns = 1, .rows = 1}));
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(FloatLayerTest, OrdersBackToFrontWithinFixedCapacity) {
+  static_assert(std::is_trivially_copyable_v<FloatLayer>);
+  const auto small = checked_placement(FloatPlacement::centered(10, 5));
+  const auto large = checked_placement(FloatPlacement::relative(80, 80));
+  FloatLayer layer;
+  EXPECT_TRUE(layer.empty());
+  EXPECT_FALSE(layer.top().has_value());
+  EXPECT_FALSE(layer.push(PaneId{}, small));
+  for (std::uint32_t slot = 0; slot < floats_per_tab_max; ++slot) {
+    ASSERT_TRUE(layer.push(pane(slot), small)) << slot;
+  }
+  EXPECT_FALSE(layer.push(pane(40), small));
+  EXPECT_FALSE(layer.push(pane(0), small));
+  EXPECT_EQ(layer.size(), floats_per_tab_max);
+  EXPECT_EQ(layer.top(), pane(floats_per_tab_max - 1U));
+
+  // Raising preserves the relative order of the others.
+  ASSERT_TRUE(layer.raise(pane(2)));
+  EXPECT_EQ(layer.top(), pane(2));
+  EXPECT_EQ(layer.z(pane(3)), 2U);
+  EXPECT_EQ(layer.z(pane(2)), floats_per_tab_max - 1U);
+  EXPECT_FALSE(layer.raise(pane(40)));
+
+  ASSERT_TRUE(layer.place(pane(3), large));
+  EXPECT_EQ(layer.placement(pane(3)), large);
+  EXPECT_FALSE(layer.place(pane(40), large));
+
+  // Erasing compacts the order and clears vacated storage, so equality compares live state only.
+  const auto staged = layer;
+  ASSERT_TRUE(layer.erase(pane(2)));
+  EXPECT_FALSE(layer.contains(pane(2)));
+  EXPECT_FALSE(layer.erase(pane(2)));
+  EXPECT_EQ(layer.top(), pane(floats_per_tab_max - 1U));
+  EXPECT_EQ(layer.size(), floats_per_tab_max - 1U);
+  EXPECT_NE(layer, staged);
+  ASSERT_TRUE(layer.push(pane(2), small));
+  ASSERT_TRUE(layer.place(pane(3), large));
+  EXPECT_EQ(layer, staged);
+  for (std::uint32_t slot = 0; slot < floats_per_tab_max; ++slot) {
+    ASSERT_TRUE(layer.erase(pane(slot)));
+  }
+  EXPECT_EQ(layer, FloatLayer{});
+}
 
 } // namespace
 } // namespace lemma::core

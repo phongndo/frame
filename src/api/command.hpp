@@ -2,11 +2,13 @@
 #define LEMMA_API_COMMAND_HPP
 
 #include "api/json.hpp"
+#include "core/float_layer.hpp"
 #include "lemma/id.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,9 +35,12 @@ enum class CommandKind : std::uint8_t {
   tab_move,
   tab_rename,
   tab_kill,
+  tab_floats,
   pane_list,
   pane_inspect,
   pane_split,
+  pane_float,
+  pane_place,
   pane_focus,
   pane_swap,
   pane_resize,
@@ -231,6 +236,8 @@ struct Command final {
   PaneSelector other;
   SurfaceSelector surface;
   SurfacePlacement surface_placement;
+  // Validated by the Core factories at decode time.
+  std::optional<core::FloatPlacement> float_placement;
   std::optional<bool> configured_focusable;
   std::string name;
   std::string working_directory;
@@ -256,10 +263,19 @@ struct Command final {
   std::optional<std::uint64_t> expected_session_revision;
   bool hold{false};
   bool enabled{false};
+  bool visible{false};
   bool environment_set{false};
   bool focusable{true};
   bool opaque{true};
 };
+
+inline constexpr std::size_t float_placement_json_bytes_max = 96;
+
+// The closed public JSON object for a float placement, as accepted by pane.float and pane.place.
+[[nodiscard]] auto
+format_float_placement(core::FloatPlacement placement,
+                       std::span<char, float_placement_json_bytes_max> output) noexcept
+    -> std::string_view;
 
 [[nodiscard]] auto parse_input_key_name(std::string_view value) noexcept -> std::optional<InputKey>;
 [[nodiscard]] auto input_key_name(InputKey key) noexcept -> std::string_view;

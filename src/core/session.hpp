@@ -2,6 +2,7 @@
 #define LEMMA_CORE_SESSION_HPP
 
 #include "core/command_history.hpp"
+#include "core/float_layer.hpp"
 #include "core/layout.hpp"
 #include "lemma/geometry.hpp"
 #include "lemma/id.hpp"
@@ -116,6 +117,18 @@ private:
   std::size_t size_{0};
 };
 
+// Tab keeps focus internals behind its layer-aware operations while SessionMachine owns the
+// surrounding mutable layout state.
+class TabFocus final {
+  friend struct Tab;
+
+  explicit constexpr TabFocus(const PaneId first_pane) noexcept : tiled_pane_(first_pane) {}
+
+  PaneId tiled_pane_;
+  bool floating_{false};
+  bool floats_visible_{true};
+};
+
 struct Tab final {
   Tab(TabId assigned_id, PaneId first_pane) noexcept;
 
@@ -128,18 +141,52 @@ struct Tab final {
   [[nodiscard]] auto title_override() const noexcept -> std::string_view;
   [[nodiscard]] auto set_title_override(std::string_view title) noexcept -> bool;
 
+  // Focus has one owner per layer: the tiled focus is always a layout Pane, and the float layer
+  // is either unfocused or focused on its top float. The effective focused Pane is derived.
+  [[nodiscard]] auto focused_pane() const noexcept -> PaneId {
+    const auto top = focus.floating_ ? floats.top() : std::nullopt;
+    return top.value_or(focus.tiled_pane_);
+  }
+  [[nodiscard]] constexpr auto tiled_focus() const noexcept -> PaneId { return focus.tiled_pane_; }
+  [[nodiscard]] constexpr auto float_focused() const noexcept -> bool { return focus.floating_; }
+  [[nodiscard]] constexpr auto floats_visible() const noexcept -> bool {
+    return focus.floats_visible_;
+  }
+  [[nodiscard]] auto is_float(const PaneId pane) const noexcept -> bool {
+    return !floats.empty() && floats.contains(pane);
+  }
+  // A float can hold focus only while its layer is visible and its placement fits a usable Tab.
+  [[nodiscard]] auto float_presentable(PaneId pane) const noexcept -> bool;
+  // Moves the tiled focus without changing which layer holds keyboard focus.
+  void set_tiled_focus(PaneId pane) noexcept;
+  // Focuses a layout Pane; the float layer stays visible but loses focus.
+  void focus_tiled(PaneId pane) noexcept;
+  // Raises and focuses a presentable float.
+  [[nodiscard]] auto focus_float(PaneId pane) noexcept -> bool;
+  // Returns keyboard focus to the tiled layer.
+  constexpr void blur_floats() noexcept { focus.floating_ = false; }
+  // Hidden floats cannot hold focus.
+  constexpr void set_floats_visible(const bool visible) noexcept {
+    focus.floats_visible_ = visible;
+    focus.floating_ = focus.floating_ && visible;
+  }
+
   TabId id;
   PaneLayout layout;
+  // Floating Panes above the tiled layout, back to front. Mutating it directly is reserved for
+  // SessionMachine transitions, which re-establish float focus afterwards.
+  FloatLayer floats;
   // Inactive tabs retain their last usable geometry while continuing to process PTY output.
   std::uint16_t layout_column{0};
   std::uint16_t layout_row{0};
   std::uint16_t layout_columns{80};
   std::uint16_t layout_rows{24};
-  PaneId focused_pane;
   PaneId previous_pane;
   TabTitleOverride title;
   bool zoomed{false};
   bool layout_suspended{false};
+
+  TabFocus focus;
 };
 
 struct TabSlot final {

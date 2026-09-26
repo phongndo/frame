@@ -109,8 +109,39 @@ auto TabOrder::place_before(const TabId moving, const std::optional<TabId> ancho
 }
 
 Tab::Tab(const TabId assigned_id, const PaneId first_pane) noexcept
-    : id(assigned_id), layout(first_pane), focused_pane(first_pane), previous_pane(first_pane) {
+    : id(assigned_id), layout(first_pane), previous_pane(first_pane), focus(first_pane) {
   LEMMA_ASSERT(id.is_valid() && first_pane.is_valid());
+}
+
+auto Tab::float_presentable(const PaneId pane) const noexcept -> bool {
+  if (layout_suspended || !floats_visible()) {
+    return false;
+  }
+  const auto placement = floats.placement(pane);
+  return placement.has_value() && placement
+                                      ->resolve({.column = layout_column,
+                                                 .row = layout_row,
+                                                 .columns = layout_columns,
+                                                 .rows = layout_rows})
+                                      .has_value();
+}
+
+void Tab::set_tiled_focus(const PaneId pane) noexcept {
+  LEMMA_ASSERT(layout.contains(pane));
+  focus.tiled_pane_ = pane;
+}
+
+void Tab::focus_tiled(const PaneId pane) noexcept {
+  set_tiled_focus(pane);
+  focus.floating_ = false;
+}
+
+auto Tab::focus_float(const PaneId pane) noexcept -> bool {
+  if (!float_presentable(pane) || !floats.raise(pane)) {
+    return false;
+  }
+  focus.floating_ = true;
+  return true;
 }
 
 auto TabTitleOverride::view() const noexcept -> std::string_view { return {bytes_.data(), size_}; }

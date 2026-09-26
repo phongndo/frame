@@ -313,7 +313,7 @@ inline constexpr std::size_t mux_operation_kind_count =
     static_cast<std::size_t>(MuxOperationKind::idle) + 1U;
 inline constexpr std::size_t mux_outcome_class_count = 4;
 inline constexpr std::size_t mux_fault_class_count = 4;
-inline constexpr std::size_t mux_state_class_count = 13;
+inline constexpr std::size_t mux_state_class_count = 16;
 inline constexpr std::array<std::string_view, mux_outcome_class_count> mux_outcome_names{
     "applied", "no_effect", "stale", "rejected"};
 inline constexpr std::array<std::string_view, mux_fault_class_count> mux_fault_names{
@@ -322,7 +322,7 @@ inline constexpr std::array<std::string_view, mux_state_class_count> mux_state_n
     "single_pane",        "multiple_panes",    "pane_capacity", "single_tab",
     "multiple_tabs",      "tab_capacity",      "zoomed",        "layout_suspended",
     "stale_id_retained",  "generation_reused", "held_child",    "minimum_attachment",
-    "maximum_attachment",
+    "maximum_attachment", "floating",          "float_focused", "float_suspended",
 };
 
 inline constexpr std::size_t outcome_applied_index = 0;
@@ -351,6 +351,9 @@ inline constexpr std::uint16_t state_generation_reused = 1U << 9U;
 inline constexpr std::uint16_t state_held_child = 1U << 10U;
 inline constexpr std::uint16_t state_minimum_attachment = 1U << 11U;
 inline constexpr std::uint16_t state_maximum_attachment = 1U << state_maximum_attachment_index;
+inline constexpr std::uint16_t state_floating = 1U << 13U;
+inline constexpr std::uint16_t state_float_focused = 1U << 14U;
+inline constexpr std::uint16_t state_float_suspended = 1U << 15U;
 
 using MuxStateSignatureCounts = std::array<
     std::array<std::array<std::array<std::size_t, mux_state_class_count>, mux_fault_class_count>,
@@ -413,6 +416,36 @@ struct WorldCoverage final {
     }
   }
 };
+
+// Boundary placements: minimum, fitting, filling, never fitting, and viewport-relative. Small or
+// docked geometry suspends the larger ones.
+[[nodiscard]] auto sim_float_placement(const std::uint16_t index) noexcept -> core::FloatPlacement {
+  std::optional<core::FloatPlacement> placement;
+  switch (index) {
+  case 0:
+    placement = core::FloatPlacement::absolute(0, 0, 3, 3);
+    break;
+  case 1:
+    placement = core::FloatPlacement::absolute(10, 4, 60, 20);
+    break;
+  case 2:
+    placement = core::FloatPlacement::centered(40, 12);
+    break;
+  case 3:
+    placement = core::FloatPlacement::centered(1'000, 1'000);
+    break;
+  case 4:
+    placement = core::FloatPlacement::relative(50, 50);
+    break;
+  default:
+    placement = core::FloatPlacement::relative(100, 1);
+    break;
+  }
+  if (!placement.has_value()) {
+    std::abort();
+  }
+  return *placement;
+}
 
 class MuxWorld final {
 public:
@@ -599,7 +632,8 @@ public:
         operation.tab = tab->id;
         operation.pane =
             stale_count_ == 0
-                ? PaneId::from_parts(tab->focused_pane.slot(), tab->focused_pane.generation() + 1U)
+                ? PaneId::from_parts(tab->focused_pane().slot(),
+                                     tab->focused_pane().generation() + 1U)
                 : std::span(stale_panes_).subspan(operations.index(stale_count_), 1).front();
       }
       break;
@@ -629,6 +663,32 @@ public:
         select_tab_and_pane(operations, operation);
       }
       break;
+    case 17: {
+      operation.kind = MuxOperationKind::float_create;
+      auto* const tab = random_tab(operations);
+      if (tab != nullptr) {
+        operation.tab = tab->id;
+      }
+      operation.argument_0 =
+          static_cast<std::uint16_t>((operations.boolean() ? mux_float_focus : 0U) |
+                                     (operations.index(4) == 0 ? mux_float_hold : 0U));
+      operation.argument_1 = static_cast<std::uint16_t>(operations.index(mux_float_placements));
+      break;
+    }
+    case 18:
+      operation.kind = MuxOperationKind::float_place;
+      select_tab_and_pane(operations, operation);
+      operation.argument_1 = static_cast<std::uint16_t>(operations.index(mux_float_placements));
+      break;
+    case 19: {
+      operation.kind = MuxOperationKind::float_visibility;
+      auto* const tab = random_tab(operations);
+      if (tab != nullptr) {
+        operation.tab = tab->id;
+        operation.argument_0 = static_cast<std::uint16_t>(operations.index(3) != 0);
+      }
+      break;
+    }
     case 16: {
       operation.kind = MuxOperationKind::attachment_resize;
       constexpr std::array<std::uint16_t, 6> column_boundaries{
@@ -821,6 +881,34 @@ public:
     case MuxOperationKind::attachment_resize:
       transition = machine.resize_attachment(operation.argument_0, operation.argument_1);
       break;
+    case MuxOperationKind::float_create: {
+      auto* const tab = find_tab(operation.tab);
+      if (tab != nullptr) {
+        transition = machine.float_pane(
+            tab->id,
+            {.placement = sim_float_placement(operation.argument_1),
+             .exit_policy = (operation.argument_0 & mux_float_hold) != 0 ? PaneExitPolicy::hold
+                                                                         : PaneExitPolicy::close,
+             .focus_created = (operation.argument_0 & mux_float_focus) != 0});
+      }
+      break;
+    }
+    case MuxOperationKind::float_place: {
+      auto* const tab = find_tab(operation.tab);
+      auto* const pane = find_pane(operation.pane, operation.tab);
+      if (tab != nullptr && pane != nullptr) {
+        transition =
+            machine.place_float(tab->id, pane->id, sim_float_placement(operation.argument_1));
+      }
+      break;
+    }
+    case MuxOperationKind::float_visibility: {
+      auto* const tab = find_tab(operation.tab);
+      if (tab != nullptr) {
+        transition = machine.set_floats_visible(tab->id, operation.argument_0 != 0);
+      }
+      break;
+    }
     case MuxOperationKind::idle:
       break;
     }
@@ -847,9 +935,9 @@ public:
         diagnostic << "; tab=" << tab.id.slot() << ':' << tab.id.generation()
                    << " layout=" << tab.layout_column << ',' << tab.layout_row << '+'
                    << tab.layout_columns << 'x' << tab.layout_rows
-                   << " focus=" << tab.focused_pane.slot() << ':' << tab.focused_pane.generation()
-                   << " previous=" << tab.previous_pane.slot() << ':'
-                   << tab.previous_pane.generation() << " zoom=" << tab.zoomed
+                   << " focus=" << tab.focused_pane().slot() << ':'
+                   << tab.focused_pane().generation() << " previous=" << tab.previous_pane.slot()
+                   << ':' << tab.previous_pane.generation() << " zoom=" << tab.zoomed
                    << " suspended=" << tab.layout_suspended;
       }
       for (const auto& pane_slot : session_.panes) {
@@ -1002,7 +1090,8 @@ private:
 
   [[nodiscard]] auto first_pane(const core::Tab& tab) noexcept -> core::Pane* {
     for (auto& pane_slot : session_.panes) {
-      if (pane_slot.pane != nullptr && pane_slot.pane->tab == tab.id) {
+      if (pane_slot.pane != nullptr && pane_slot.pane->tab == tab.id &&
+          !tab.is_float(pane_slot.pane->id)) {
         return pane_slot.pane.get();
       }
     }
@@ -1099,8 +1188,18 @@ private:
                   : 0U;
     for (const auto& tab_slot : session_.tabs) {
       if (tab_slot.tab != nullptr) {
-        states |= tab_slot.tab->zoomed ? state_zoomed : 0U;
-        states |= tab_slot.tab->layout_suspended ? state_layout_suspended : 0U;
+        const auto& tab = *tab_slot.tab;
+        states |= tab.zoomed ? state_zoomed : 0U;
+        states |= tab.layout_suspended ? state_layout_suspended : 0U;
+        states |= tab.floats.empty() ? 0U : state_floating;
+        states |= tab.float_focused() ? state_float_focused : 0U;
+        const PaneRectangle viewport{.column = tab.layout_column,
+                                     .row = tab.layout_row,
+                                     .columns = tab.layout_columns,
+                                     .rows = tab.layout_rows};
+        for (const auto& entry : tab.floats.entries()) {
+          states |= entry.placement.resolve(viewport).has_value() ? 0U : state_float_suspended;
+        }
       }
     }
     for (const auto& pane_slot : session_.panes) {
@@ -2046,7 +2145,7 @@ TEST(MuxSimulationTest, DirectionalFocusFollowsTheSharedTiledNeighborRule) {
         const auto [direction, kind] = directions.at(direction_index);
         SCOPED_TRACE(testing::Message() << "zoomed=" << zoomed << " source=" << source.slot()
                                         << " direction=" << static_cast<int>(direction));
-        if (tab.focused_pane != source) {
+        if (tab.focused_pane() != source) {
           ASSERT_EQ(dispatch(CommandKind::focus_pane, source).result.status,
                     CommandStatus::applied);
         }
@@ -2060,11 +2159,11 @@ TEST(MuxSimulationTest, DirectionalFocusFollowsTheSharedTiledNeighborRule) {
         const auto focused = dispatch(kind, source);
         if (expected.has_value()) {
           EXPECT_EQ(focused.result.status, CommandStatus::applied);
-          EXPECT_EQ(tab.focused_pane, *expected);
+          EXPECT_EQ(tab.focused_pane(), *expected);
           EXPECT_EQ(tab.previous_pane, source);
         } else {
           EXPECT_EQ(focused.result.status, CommandStatus::no_effect);
-          EXPECT_EQ(tab.focused_pane, source);
+          EXPECT_EQ(tab.focused_pane(), source);
         }
         EXPECT_EQ(tab.zoomed, zoomed);
         EXPECT_FALSE(core::check_session_invariants(session).has_value());
@@ -2271,7 +2370,8 @@ TEST(MuxSimulationTest, GeneratedCommandsAndRuntimeFaultsPreserveAllInvariants) 
                                    state_single_tab | state_multiple_tabs | state_tab_capacity |
                                    state_zoomed | state_layout_suspended | state_stale_id_retained |
                                    state_generation_reused | state_held_child |
-                                   state_minimum_attachment | state_maximum_attachment;
+                                   state_minimum_attachment | state_maximum_attachment |
+                                   state_floating | state_float_focused | state_float_suspended;
   EXPECT_EQ(world_coverage.states & required_states, required_states)
       << "generated histories did not visit every required deep-state bucket";
 }
