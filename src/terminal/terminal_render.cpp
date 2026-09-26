@@ -860,14 +860,20 @@ private:
   }
   const auto previous = row_hashes();
   const auto current = current_row_hashes();
+  // Rows near the edges usually decide a candidate: a frame that scrolled nothing typically differs
+  // only in its last rows. Compare both ends before the whole overlap so rejecting every amount
+  // stays linear in the row count instead of comparing nearly every row for each amount.
+  const auto aligned = [](const std::span<const std::uint64_t> moved,
+                          const std::span<const std::uint64_t> retained) noexcept {
+    return moved.back() == retained.back() && moved.front() == retained.front() &&
+           std::ranges::equal(moved, retained);
+  };
   for (std::size_t amount = 1; amount + 1 < row_hash_count; ++amount) {
     const auto overlap = row_hash_count - amount;
-    if (std::equal(current.first(overlap).begin(), current.first(overlap).end(),
-                   previous.subspan(amount).begin())) {
+    if (aligned(current.first(overlap), previous.subspan(amount))) {
       return static_cast<std::int32_t>(amount);
     }
-    if (std::equal(current.subspan(amount).begin(), current.subspan(amount).end(),
-                   previous.first(overlap).begin())) {
+    if (aligned(current.subspan(amount), previous.first(overlap))) {
       return -static_cast<std::int32_t>(amount);
     }
   }

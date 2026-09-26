@@ -484,6 +484,36 @@ TEST(TerminalTest, DetectsAndEncodesVerticalScroll) {
   EXPECT_THAT(encoded, testing::HasSubstr("five"));
 }
 
+// Scroll candidates are rejected by their edge rows first; a candidate whose edges align must still
+// match every row between them.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(TerminalTest, ScrollDetectionMatchesEveryOverlappingRow) {
+  TerminalOptions options;
+  options.size = {.columns = 20, .rows = 5};
+  auto terminal = make_terminal(options);
+  write_text(terminal, "r1\r\nr2\r\nr3\r\nr4\r\nr5");
+
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  ASSERT_TRUE(terminal.render_ansi(output, true).has_value());
+  // Shifted up by one, the overlap keeps r2 first and r5 last, but r3 became Y between them.
+  write_text(terminal, "\r\nnew\x1B[2;1HY \x1B[5;4H");
+  const auto edges_only = terminal.render_ansi(output);
+  ASSERT_TRUE(edges_only.has_value());
+  EXPECT_EQ(edges_only->scrolled_rows, 0);
+  EXPECT_EQ(edges_only->rows, 5U);
+
+  // A candidate whose every overlapping row matches is still found.
+  write_text(terminal, "\r\nnext");
+  const auto scrolled = terminal.render_ansi(output);
+  ASSERT_TRUE(scrolled.has_value());
+  EXPECT_EQ(scrolled->scrolled_rows, 1);
+  EXPECT_EQ(scrolled->rows, 1U);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const std::string_view encoded(reinterpret_cast<const char*>(output.data()), scrolled->bytes);
+  EXPECT_THAT(encoded, testing::HasSubstr("\x1B[1S"));
+  EXPECT_THAT(encoded, testing::HasSubstr("next"));
+}
+
 TEST(TerminalTest, ScrollHashPassSkipsRowsAlreadyMatchingPhysicalState) {
   TerminalOptions options;
   options.size = {.columns = 20, .rows = 4};
