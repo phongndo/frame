@@ -4693,9 +4693,7 @@ process_routed_key_input(SessionRecord& session, PaneRuntimeStore& runtimes,
 [[nodiscard]] auto expensive_client_message(const SessionRecord& session,
                                             const protocol::ClientMessage& message) noexcept
     -> bool {
-  if (message.kind == protocol::ClientMessageKind::resize ||
-      message.kind == protocol::ClientMessageKind::cell_size ||
-      message.kind == protocol::ClientMessageKind::pane_command) {
+  if (message.kind == protocol::ClientMessageKind::pane_command) {
     return true;
   }
   return message.kind == protocol::ClientMessageKind::mouse &&
@@ -4864,6 +4862,24 @@ process_routed_key_input(SessionRecord& session, PaneRuntimeStore& runtimes,
   return true;
 }
 
+[[nodiscard]] constexpr auto
+geometry_client_message(const protocol::ClientMessage& message) noexcept -> bool {
+  return message.kind == protocol::ClientMessageKind::cell_size ||
+         message.kind == protocol::ClientMessageKind::resize;
+}
+
+// A window drag can queue geometry faster than Panes reflow, since reflow cost grows with history.
+// Only the newest queued geometry is applied, as one budgeted step: stale intermediate sizes never
+// reach Ghostty, a PTY, or a frame.
+[[nodiscard]] auto apply_pending_geometry(SessionRecord& session, PaneRuntimeStore& runtimes,
+                                          extension::Runtime& extensions) noexcept -> bool {
+  auto& pending = session.attachment_runtime.pending_geometry;
+  const auto cell_size = std::exchange(pending.cell_size, std::nullopt);
+  const auto dimensions = std::exchange(pending.dimensions, std::nullopt);
+  return (!cell_size.has_value() || apply_cell_size(session, runtimes, *cell_size)) &&
+         (!dimensions.has_value() || resize_session(session, runtimes, *dimensions, &extensions));
+}
+
 // Packet dispatch exhaustively maps validated protocol messages to session transitions.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] auto parse_client_packets(SessionRecord& session, PaneRuntimeStore& runtimes,
@@ -4871,10 +4887,31 @@ process_routed_key_input(SessionRecord& session, PaneRuntimeStore& runtimes,
                                         std::size_t& geometry_budget, std::size_t& input_budget,
                                         const SessionNameConflict name_conflict,
                                         void* const name_conflict_context) noexcept -> ParseResult {
+  auto& pending_geometry = session.attachment_runtime.pending_geometry;
   while (true) {
     const auto decoded = session.attachment_runtime.decoder.next();
     if (!decoded.has_value()) {
       return ParseResult::error;
+    }
+    // Recording geometry is O(1) and bounded by decoder capacity, so it spends no message budget.
+    if (decoded->has_value() && geometry_client_message(**decoded)) {
+      if ((**decoded).kind == protocol::ClientMessageKind::cell_size) {
+        pending_geometry.cell_size = (**decoded).cell_size;
+      } else {
+        pending_geometry.dimensions = (**decoded).dimensions;
+      }
+      session.attachment_runtime.decoder.consume();
+      continue;
+    }
+    if (pending_geometry.pending()) {
+      if (message_budget == 0 || geometry_budget == 0) {
+        return ParseResult::yield;
+      }
+      --message_budget;
+      --geometry_budget;
+      if (!apply_pending_geometry(session, runtimes, extensions)) {
+        return ParseResult::error;
+      }
     }
     if (!decoded->has_value()) {
       return ParseResult::keep;
@@ -4914,14 +4951,9 @@ process_routed_key_input(SessionRecord& session, PaneRuntimeStore& runtimes,
       break;
     }
     case protocol::ClientMessageKind::cell_size:
-      if (!apply_cell_size(session, runtimes, message.cell_size)) {
-        return ParseResult::error;
-      }
-      break;
     case protocol::ClientMessageKind::resize:
-      if (!resize_session(session, runtimes, message.dimensions, &extensions)) {
-        return ParseResult::error;
-      }
+      // Recorded as pending geometry before dispatch.
+      LEMMA_ASSERT(false);
       break;
     case protocol::ClientMessageKind::input: {
       const auto result =
@@ -9695,6 +9727,7 @@ void finish_command_line_error(SessionRecord& session, const std::string_view me
   const bool osc52_read_retired = source_runtime.osc52_read_retired;
   const bool outer_focused = source_runtime.outer_focused;
   const int client = std::exchange(source_runtime.client, -1);
+  const auto pending_geometry = std::exchange(source_runtime.pending_geometry, {});
   auto decoder = std::move(source_runtime.decoder);
   auto graphics = std::move(source_runtime.graphics);
   source_runtime.decoder = {};
@@ -9705,6 +9738,7 @@ void finish_command_line_error(SessionRecord& session, const std::string_view me
   detach_attachment(source, runtimes);
 
   target_runtime.client = client;
+  target_runtime.pending_geometry = pending_geometry;
   target_runtime.decoder = std::move(decoder);
   target_runtime.graphics = std::move(graphics);
   target_runtime.server_sequence = server_sequence;

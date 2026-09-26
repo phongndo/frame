@@ -152,6 +152,7 @@ void AttachmentRuntime::reset_connection() noexcept {
   close_descriptor(client);
   connection_id = {};
   hosted_command.reset();
+  pending_geometry = {};
   decoder.release();
   output.reset();
   frame.release();

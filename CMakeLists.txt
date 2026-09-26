@@ -328,6 +328,7 @@ add_library(
   src/client/attached_client.cpp
   src/client/host_input_parser.cpp
   src/client/host_terminal_theme.cpp
+  src/client/outer_resize_schedule.cpp
 )
 lemma_internal_target(lemma_client)
 target_link_libraries(
@@ -372,7 +373,7 @@ if(LEMMA_BUILD_TESTS OR LEMMA_BUILD_BENCHMARKS)
 
   add_executable(lemma_test_cli tests/support/cli_main.cpp)
   lemma_internal_target(lemma_test_cli)
-  target_link_libraries(lemma_test_cli PRIVATE lemma_app)
+  target_link_libraries(lemma_test_cli PRIVATE lemma_app lemma_daemon lemma_protocol)
   add_dependencies(lemma_test_cli lemma-ui lemma-config-host lemma-clipboard-host)
 
   add_executable(lemma_test_pty_peer tests/support/pty_peer_main.cpp)
@@ -411,6 +412,7 @@ if(LEMMA_BUILD_TESTS)
     tests/input_router_test.cpp
     tests/latency_trace_test.cpp
     tests/layout_test.cpp
+    tests/outer_resize_schedule_test.cpp
     tests/protocol_test.cpp
     tests/reactor_environment_test.cpp
     tests/status_attention_test.cpp

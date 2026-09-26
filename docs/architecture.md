@@ -205,6 +205,14 @@ dimensions before Ghostty parses output at those dimensions. Multi-pane resize p
 geometry only after dependent runtime work succeeds. Attached clients also report cell pixel size;
 that geometry follows the connection during Session transfer and participates in native resize.
 
+The client sends an outer-terminal size change immediately. While a window drag continues, it
+coalesces SIGWINCH and in-band size reports (mode 2048) into at most one geometry per 16 ms display
+interval; the final size follows the last change by at most one interval. Once observed, in-band
+reports take precedence over the PTY size ioctl. Reflow cost grows with history, so geometry can
+still queue at the daemon. Consecutive queued geometry messages supersede one another, and the
+daemon applies only the newest, as one budgeted step per reactor turn. Pending geometry is sent
+and applied before any later input from the same client.
+
 Kitty image pixels, placements, placeholders, and animation frames stay in Ghostty-owned canonical
 state. The terminal adapter exposes bounded borrowed projections using the
 [local native hooks](../third_party/ghostty-metadata/PATCHES.md). An Attachment-owned graphics cache
