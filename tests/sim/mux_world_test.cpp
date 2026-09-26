@@ -161,6 +161,13 @@ public:
 
   [[nodiscard]] auto coverage() const noexcept -> const SimRuntimeCoverage& { return coverage_; }
 
+  // Committed PTY size changes, the SIGWINCH/reflow count a real child would observe.
+  [[nodiscard]] auto size_changes(const PaneId pane) const noexcept -> std::size_t {
+    return pane.is_valid() && pane.slot() < size_changes_.size()
+               ? std::span(size_changes_).subspan(pane.slot(), 1).front()
+               : 0U;
+  }
+
 private:
   [[nodiscard]] static auto selected_outcome(std::optional<RuntimeEffectStatus>& selected) noexcept
       -> RuntimeEffectStatus {
@@ -192,6 +199,7 @@ private:
       ++coverage_.consistency_losses;
       return RuntimeEffectStatus::consistency_lost;
     }
+    std::span(size_changes_).subspan(effect.pane.slot(), 1).front() = 0;
     pane = {.id = effect.pane,
             .rectangle = effect.rectangle,
             .live = true,
@@ -224,6 +232,10 @@ private:
       if (pane == nullptr) {
         ++coverage_.consistency_losses;
         return RuntimeEffectStatus::consistency_lost;
+      }
+      if (pane->rectangle.columns != effect.target.columns ||
+          pane->rectangle.rows != effect.target.rows) {
+        ++std::span(size_changes_).subspan(effect.pane.slot(), 1).front();
       }
       pane->rectangle = effect.target;
     }
@@ -290,6 +302,7 @@ private:
   }
 
   std::array<PaneState, core::panes_per_session_max> panes_{};
+  std::array<std::size_t, core::panes_per_session_max> size_changes_{};
   std::optional<RuntimeEffectStatus> next_spawn_;
   std::optional<RuntimeEffectStatus> next_resize_;
   SimRuntimeCoverage coverage_;
@@ -409,6 +422,7 @@ public:
     session_.attachment.session = session_.id;
     session_.attachment.columns = 120;
     session_.attachment.rows = 40;
+    session_.attachment.content_viewport = {.columns = 120, .rows = 40};
     runtime_.begin_operation(RuntimeEffectStatus::applied, RuntimeEffectStatus::applied);
     SessionMachine machine(session_, machine_options());
     const auto created = machine.create_tab();
@@ -1848,6 +1862,118 @@ TEST(MuxSimulationTest, RejectedResizeSuspendsLayoutAfterClosingZoomedPane) {
   EXPECT_TRUE(run_mux_trace("rejected-zoomed-child-exit.trace", operations));
 }
 
+// A docked Attachment's content viewport is the one geometry authority for Tab activation and
+// creation. Fitting the full physical geometry first would reflow and signal every child twice.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(MuxSimulationTest, DockedTabActivationResizesPanesOnceToTheContentViewport) {
+  SimRuntime runtime;
+  Session session("docked", {}, {}, core::LaunchEnvironmentMode::inherit);
+  session.id = SessionId::from_parts(0, 1);
+  session.attachment.id = AttachmentId::from_parts(0, 1);
+  session.attachment.session = session.id;
+  SessionMachine machine(session, {.runtime = runtime.effects()});
+  const auto first = machine.create_tab();
+  ASSERT_EQ(first.result.status, CommandStatus::applied);
+  const auto pane_rectangle = [&](const PaneId pane) {
+    const auto& slot = std::span(session.panes).subspan(pane.slot(), 1).front();
+    return slot.pane == nullptr ? PaneRectangle{} : slot.pane->rectangle;
+  };
+  // A one-row top dock and a 20-column right dock leave this content rectangle.
+  constexpr PaneRectangle docked{.column = 0, .row = 1, .columns = 100, .rows = 39};
+  ASSERT_EQ(machine.resize_attachment(120, 40, docked).result.status, CommandStatus::applied);
+  EXPECT_EQ(session.attachment.content_viewport, docked);
+  EXPECT_EQ(runtime.size_changes(first.created_pane), 1U);
+
+  // Creation spawns directly at the content viewport, activated or not.
+  const auto second = machine.create_tab();
+  ASSERT_EQ(second.result.status, CommandStatus::applied);
+  EXPECT_EQ(pane_rectangle(second.created_pane), docked);
+  const auto background = machine.create_tab({.activate = false});
+  ASSERT_EQ(background.result.status, CommandStatus::applied);
+  EXPECT_EQ(pane_rectangle(background.created_pane), docked);
+  EXPECT_EQ(runtime.size_changes(second.created_pane), 0U);
+  EXPECT_EQ(core::check_session_invariants(session), std::nullopt);
+
+  // Selecting a Tab that already fits the content viewport resizes nothing.
+  const auto select = [&](const TabId tab) {
+    return machine.dispatch({.kind = CommandKind::select_tab,
+                             .origin = CommandOrigin::internal,
+                             .target = {.session = session.id, .tab = tab}});
+  };
+  ASSERT_EQ(select(first.created_tab).result.status, CommandStatus::applied);
+  EXPECT_EQ(runtime.size_changes(first.created_pane), 1U);
+
+  // A dock change while a Tab is inactive costs that Tab exactly one resize on activation.
+  constexpr PaneRectangle narrower{.column = 0, .row = 1, .columns = 90, .rows = 39};
+  ASSERT_EQ(machine.resize_attachment(120, 40, narrower).result.status, CommandStatus::applied);
+  EXPECT_EQ(runtime.size_changes(first.created_pane), 2U);
+  ASSERT_EQ(select(second.created_tab).result.status, CommandStatus::applied);
+  EXPECT_EQ(runtime.size_changes(second.created_pane), 1U);
+  EXPECT_EQ(pane_rectangle(second.created_pane), narrower);
+  EXPECT_EQ(core::check_session_invariants(session), std::nullopt);
+
+  // Closing the active Tab auto-selects its neighbor, resizing it once to the current viewport.
+  const auto closed =
+      machine.dispatch({.kind = CommandKind::close_tab,
+                        .origin = CommandOrigin::internal,
+                        .target = {.session = session.id, .tab = second.created_tab}});
+  ASSERT_EQ(closed.result.status, CommandStatus::applied);
+  ASSERT_EQ(session.active_tab, background.created_tab);
+  EXPECT_EQ(runtime.size_changes(background.created_pane), 1U);
+  EXPECT_EQ(pane_rectangle(background.created_pane), narrower);
+  EXPECT_EQ(core::check_session_invariants(session), std::nullopt);
+  EXPECT_EQ(runtime.validate(session), std::nullopt);
+}
+
+// Closing a Pane of a suspended active Tab must not unsuspend it at its stale geometry: the Tab
+// refits the content viewport when the remaining Panes fit and otherwise stays suspended.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(MuxSimulationTest, ClosingAPaneRefitsASuspendedActiveTabToTheContentViewport) {
+  SimRuntime runtime;
+  Session session("suspended", {}, {}, core::LaunchEnvironmentMode::inherit);
+  session.id = SessionId::from_parts(0, 1);
+  session.attachment.id = AttachmentId::from_parts(0, 1);
+  session.attachment.session = session.id;
+  SessionMachine machine(session, {.runtime = runtime.effects()});
+  const auto created = machine.create_tab();
+  ASSERT_EQ(created.result.status, CommandStatus::applied);
+  const auto tab_id = created.created_tab;
+  const auto middle = machine.split_pane(tab_id, created.created_pane, SplitAxis::left_right);
+  ASSERT_EQ(middle.result.status, CommandStatus::applied);
+  const auto right = machine.split_pane(tab_id, middle.created_pane, SplitAxis::left_right);
+  ASSERT_EQ(right.result.status, CommandStatus::applied);
+  const auto& tab_slot = std::span(session.tabs).subspan(tab_id.slot(), 1).front();
+  ASSERT_NE(tab_slot.tab, nullptr);
+  const auto& tab = *tab_slot.tab;
+
+  // Three side-by-side Panes and two dividers cannot fit two columns.
+  constexpr PaneRectangle narrow{.column = 0, .row = 1, .columns = 2, .rows = 20};
+  ASSERT_EQ(machine.resize_attachment(80, 24, narrow).result.status, CommandStatus::applied);
+  ASSERT_TRUE(tab.layout_suspended);
+  const auto close = [&](const PaneId pane) {
+    return machine.dispatch({.kind = CommandKind::close_pane,
+                             .origin = CommandOrigin::internal,
+                             .target = {.session = session.id, .tab = tab_id, .pane = pane}});
+  };
+  // Two Panes still do not fit: the close commits and the Tab stays suspended.
+  ASSERT_EQ(close(right.created_pane).result.status, CommandStatus::applied);
+  EXPECT_TRUE(tab.layout_suspended);
+  EXPECT_EQ(core::check_session_invariants(session), std::nullopt);
+  // One Pane fits: the Tab is presented in the content viewport, not its retained geometry.
+  ASSERT_EQ(close(middle.created_pane).result.status, CommandStatus::applied);
+  EXPECT_FALSE(tab.layout_suspended);
+  EXPECT_EQ((PaneRectangle{.column = tab.layout_column,
+                           .row = tab.layout_row,
+                           .columns = tab.layout_columns,
+                           .rows = tab.layout_rows}),
+            narrow);
+  const auto& remaining = std::span(session.panes).subspan(created.created_pane.slot(), 1).front();
+  ASSERT_NE(remaining.pane, nullptr);
+  EXPECT_EQ(remaining.pane->rectangle, narrow);
+  EXPECT_EQ(core::check_session_invariants(session), std::nullopt);
+  EXPECT_EQ(runtime.validate(session), std::nullopt);
+}
+
 // Directional swap targets are resolved by the input bridge from the same Core rule that
 // directional focus executes, so both must agree for every source Pane, zoomed or not.
 // GoogleTest assertions inflate the measured branch count.
@@ -1861,6 +1987,7 @@ TEST(MuxSimulationTest, DirectionalFocusFollowsTheSharedTiledNeighborRule) {
   session.attachment.session = session.id;
   session.attachment.columns = 120;
   session.attachment.rows = 40;
+  session.attachment.content_viewport = {.columns = 120, .rows = 40};
   SessionMachine machine(session, {.runtime = runtime.effects()});
   const auto created = machine.create_tab();
   ASSERT_EQ(created.result.status, CommandStatus::applied);
