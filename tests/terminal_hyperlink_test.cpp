@@ -265,6 +265,44 @@ TEST(TerminalHyperlinkTest, ScrollMovesLinkedRowsAndPaintsOnlyTheNewRow) {
   expect_links_contained(encoded);
 }
 
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(TerminalHyperlinkTest, MarginScrollPreservesLinksWhenTheCursorRowChangesDestination) {
+  auto terminal = make_terminal(20, 4);
+  auto outer = make_terminal(20, 5);
+  write_text(outer, "dock");
+  // Identical text makes destinations the only evidence that rows moved. The last row changes
+  // destination before scrolling, so the old and new overlap are not entirely equal.
+  write_text(terminal, linked("https://a.test/1", "x") + "\r\n" + linked("https://a.test/2", "x") +
+                           "\r\n" + linked("https://a.test/3", "x") + "\r\n" +
+                           linked("https://a.test/4", "x"));
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  auto rendered = terminal.render_pane_ansi(
+      output, {.row = 1, .force_full = true, .terminal_scroll = TerminalScroll::margins});
+  ASSERT_TRUE(rendered.has_value());
+  outer.write(std::span(output).first(rendered->bytes));
+
+  write_text(terminal, "\r" + linked("https://a.test/changed", "x") + "\r\n" +
+                           linked("https://a.test/5", "x"));
+  rendered =
+      terminal.render_pane_ansi(output, {.row = 1, .terminal_scroll = TerminalScroll::margins});
+  ASSERT_TRUE(rendered.has_value());
+  EXPECT_EQ(rendered->scrolled_rows, 1);
+  const auto encoded = view(output, rendered->bytes);
+  expect_links_contained(encoded);
+  outer.write(std::span(output).first(rendered->bytes));
+  EXPECT_EQ(visible_text(outer), "dock\nx\nx\nx\nx");
+  const auto observed = full_frame(outer);
+  EXPECT_THAT(observed, testing::HasSubstr("\x1B[2;1H" + link_open(outer, "https://a.test/2")));
+  EXPECT_THAT(observed, testing::HasSubstr("\x1B[3;1H" + link_open(outer, "https://a.test/3")));
+  EXPECT_THAT(observed,
+              testing::HasSubstr("\x1B[4;1H" + link_open(outer, "https://a.test/changed")));
+  EXPECT_THAT(observed, testing::HasSubstr("\x1B[5;1H" + link_open(outer, "https://a.test/5")));
+  EXPECT_THAT(observed, testing::Not(testing::HasSubstr("https://a.test/1")));
+  EXPECT_THAT(observed, testing::Not(testing::HasSubstr("https://a.test/4")));
+  expect_links_contained(observed);
+}
+
 TEST(TerminalHyperlinkTest, WideCharactersAndSelectionStayWithinTheirLink) {
   auto terminal = make_terminal(20, 2);
   write_text(terminal, linked("https://a.test/w", "\xE6\x97\xA5\xE6\x9C\xAC") + " " +
