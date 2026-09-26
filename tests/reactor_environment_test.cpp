@@ -15,6 +15,7 @@
 #include <string_view>
 
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -306,26 +307,44 @@ thread_local ScriptedReactor* active_script = nullptr;
   return script.now;
 }
 
+// Sends at most `limit` leading bytes of head followed by tail in one gathered call.
+[[nodiscard]] auto send_gathered(const int descriptor, const std::span<const std::byte> head,
+                                 const std::span<const std::byte> tail, const std::size_t limit,
+                                 const int flags) noexcept -> ReactorIoResult {
+  const auto head_bytes = std::min(limit, head.size());
+  const auto tail_bytes = std::min(limit - head_bytes, tail.size());
+  // iovec is a C ABI that never writes through iov_base for sendmsg.
+  // NOLINTBEGIN(cppcoreguidelines-pro-type-const-cast)
+  std::array<iovec, 2> vectors{{
+      {.iov_base = const_cast<std::byte*>(head.data()), .iov_len = head_bytes},
+      {.iov_base = const_cast<std::byte*>(tail.data()), .iov_len = tail_bytes},
+  }};
+  // NOLINTEND(cppcoreguidelines-pro-type-const-cast)
+  msghdr message{};
+  message.msg_iov = vectors.data();
+  message.msg_iovlen = vectors.size();
+  const auto sent = ::sendmsg(descriptor, &message, flags);
+  return {.bytes = sent, .error = sent < 0 ? errno : 0};
+}
+
 [[nodiscard]] auto scripted_send(void* const context, const int descriptor,
-                                 const std::span<const std::byte> bytes, const int flags) noexcept
+                                 const std::span<const std::byte> head,
+                                 const std::span<const std::byte> tail, const int flags) noexcept
     -> ReactorIoResult {
   auto& script = *static_cast<ScriptedReactor*>(context);
   ++script.sends;
+  const auto size = head.size() + tail.size();
   if (script.block_next_send && script.mode == ScriptMode::fragmented_request) {
     script.block_next_send = false;
     ++script.blocked_sends;
     return {.bytes = -1, .error = EAGAIN};
   }
-  if (script.partial_next_send && script.mode == ScriptMode::fragmented_request &&
-      bytes.size() > 1U) {
+  if (script.partial_next_send && script.mode == ScriptMode::fragmented_request && size > 1U) {
     script.partial_next_send = false;
     ++script.partial_sends;
-    const auto partial = bytes.first(bytes.size() / 2U);
-    const auto sent = ::send(descriptor, partial.data(), partial.size(), flags);
-    return {.bytes = sent, .error = sent < 0 ? errno : 0};
+    return send_gathered(descriptor, head, tail, size / 2U, flags);
   }
-  const auto sent = ::send(descriptor, bytes.data(), bytes.size(), flags);
-  return {.bytes = sent, .error = sent < 0 ? errno : 0};
+  return send_gathered(descriptor, head, tail, size, flags);
 }
 
 void release_listener(void* const context) noexcept {

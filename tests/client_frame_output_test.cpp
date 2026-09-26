@@ -54,8 +54,7 @@ struct ScriptedFrameAllocator final {
   }
 }
 
-[[nodiscard]] auto scripted_client_write(void* const context,
-                                         const std::span<const std::byte> bytes) noexcept
+[[nodiscard]] auto scripted_client_write(void* const context, const ClientFrameBytes bytes) noexcept
     -> ClientFrameWriteAttempt {
   auto& script = *static_cast<ScriptedClientWriter*>(context);
   ++script.calls;
@@ -67,8 +66,10 @@ struct ScriptedFrameAllocator final {
   if (result.bytes > 0) {
     const auto size = static_cast<std::size_t>(result.bytes);
     if (size <= bytes.size() && size <= script.written.size() - script.written_size) {
-      std::ranges::copy(bytes.first(size),
-                        std::span(script.written).subspan(script.written_size, size).begin());
+      const auto sent = bytes.first(size);
+      auto destination = std::span(script.written).subspan(script.written_size, size);
+      std::ranges::copy(sent.head, destination.begin());
+      std::ranges::copy(sent.tail, destination.subspan(sent.head.size()).begin());
       script.written_size += size;
     }
   }
@@ -248,23 +249,24 @@ TEST(ClientFrameOutputTest, ChunksDeclaredFrameTransactionAtProtocolBoundary) {
   EXPECT_EQ(output.queued_message_count(), 2U);
   EXPECT_EQ(output.size(), frame_bytes + (2U * (protocol::attach_header_bytes +
                                                 protocol::render_generation_bytes)));
+  // Each message offers its header and chunk together, never bytes of the following message.
   auto readable = output.readable(frame);
   const auto first_header =
       protocol::encode_render_frame_header(limits::frame_chunk_bytes_max, 2, 1, true);
-  EXPECT_TRUE(std::ranges::equal(readable, first_header));
-  ASSERT_TRUE(output.consume(readable.size(), origin));
-
+  EXPECT_TRUE(std::ranges::equal(readable.head, first_header));
+  EXPECT_EQ(readable.tail.size(), limits::frame_chunk_bytes_max);
+  // A write ending inside the header resumes with the header remainder and the whole chunk.
+  ASSERT_TRUE(output.consume(3, origin));
   readable = output.readable(frame);
-  EXPECT_EQ(readable.size(), limits::frame_chunk_bytes_max);
+  EXPECT_TRUE(std::ranges::equal(readable.head, std::span(first_header).subspan(3)));
+  EXPECT_EQ(readable.tail.size(), limits::frame_chunk_bytes_max);
+  ASSERT_FALSE(output.consume(readable.size() + 1U, origin));
   ASSERT_TRUE(output.consume(readable.size(), origin));
 
   readable = output.readable(frame);
   const auto second_header = protocol::encode_render_frame_header(123, 3, 1, false);
-  EXPECT_TRUE(std::ranges::equal(readable, second_header));
-  ASSERT_TRUE(output.consume(readable.size(), origin));
-
-  readable = output.readable(frame);
-  EXPECT_EQ(readable.size(), 123U);
+  EXPECT_TRUE(std::ranges::equal(readable.head, second_header));
+  EXPECT_EQ(readable.tail.size(), 123U);
   ASSERT_TRUE(output.consume(readable.size(), origin));
   EXPECT_FALSE(output.busy());
 }

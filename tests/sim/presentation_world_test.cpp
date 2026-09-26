@@ -100,8 +100,7 @@ struct BoundedWriter final {
   WriterMode mode{WriterMode::ready};
 };
 
-[[nodiscard]] auto write_client(void* const context,
-                                const std::span<const std::byte> bytes) noexcept
+[[nodiscard]] auto write_client(void* const context, const core::ClientFrameBytes bytes) noexcept
     -> core::ClientFrameWriteAttempt {
   auto& writer = *static_cast<BoundedWriter*>(context);
   ++writer.calls;
@@ -121,8 +120,10 @@ struct BoundedWriter final {
   if (written == 0) {
     return {.bytes = -1, .error = EAGAIN};
   }
-  std::ranges::copy(bytes.first(written),
-                    std::span(writer.bytes).subspan(writer.size, written).begin());
+  const auto sent = bytes.first(written);
+  const auto destination = std::span(writer.bytes).subspan(writer.size, written);
+  std::ranges::copy(sent.head, destination.begin());
+  std::ranges::copy(sent.tail, destination.subspan(sent.head.size()).begin());
   writer.size += written;
   return {.bytes = static_cast<std::ptrdiff_t>(written)};
 }

@@ -51,8 +51,10 @@ struct ReactorIoResult final {
 using ReactorPoll = int (*)(void* context, std::span<pollfd> descriptors,
                             int timeout_milliseconds) noexcept;
 using ReactorNow = ReactorClock::time_point (*)(void* context) noexcept;
+// Sends `head` followed by `tail` as one gathered write; `tail` may be empty.
 using ReactorSend = ReactorIoResult (*)(void* context, int descriptor,
-                                        std::span<const std::byte> bytes, int flags) noexcept;
+                                        std::span<const std::byte> head,
+                                        std::span<const std::byte> tail, int flags) noexcept;
 
 enum class ConfigurationReloadError : std::uint8_t { invalid_configuration, restart_required };
 
@@ -85,7 +87,8 @@ public:
   virtual void discard() noexcept = 0;
 };
 
-// Production uses native level-triggered readiness (poll fallback), send(2), and steady_clock.
+// Production uses native level-triggered readiness (poll fallback), send(2)/sendmsg(2), and
+// steady_clock.
 // Deterministic tests may instead provide one scripted readiness/I/O/clock authority. The
 // callbacks are turn-local and must not retain borrowed spans.
 struct ReactorEnvironment final {

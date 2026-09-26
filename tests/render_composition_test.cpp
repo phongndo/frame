@@ -1314,6 +1314,67 @@ TEST(PaneCompositionTest, ComposesRetainedGridBesidePaneAndArbitratesGridCursor)
   EXPECT_LT(incremental_encoded.find('x'), incremental_encoded.rfind("\x1B[1;10H"));
 }
 
+// A Pane that alone owns full-width rows below a docked Grid scrolls inside vertical margins; the
+// dock keeps its row and the outer screen matches a reference terminal fed every frame.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(PaneCompositionTest, ScrollsFullWidthPaneInsideMarginsBesideDockedGrid) {
+  auto terminal = make_terminal(8, 3);
+  write_text(terminal, "one\r\ntwo\r\nthree");
+  auto created = Grid::create(8, 1);
+  ASSERT_TRUE(created.has_value());
+  auto grid = std::move(*created);
+  GridPatch patch;
+  patch.rows.push_back({.runs = {{.text = "dock", .column = 0, .style = 0}}, .row = 0});
+  ASSERT_TRUE(grid.apply(std::move(patch)).has_value());
+  const std::array panes{PaneSurface{
+      .terminal = &terminal,
+      .rectangle = {.column = 0, .row = 1, .columns = 8, .rows = 3},
+      .focused = true,
+  }};
+  const std::array grids{
+      GridSurface{.grid = &grid, .rectangle = {.column = 0, .row = 0, .columns = 8, .rows = 1}}};
+  auto outer = make_terminal(8, 4);
+  std::array<std::byte, 8'192> output{};
+  const auto present = [&](const bool full) {
+    const auto composed = compose_scene({.panes = panes, .grids = grids},
+                                        {.columns = 8, .rows = 4}, output, full);
+    EXPECT_TRUE(composed.has_value());
+    const auto bytes = std::span(output).first(composed.has_value() ? composed->bytes : 0U);
+    outer.write(bytes);
+    return std::string(as_text(bytes));
+  };
+  const auto screen = [&] {
+    std::array<std::byte, 1024> bytes{};
+    const auto size = outer.format_screen(vt::ScreenFormat::plain, bytes);
+    EXPECT_TRUE(size.has_value());
+    return std::string(as_text(std::span(bytes).first(size.value_or(0U))));
+  };
+  present(true);
+  EXPECT_EQ(screen(), "dock\none\ntwo\nthree");
+
+  write_text(terminal, "\r\nfour");
+  const auto scrolled = present(false);
+  EXPECT_THAT(scrolled, testing::HasSubstr("\x1B[2;4r\x1B[1S\x1B[r"));
+  EXPECT_THAT(scrolled, testing::Not(testing::HasSubstr("two")));
+  EXPECT_EQ(screen(), "dock\ntwo\nthree\nfour");
+
+  // A Grid sharing the Pane's rows would move with the outer scroll, so rows are re-encoded.
+  auto floating = Grid::create(4, 1);
+  ASSERT_TRUE(floating.has_value());
+  const std::array overlapping{
+      GridSurface{.grid = &grid, .rectangle = {.column = 0, .row = 0, .columns = 8, .rows = 1}},
+      GridSurface{.grid = &*floating,
+                  .rectangle = {.column = 4, .row = 2, .columns = 4, .rows = 1}}};
+  write_text(terminal, "\r\nfive");
+  const auto covered = compose_scene({.panes = panes, .grids = overlapping},
+                                     {.columns = 8, .rows = 4}, output, false);
+  ASSERT_TRUE(covered.has_value());
+  const auto encoded = std::span(output).first(covered->bytes);
+  EXPECT_THAT(as_text(encoded), testing::Not(testing::HasSubstr("\x1B[1S")));
+  outer.write(encoded);
+  EXPECT_EQ(screen(), "dock\nthree\nfour\nfive");
+}
+
 TEST(PaneCompositionTest, RepairsContentBelowTransparentGridDamage) {
   auto terminal = make_terminal(5, 1);
   write_text(terminal, "under");

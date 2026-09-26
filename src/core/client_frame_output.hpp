@@ -24,6 +24,19 @@ inline constexpr auto attached_client_no_progress_timeout =
 inline constexpr auto attached_client_frame_total_timeout =
     limits::frame_transaction_total_deadline;
 
+// The unsent bytes of one queued message: its header remainder followed by its payload remainder.
+// One gather write can send both, so a small message reaches the client in one syscall and the
+// client never wakes for a header alone. Either part may be empty.
+struct ClientFrameBytes final {
+  std::span<const std::byte> head;
+  std::span<const std::byte> tail;
+
+  [[nodiscard]] auto size() const noexcept -> std::size_t { return head.size() + tail.size(); }
+  [[nodiscard]] auto empty() const noexcept -> bool { return size() == 0; }
+  // The leading `bytes` bytes, bounded by size().
+  [[nodiscard]] auto first(std::size_t bytes) const noexcept -> ClientFrameBytes;
+};
+
 class ClientFrameOutput final {
 public:
   using Clock = std::chrono::steady_clock;
@@ -38,7 +51,7 @@ public:
                                       std::string_view diagnostic, std::uint32_t sequence,
                                       TimePoint now) noexcept -> bool;
   [[nodiscard]] auto readable(const render::FrameBuffer& frame) const noexcept
-      -> std::span<const std::byte>;
+      -> ClientFrameBytes;
   [[nodiscard]] auto busy() const noexcept -> bool { return offset_ < size_; }
   [[nodiscard]] auto size() const noexcept -> std::size_t { return size_; }
   [[nodiscard]] auto frame_bytes() const noexcept -> std::size_t { return frame_bytes_; }
@@ -96,8 +109,8 @@ struct ClientFrameWriteAttempt final {
   int error{0};
 };
 
-using ClientFrameWriteOperation =
-    ClientFrameWriteAttempt (*)(void* context, std::span<const std::byte> bytes) noexcept;
+using ClientFrameWriteOperation = ClientFrameWriteAttempt (*)(void* context,
+                                                             ClientFrameBytes bytes) noexcept;
 
 enum class ClientFrameFlushStatus : std::uint8_t {
   not_attempted,

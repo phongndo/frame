@@ -1120,7 +1120,8 @@ auto Terminal::mark_rendered() noexcept -> std::expected<void, Error> {
 
 auto Terminal::render_ansi(const std::span<std::byte> output, const bool force_full) noexcept
     -> std::expected<AnsiRenderResult, Error> {
-  return render_ansi_impl(output, force_full, 0, 0, false, true, false, 0, 0, true);
+  return render_ansi_impl(output, force_full, 0, 0, false, true, false, 0, 0,
+                          TerminalScroll::screen);
 }
 
 auto Terminal::render_pane_ansi(const std::span<std::byte> output,
@@ -1128,7 +1129,7 @@ auto Terminal::render_pane_ansi(const std::span<std::byte> output,
     -> std::expected<AnsiRenderResult, Error> {
   return render_ansi_impl(output, options.force_full, options.column, options.row, true,
                           options.focused, options.cursor_override, options.cursor_override_column,
-                          options.cursor_override_row, options.allow_terminal_scroll);
+                          options.cursor_override_row, options.terminal_scroll);
 }
 
 void Terminal::invalidate_ansi_render_state() noexcept {
@@ -1177,7 +1178,7 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
                                 const bool composed, const bool focused, const bool cursor_override,
                                 const std::uint16_t cursor_override_column,
                                 const std::uint16_t cursor_override_row,
-                                const bool allow_terminal_scroll) noexcept
+                                const TerminalScroll terminal_scroll) noexcept
     -> std::expected<AnsiRenderResult, Error> {
   LEMMA_ASSERT(impl_ != nullptr);
   LEMMA_ASSERT(impl_->render_state != nullptr);
@@ -1262,7 +1263,7 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
 
   std::int32_t scrolled_rows = 0;
   bool rows_hashed = false;
-  if (allow_terminal_scroll && !full && *dirty == DirtyState::full) {
+  if (terminal_scroll != TerminalScroll::none && !full && *dirty == DirtyState::full) {
     result = ghostty_render_state_get(impl_->render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
                                       static_cast<void*>(&impl_->row_iterator));
     if (result != GHOSTTY_SUCCESS) {
@@ -1284,8 +1285,19 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
     scrolled_rows = impl_->detect_scroll();
     if (scrolled_rows != 0) {
       const auto amount = scrolled_rows > 0 ? scrolled_rows : -scrolled_rows;
-      if (!writer.append("\x1B[") || !writer.append_integer(amount) ||
-          !writer.append(scrolled_rows > 0 ? "S" : "T")) {
+      // Vertical margins confine the scroll to this pane's rows; they home the cursor, and every
+      // later row and the cursor are positioned absolutely. Margins are reset within the same
+      // synchronized frame so no other output observes them.
+      const bool margins = terminal_scroll == TerminalScroll::margins;
+      LEMMA_ASSERT(!margins || origin_column == 0);
+      if ((margins &&
+           (!writer.append("\x1B[") ||
+            !writer.append_integer(static_cast<std::size_t>(origin_row) + 1U) ||
+            !writer.append(";") ||
+            !writer.append_integer(static_cast<std::size_t>(origin_row) + impl_->row_hash_count) ||
+            !writer.append("r"))) ||
+          !writer.append("\x1B[") || !writer.append_integer(amount) ||
+          !writer.append(scrolled_rows > 0 ? "S" : "T") || (margins && !writer.append("\x1B[r"))) {
         impl_->ansi_physical_valid = false;
         return std::unexpected(Error::out_of_space);
       }

@@ -33,6 +33,17 @@ class AnsiScreenTrackerTest(unittest.TestCase):
         tracker.feed(b"\x1b[1;12H\x1b[99X")
         self.assertEqual(tracker.text(), "left!   kee")
 
+    def test_scrolls_only_inside_vertical_margins(self) -> None:
+        tracker = AnsiScreenTracker(6, 4)
+        tracker.feed(b"status\r\none\r\ntwo\r\nthree")
+        tracker.feed(b"\x1b[2;4r\x1b[1S\x1b[r\x1b[4;1Hfour")
+        self.assertEqual(tracker.text(), "status\ntwo\nthree\nfour")
+        tracker.feed(b"\x1b[2;4r\x1b[2T\x1b[r")
+        self.assertEqual(tracker.text(), "status\n\n\ntwo")
+        # Private modes sharing a final byte do not change margins or scroll.
+        tracker.feed(b"\x1b[4;1H\x1b[?2048r\x1b[?1S\n")
+        self.assertEqual(tracker.text(), "\n\ntwo\n")
+
     def test_text_retains_presented_frame_until_synchronized_update_finishes(
         self,
     ) -> None:
