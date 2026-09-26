@@ -391,6 +391,7 @@ static_assert(sizeof(SessionRecord) <= std::size_t{96} * 1'024U);
 [[nodiscard]] auto reactor_outer_notifications() noexcept -> bool;
 [[nodiscard]] auto reactor_outer_progress() noexcept -> bool;
 [[nodiscard]] auto reactor_outer_cwd() noexcept -> bool;
+[[nodiscard]] auto reactor_outer_hyperlinks() noexcept -> bool;
 
 [[nodiscard]] inline auto pane_rows(const std::uint16_t viewport_rows) noexcept -> std::uint16_t {
   return viewport_rows;

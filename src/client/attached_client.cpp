@@ -47,9 +47,11 @@ constexpr auto host_terminal_reply_timeout = std::chrono::seconds(30);
 constexpr std::string_view outer_terminal_enter =
     "\x1B[?1049h\x1B[2J\x1B[H\x1B[?2004h\x1B[?1004h\x1B[?1002h\x1B[?1006h\x1B[>23u"
     "\x1B[?2048s\x1B[?2048h\x1B[?5522$p\x1B[22;2t";
+// A partial frame can finish an OSC 8 opener without reaching its row-end close. CAN only cancels
+// an unfinished sequence, so explicitly close any active link before returning to the shell.
 constexpr std::string_view outer_terminal_restore =
     "\x18\x1B_Gq=2,m=0;\x1B\\\x1B_Ga=d,d=A,q=2\x1B\\"
-    "\x1B[0m\x1B[?2026l\x1B[r\x1B[?1l\x1B[?9l\x1B[?1000l\x1B[?1002l\x1B[?1003l"
+    "\x1B]8;;\x1B\\\x1B[0m\x1B[?2026l\x1B[r\x1B[?1l\x1B[?9l\x1B[?1000l\x1B[?1002l\x1B[?1003l"
     "\x1B[?1004l\x1B[?1005l\x1B[?1006l\x1B[?1007l\x1B[?1015l\x1B[?1016l"
     "\x1B[?2004l\x1B]112\x1B\\\x1B[0 q\x1B[?25h\x1B[?7h\x1B[<u\x1B[?2048r\x1B[23;2t\x1B[?1049l";
 constexpr std::string_view interruption_diagnostic = "lemma attach interrupted by signal\n";

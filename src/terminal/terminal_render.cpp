@@ -2,6 +2,7 @@
 
 #include "diagnostic/latency_trace.hpp"
 #include "lemma/assert.hpp"
+#include "lemma/limits.hpp"
 #include "lemma/terminal/terminal.hpp"
 #include "terminal/fingerprint.hpp"
 
@@ -438,6 +439,37 @@ constexpr std::uint8_t decscusr_steady_block = 2;
          append_color(writer, style.underline_color, "58") && writer.append("m");
 }
 
+constexpr std::string_view hyperlink_open_prefix = "\x1B]8;id=lemma-";
+constexpr std::string_view hyperlink_close = "\x1B]8;;\x1B\\";
+// Every byte of an open and its close except the URI: the prefix, a 64-bit decimal scope, `;`, and
+// the ST terminator.
+constexpr std::size_t hyperlink_sequence_bytes_max = hyperlink_open_prefix.size() +
+                                                     std::numeric_limits<std::uint64_t>::digits10 +
+                                                     1U + 1U + 2U + hyperlink_close.size();
+
+// Moves the outer terminal's active OSC 8 link from `active` to `link` (0 for none). The ID is the
+// never-aliasing terminal instance scope, so links from different Panes never join in the outer
+// terminal; OSC 8 joins cells only when both ID and URI match. An open that would exceed the render
+// pass's allowance presents the cell as plain text instead.
+[[nodiscard, gnu::noinline]] auto present_link(AnsiWriter& writer, std::uint64_t& active,
+                                               const std::uint64_t link,
+                                               const std::span<const std::uint8_t> uri,
+                                               const std::uint64_t scope,
+                                               std::size_t& allowance) noexcept -> bool {
+  if (active != 0 && !writer.append(hyperlink_close)) {
+    return false;
+  }
+  active = 0;
+  const auto cost = hyperlink_sequence_bytes_max + uri.size();
+  if (link == 0 || cost > allowance) {
+    return true;
+  }
+  allowance -= cost;
+  active = link;
+  return writer.append(hyperlink_open_prefix) && writer.append_integer(scope) &&
+         writer.append(";") && writer.append(std::as_bytes(uri)) && writer.append("\x1B\\");
+}
+
 [[nodiscard]] auto terminal_mode_enabled(const GhosttyTerminal terminal,
                                          const GhosttyMode mode) noexcept
     -> std::expected<bool, Error> {
@@ -534,6 +566,12 @@ public:
     return result;
   }
 
+  // Folds a presented hyperlink identity into a cell fingerprint.
+  [[nodiscard]] auto with_link(const std::uint64_t hash, const std::uint64_t link) const noexcept
+      -> std::uint64_t {
+    return fingerprint_mix(key_, hash, link);
+  }
+
 private:
   struct HashedStyle final {
     AnsiStyle style;
@@ -544,8 +582,108 @@ private:
   bool cached_valid_{false};
 };
 
+[[nodiscard]] auto hash_bytes(const FingerprintKey& key,
+                              std::span<const std::uint8_t> bytes) noexcept -> std::uint64_t {
+  auto hash = fingerprint_mix(key, key.initial, bytes.size());
+  while (!bytes.empty()) {
+    const auto chunk = bytes.first(std::min(bytes.size(), sizeof(std::uint64_t)));
+    std::uint64_t word = 0;
+    std::memcpy(&word, chunk.data(), chunk.size());
+    hash = fingerprint_mix(key, hash, word);
+    bytes = bytes.subspan(chunk.size());
+  }
+  return hash;
+}
+
+// Resolves the OSC 8 link of a cell whose raw value carries Ghostty's hyperlink flag. The render
+// state copies only that flag, so the URI comes from the terminal page through an untracked grid
+// reference; no terminal mutation separates the render-state update from encoding, so its viewport
+// rows are the render state's. Ghostty's own link ID is not exposed, so the URI is the identity.
+class RowLinks final {
+public:
+  RowLinks(const GhosttyTerminal terminal, const FingerprintKey& key) noexcept
+      : terminal_(terminal), key_(&key) {}
+
+  void reset(const std::uint16_t row, const std::size_t columns) noexcept {
+    row_ = row;
+    columns_ = columns;
+    row_resolved_ = false;
+  }
+
+  // The nonzero keyed fingerprint of the cell's forwardable URI, or 0 when it has none that may
+  // be forwarded. The URI stays readable through uri() until the next resolve.
+  [[nodiscard]] auto resolve(const std::size_t column) noexcept -> std::uint64_t {
+    LEMMA_ASSERT(column < columns_);
+    if (!row_resolved_) {
+      // Resolving a point walks the page list, so do it once per row. A grid reference is a page
+      // position (node, x, y) and every cell of a row shares its node and y. Resolving the last
+      // column also proves that the row's page spans every column.
+      const GhosttyPoint point{
+          .tag = GHOSTTY_POINT_TAG_VIEWPORT,
+          .value = {.coordinate = {.x = static_cast<std::uint16_t>(columns_ - 1U), .y = row_}},
+      };
+      row_ref_ = GHOSTTY_INIT_SIZED(GhosttyGridRef);
+      row_valid_ = ghostty_terminal_grid_ref(terminal_, point, &row_ref_) == GHOSTTY_SUCCESS;
+      row_resolved_ = true;
+    }
+    if (!row_valid_) {
+      return 0;
+    }
+    auto ref = row_ref_;
+    ref.x = static_cast<std::uint16_t>(column);
+    std::size_t length = 0;
+    auto& next = std::span(uri_scratch()).subspan(1U - current_, 1).front();
+    // A URI longer than the buffer reports GHOSTTY_OUT_OF_SPACE and is not forwarded.
+    if (ghostty_grid_ref_hyperlink_uri(&ref, next.data(), next.size(), &length) !=
+            GHOSTTY_SUCCESS ||
+        length == 0) {
+      return 0;
+    }
+    // Adjacent linked cells usually share one URI: compare it with the last one, and fingerprint
+    // and validate it only when it changes.
+    const auto fetched = std::span<const std::uint8_t>(next).first(length);
+    if (last_ == 0 || !std::ranges::equal(fetched, uri())) {
+      current_ = 1U - current_;
+      size_ = length;
+      last_ = std::max(hash_bytes(*key_, fetched), std::uint64_t{1});
+      last_forwardable_ = outer_hyperlink_uri_forwardable(fetched);
+    }
+    return last_forwardable_ ? last_ : 0;
+  }
+
+  // The URI of the last link resolve returned, readable until the next resolve.
+  [[nodiscard]] auto uri() const noexcept -> std::span<const std::uint8_t> {
+    return std::span<const std::uint8_t>(std::span(uri_scratch()).subspan(current_, 1).front())
+        .first(size_);
+  }
+
+private:
+  using UriScratch = std::array<std::uint8_t, limits::outer_hyperlink_uri_bytes_max>;
+
+  // The last URI and the next one, per thread. Kept off the per-row decoder so link-free rows
+  // neither clear nor stack-probe them.
+  [[nodiscard]] static auto uri_scratch() noexcept -> std::array<UriScratch, 2>& {
+    thread_local std::array<UriScratch, 2> scratch{};
+    return scratch;
+  }
+
+  GhosttyTerminal terminal_;
+  const FingerprintKey* key_;
+  std::uint16_t row_{0};
+  std::size_t columns_{0};
+  GhosttyGridRef row_ref_{};
+  bool row_resolved_{false};
+  bool row_valid_{false};
+  std::size_t current_{0};
+  std::size_t size_{0};
+  // Nonzero fingerprint of the URI in the current buffer, 0 before the row's first link.
+  std::uint64_t last_{0};
+  bool last_forwardable_{false};
+};
+
 // The projected presentation of one cell. Style includes selection highlighting; grapheme bytes
-// are borrowed from the owning RowCellDecoder until its next decode.
+// are borrowed from the owning RowCellDecoder until its next decode. Link state stays in the
+// decoder: every decode assigns this value, which must stay small enough to copy inline.
 struct DecodedCell final {
   AnsiStyle style{};
   std::uint64_t hash{0};
@@ -555,6 +693,7 @@ struct DecodedCell final {
   bool selected{false};
   bool native_default{false};
 };
+static_assert(sizeof(DecodedCell) <= 64);
 
 // One row traversal over Ghostty's render state. The bulk raw-cell view supplies every column with
 // one call. Within a row, equal raw values share page, style ID, width and content, so an adjacent
@@ -562,12 +701,15 @@ struct DecodedCell final {
 // differs. Only styles that miss the row projection and non-ASCII text use per-cell accessors.
 class RowCellDecoder final {
 public:
+  // Hyperlinks are resolved only when presented; otherwise linked cells project as plain text.
   RowCellDecoder(const GhosttyRenderStateColors& colors, const TerminalTheme& theme,
-                 const FingerprintKey& key) noexcept
-      : colors_(&colors), theme_(&theme), hasher_(key) {}
+                 const FingerprintKey& key, const GhosttyTerminal terminal,
+                 const bool hyperlinks) noexcept
+      : colors_(&colors), theme_(&theme), hasher_(key), links_(terminal, key),
+        hyperlinks_(hyperlinks) {}
 
   [[nodiscard]] auto open(const GhosttyRenderStateRowIterator row,
-                          GhosttyRenderStateRowCells& cells) noexcept
+                          GhosttyRenderStateRowCells& cells, const std::size_t row_index) noexcept
       -> std::expected<void, Error> {
     auto result = ghostty_render_state_row_get(row, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
                                                static_cast<void*>(&cells));
@@ -583,13 +725,18 @@ public:
     if (!selection.has_value()) {
       return std::unexpected(selection.error());
     }
-    const auto plain = plain_row(row, *selection);
-    if (!plain.has_value()) {
-      return std::unexpected(plain.error());
+    const auto flags = row_flags(row, *selection, hyperlinks_);
+    if (!flags.has_value()) {
+      return std::unexpected(flags.error());
     }
     raw_ = std::span(view.ptr, view.len);
     selection_ = *selection;
-    plain_ = *plain;
+    plain_ = flags->plain;
+    linked_row_ = flags->linked;
+    cell_linked_ = false;
+    link_ = 0;
+    LEMMA_ASSERT(row_index <= std::numeric_limits<std::uint16_t>::max());
+    links_.reset(static_cast<std::uint16_t>(row_index), raw_.size());
     cursor_.reset(cells);
     // Style IDs are page-local; never carry a projection into another row.
     styles_ = {};
@@ -602,9 +749,18 @@ public:
   [[nodiscard]] auto repeated() const noexcept -> bool { return repeated_; }
   [[nodiscard]] auto raw() const noexcept -> std::span<const GhosttyCell> { return raw_; }
   // Ghostty's row flags have no false negatives: without styled or grapheme cells, every cell uses
-  // style ID 0 and keeps its complete content in the raw value. Without selection, nothing else
-  // row-specific enters its projection.
+  // style ID 0 and keeps its complete content in the raw value. Without selection or presented
+  // hyperlinks (whose URIs are outside the raw value), nothing else row-specific enters its
+  // projection.
   [[nodiscard]] auto plain() const noexcept -> bool { return plain_; }
+  // The row may carry hyperlinks that are presented; otherwise link() is always 0.
+  [[nodiscard]] auto linked_row() const noexcept -> bool { return linked_row_; }
+  // Keyed identity of the last decoded cell's forwardable OSC 8 link, 0 for none.
+  [[nodiscard]] auto link() const noexcept -> std::uint64_t { return link_; }
+  // URI of that link, borrowed until the next decode.
+  [[nodiscard]] auto link_uri() const noexcept -> std::span<const std::uint8_t> {
+    return links_.uri();
+  }
 
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] auto decode(const std::size_t column) noexcept
@@ -666,17 +822,60 @@ public:
     return &cell_;
   }
 
+  // Folds the OSC 8 link of the cell the last decode returned into its fingerprint. Only rows that
+  // present links call it, so decoding link-free rows is unchanged. A repeated decode shares the
+  // raw hyperlink flag with the previous cell, but not necessarily its link.
+  [[nodiscard, gnu::noinline]] auto link_cell(const std::size_t column) noexcept
+      -> std::expected<void, Error> {
+    LEMMA_ASSERT(linked_row_ && decoded_);
+    if (!repeated_) {
+      const auto result =
+          ghostty_cell_get(raw_cell_, GHOSTTY_CELL_DATA_HAS_HYPERLINK, &cell_linked_);
+      if (result != GHOSTTY_SUCCESS) {
+        return std::unexpected(detail::map_error(result));
+      }
+      unlinked_hash_ = cell_.hash;
+      link_ = 0;
+    }
+    if (cell_linked_) {
+      const auto link = links_.resolve(column);
+      if (link != link_) {
+        link_ = link;
+        cell_.hash = link == 0 ? unlinked_hash_ : hasher_.with_link(unlinked_hash_, link);
+      }
+    }
+    return {};
+  }
+
 private:
-  [[nodiscard]] static auto plain_row(const GhosttyRenderStateRowIterator row,
-                                      const SelectedColumns selection) noexcept
-      -> std::expected<bool, Error> {
-    if (selection.begin != selection.end) {
-      return false;
+  struct RowFlags final {
+    bool plain{false};
+    bool linked{false};
+  };
+
+  [[nodiscard]] static auto row_flags(const GhosttyRenderStateRowIterator row,
+                                      const SelectedColumns selection,
+                                      const bool hyperlinks) noexcept
+      -> std::expected<RowFlags, Error> {
+    const bool selected = selection.begin != selection.end;
+    if (selected && !hyperlinks) {
+      return RowFlags{};
     }
     GhosttyRow raw_row = 0;
     auto result = ghostty_render_state_row_get(row, GHOSTTY_RENDER_STATE_ROW_DATA_RAW, &raw_row);
     if (result != GHOSTTY_SUCCESS) {
       return std::unexpected(detail::map_error(result));
+    }
+    // The hyperlink flag may be a false positive, whose cells then resolve no link.
+    bool linked = false;
+    if (hyperlinks) {
+      result = ghostty_row_get(raw_row, GHOSTTY_ROW_DATA_HYPERLINK, &linked);
+      if (result != GHOSTTY_SUCCESS) {
+        return std::unexpected(detail::map_error(result));
+      }
+    }
+    if (selected || linked) {
+      return RowFlags{.plain = false, .linked = linked};
     }
     // Most redrawn rows of styled applications are styled; ask for graphemes only when needed.
     bool flag = true;
@@ -687,7 +886,7 @@ private:
     if (result != GHOSTTY_SUCCESS) {
       return std::unexpected(detail::map_error(result));
     }
-    return !flag;
+    return RowFlags{.plain = !flag, .linked = false};
   }
 
   [[nodiscard]] auto graphemes(const std::size_t column, const GhosttyCellContentTag content_tag,
@@ -727,10 +926,18 @@ private:
   std::span<const GhosttyCell> raw_;
   SelectedColumns selection_{};
   bool plain_{false};
+  bool linked_row_{false};
   RowCellCursor cursor_;
   RowStyleProjection styles_;
   RenderedCellHasher hasher_;
+  RowLinks links_;
+  bool hyperlinks_;
   DecodedCell cell_{};
+  // The last decoded cell carries Ghostty's hyperlink flag, its presented link, and its fingerprint
+  // before that link was folded in. Maintained only in rows that present links.
+  bool cell_linked_{false};
+  std::uint64_t link_{0};
+  std::uint64_t unlinked_hash_{0};
   GhosttyCell raw_cell_{0};
   bool decoded_{false};
   bool repeated_{false};
@@ -830,12 +1037,28 @@ private:
 }
 
 // Grapheme/style hashing is intentionally explicit so unsafe scroll equivalence is never inferred.
-[[nodiscard]] auto Terminal::Impl::calculate_row_hash() noexcept
+[[nodiscard]] auto Terminal::Impl::calculate_row_hash(const std::size_t row_index) noexcept
     -> std::expected<std::uint64_t, Error> {
-  RowCellDecoder decoder(render_colors, session_theme, fingerprint_key);
-  const auto opened = decoder.open(row_iterator, row_cells);
+  return calculate_row_hash_as<false>(row_index);
+}
+
+[[nodiscard]] auto Terminal::Impl::calculate_linked_row_hash(const std::size_t row_index) noexcept
+    -> std::expected<std::uint64_t, Error> {
+  return calculate_row_hash_as<true>(row_index);
+}
+
+template <bool Links>
+[[nodiscard]] auto Terminal::Impl::calculate_row_hash_as(const std::size_t row_index) noexcept
+    -> std::expected<std::uint64_t, Error> {
+  RowCellDecoder decoder(render_colors, session_theme, fingerprint_key, terminal, ansi_hyperlinks);
+  const auto opened = decoder.open(row_iterator, row_cells, row_index);
   if (!opened.has_value()) {
     return std::unexpected(opened.error());
+  }
+  if constexpr (!Links) {
+    if (decoder.linked_row()) {
+      return calculate_linked_row_hash(row_index);
+    }
   }
   LEMMA_ASSERT(decoder.columns() == options.size.columns);
   if (decoder.plain()) {
@@ -848,6 +1071,12 @@ private:
     const auto decoded = decoder.decode(column);
     if (!decoded.has_value()) {
       return std::unexpected(decoded.error());
+    }
+    if constexpr (Links) {
+      const auto linked = decoder.link_cell(column);
+      if (!linked.has_value()) {
+        return std::unexpected(linked.error());
+      }
     }
     row_hash = fingerprint_mix(fingerprint_key, row_hash, (*decoded)->hash);
   }
@@ -925,20 +1154,44 @@ void Terminal::Impl::apply_physical_scroll(const std::int32_t scroll) noexcept {
   std::fill(hashes.begin(), hashes.begin() + static_cast<std::ptrdiff_t>(amount), 0);
 }
 
-// Encode the minimal prefix/suffix-differing span while refreshing bounded physical state.
 [[nodiscard]] auto
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, const bool force,
                            const bool probe_unchanged, const std::uint16_t origin_column,
                            const std::uint16_t origin_row, const bool erase_line_tail) noexcept
     -> std::expected<detail::RowEncoding, Error> {
+  return encode_row_as<false>(writer, row_index, force, probe_unchanged, origin_column, origin_row,
+                              erase_line_tail);
+}
+
+[[nodiscard]] auto Terminal::Impl::encode_linked_row(
+    AnsiWriter& writer, const std::size_t row_index, const bool force, const bool probe_unchanged,
+    const std::uint16_t origin_column, const std::uint16_t origin_row,
+    const bool erase_line_tail) noexcept -> std::expected<detail::RowEncoding, Error> {
+  return encode_row_as<true>(writer, row_index, force, probe_unchanged, origin_column, origin_row,
+                             erase_line_tail);
+}
+
+// Encode the minimal prefix/suffix-differing span while refreshing bounded physical state.
+template <bool Links>
+[[nodiscard]] auto
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+Terminal::Impl::encode_row_as(AnsiWriter& writer, const std::size_t row_index, const bool force,
+                              const bool probe_unchanged, const std::uint16_t origin_column,
+                              const std::uint16_t origin_row, const bool erase_line_tail) noexcept
+    -> std::expected<detail::RowEncoding, Error> {
   LEMMA_ASSERT(row_index < row_hash_count);
   LEMMA_ASSERT(physical_cell_hashes != nullptr);
   const auto checkpoint = writer.size();
-  RowCellDecoder decoder(render_colors, session_theme, fingerprint_key);
-  const auto opened = decoder.open(row_iterator, row_cells);
+  RowCellDecoder decoder(render_colors, session_theme, fingerprint_key, terminal, ansi_hyperlinks);
+  const auto opened = decoder.open(row_iterator, row_cells, row_index);
   if (!opened.has_value()) {
     return std::unexpected(opened.error());
+  }
+  if constexpr (!Links) {
+    if (decoder.linked_row()) {
+      return encode_linked_row(writer, row_index, force, probe_unchanged, origin_column, origin_row,
+                               erase_line_tail);
+    }
   }
   LEMMA_ASSERT(decoder.columns() == options.size.columns);
 
@@ -958,6 +1211,10 @@ Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, cons
   AnsiStyle active_style{};
   bool active_style_valid = false;
   bool span_started = false;
+  // The outer terminal's open OSC 8 link, and whether one is open at changed_end. Every row closes
+  // its link, so none leaks into later positioning, other Panes, or composition.
+  std::uint64_t active_link = 0;
+  bool link_open_at_changed_end = false;
   std::size_t changed_end = checkpoint;
   std::size_t trailing_blank_start = std::numeric_limits<std::size_t>::max();
   std::size_t trailing_blank_content_start = 0;
@@ -968,6 +1225,12 @@ Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, cons
     const auto decoded = decoder.decode(cell_count);
     if (!decoded.has_value()) {
       return std::unexpected(decoded.error());
+    }
+    if constexpr (Links) {
+      const auto linked = decoder.link_cell(cell_count);
+      if (!linked.has_value()) {
+        return std::unexpected(linked.error());
+      }
     }
     const auto& cell = **decoded;
     const auto& style = cell.style;
@@ -999,6 +1262,15 @@ Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, cons
         }
         span_started = true;
       }
+      // The outer terminal links a wide character's spacer tail with its head. Link changes precede
+      // the cell checkpoint, so a blank tail (never linked) always begins with no link open.
+      if constexpr (Links) {
+        if (decoder.link() != active_link && wide != GHOSTTY_CELL_WIDE_SPACER_TAIL &&
+            !present_link(writer, active_link, decoder.link(), decoder.link_uri(),
+                          graphics_identity, hyperlink_bytes_remaining)) {
+          return std::unexpected(Error::out_of_space);
+        }
+      }
 
       const auto cell_checkpoint = writer.size();
       if (!style_active) {
@@ -1010,6 +1282,7 @@ Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, cons
       }
 
       const bool default_blank = !cell.selected && grapheme_bytes.empty() &&
+                                 (!Links || decoder.link() == 0) &&
                                  wide != GHOSTTY_CELL_WIDE_SPACER_TAIL && cell.native_default &&
                                  content_tag != GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE &&
                                  content_tag != GHOSTTY_CELL_CONTENT_BG_COLOR_RGB;
@@ -1057,6 +1330,9 @@ Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, cons
       }
       if (changed) {
         changed_end = writer.size();
+        if constexpr (Links) {
+          link_open_at_changed_end = active_link != 0;
+        }
       }
     }
   }
@@ -1092,6 +1368,9 @@ Terminal::Impl::encode_row(AnsiWriter& writer, const std::size_t row_index, cons
     }
   } else {
     writer.rewind(changed_end);
+    if (Links && link_open_at_changed_end && !writer.append(hyperlink_close)) {
+      return std::unexpected(Error::out_of_space);
+    }
   }
   return detail::RowEncoding::emitted;
 }
@@ -1142,7 +1421,7 @@ auto Terminal::mark_rendered() noexcept -> std::expected<void, Error> {
 auto Terminal::render_ansi(const std::span<std::byte> output, const bool force_full) noexcept
     -> std::expected<AnsiRenderResult, Error> {
   return render_ansi_impl(output, force_full, 0, 0, false, true, false, 0, 0,
-                          TerminalScroll::screen);
+                          TerminalScroll::screen, true);
 }
 
 auto Terminal::render_pane_ansi(const std::span<std::byte> output,
@@ -1150,7 +1429,7 @@ auto Terminal::render_pane_ansi(const std::span<std::byte> output,
     -> std::expected<AnsiRenderResult, Error> {
   return render_ansi_impl(output, options.force_full, options.column, options.row, true,
                           options.focused, options.cursor_override, options.cursor_override_column,
-                          options.cursor_override_row, options.terminal_scroll);
+                          options.cursor_override_row, options.terminal_scroll, options.hyperlinks);
 }
 
 void Terminal::invalidate_ansi_render_state() noexcept {
@@ -1199,7 +1478,8 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
                                 const bool composed, const bool focused, const bool cursor_override,
                                 const std::uint16_t cursor_override_column,
                                 const std::uint16_t cursor_override_row,
-                                const TerminalScroll terminal_scroll) noexcept
+                                const TerminalScroll terminal_scroll,
+                                const bool hyperlinks) noexcept
     -> std::expected<AnsiRenderResult, Error> {
   LEMMA_ASSERT(impl_ != nullptr);
   LEMMA_ASSERT(impl_->render_state != nullptr);
@@ -1240,6 +1520,14 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
     diagnostic::record_latency_trace(diagnostic::LatencyTraceStage::ghostty_damage_reported, 0,
                                      static_cast<std::uint64_t>(*dirty));
   }
+  if (impl_->ansi_hyperlinks != hyperlinks) {
+    // Physical state was presented under the other hyperlink policy; cell fingerprints include
+    // links only while they are presented.
+    impl_->ansi_physical_valid = false;
+    impl_->ansi_hyperlinks = hyperlinks;
+  }
+  impl_->hyperlink_bytes_remaining =
+      hyperlinks ? impl_->physical_cell_count * pane_ansi_hyperlink_bytes_per_cell : 0;
   const bool full = force_full || !impl_->ansi_physical_valid;
   // Cursor/default colors can change without cell damage, so every frame acquires the scalar
   // prefix. Ghostty guarantees palette mutations force redraw; clean frames can therefore avoid
@@ -1293,7 +1581,7 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
     }
     std::size_t hash_index = 0;
     while (ghostty_render_state_row_iterator_next(impl_->row_iterator)) {
-      const auto hash = impl_->calculate_row_hash();
+      const auto hash = impl_->calculate_row_hash(hash_index);
       if (!hash.has_value()) {
         impl_->ansi_physical_valid = false;
         return std::unexpected(hash.error());
@@ -1511,6 +1799,37 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
                     .row = static_cast<std::uint16_t>(origin_row + presented_cursor_row)}}
               : std::nullopt,
   };
+}
+
+auto outer_hyperlink_uri_forwardable(const std::span<const std::uint8_t> uri) noexcept -> bool {
+  if (uri.empty() || uri.size() > limits::outer_hyperlink_uri_bytes_max) {
+    return false;
+  }
+  // Excludes C0, DEL, C1, and every non-ASCII byte, so the URI can neither terminate the sequence
+  // nor carry controls the outer terminal might interpret.
+  constexpr std::uint8_t printable_first = 0x20;
+  constexpr std::uint8_t printable_last = 0x7E;
+  if (!std::ranges::all_of(uri, [](const std::uint8_t byte) noexcept {
+        return byte >= printable_first && byte <= printable_last;
+      })) {
+    return false;
+  }
+  // scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ), followed by ":".
+  const auto alpha = [](const std::uint8_t byte) noexcept {
+    return (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z');
+  };
+  if (!alpha(uri.front())) {
+    return false;
+  }
+  for (const auto byte : uri.subspan(1)) {
+    if (byte == ':') {
+      return true;
+    }
+    if (!alpha(byte) && (byte < '0' || byte > '9') && byte != '+' && byte != '-' && byte != '.') {
+      return false;
+    }
+  }
+  return false;
 }
 
 } // namespace lemma::vt

@@ -27,6 +27,8 @@ struct PaneSurface final {
   bool presentation_suppressed{false};
   bool border_right{false};
   bool border_bottom{false};
+  // Re-emit the Pane's OSC 8 hyperlinks to the outer terminal.
+  bool hyperlinks{true};
 };
 
 struct GridSurface final {

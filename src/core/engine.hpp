@@ -109,6 +109,7 @@ struct ReactorEnvironment final {
   bool outer_notifications{true};
   bool outer_progress{false};
   bool outer_cwd{true};
+  bool outer_hyperlinks{true};
   bool clipboard_read{false};
   bool clipboard_write{false};
   int extension_descriptor{-1};

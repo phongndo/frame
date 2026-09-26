@@ -178,6 +178,7 @@ collect_surfaces(SessionRecord& session, PaneRuntimeStore& runtimes,
             static_cast<std::uint32_t>(tab->layout_column) + tab->layout_columns,
         .border_bottom = static_cast<std::uint32_t>(pane->rectangle.row) + pane->rectangle.rows <
                          static_cast<std::uint32_t>(tab->layout_row) + tab->layout_rows,
+        .hyperlinks = reactor_outer_hyperlinks(),
     };
     ++count;
   }

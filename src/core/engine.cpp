@@ -279,6 +279,11 @@ private:
   return active_reactor_environment->outer_cwd;
 }
 
+[[nodiscard]] auto reactor_outer_hyperlinks() noexcept -> bool {
+  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  return active_reactor_environment->outer_hyperlinks;
+}
+
 [[nodiscard]] auto reactor_poll(const std::span<pollfd> descriptors,
                                 const int timeout_milliseconds) noexcept -> int {
   LEMMA_ASSERT(active_reactor_environment != nullptr);
@@ -10884,6 +10889,7 @@ void service_configuration_reload(ReactorEnvironment& environment, ReloadState& 
     environment.outer_notifications = outer.notifications;
     environment.outer_progress = outer.progress;
     environment.outer_cwd = outer.cwd;
+    environment.outer_hyperlinks = outer.hyperlinks;
     environment.default_program = generation.default_program();
     environment.default_cwd = generation.default_cwd();
     environment.command_history_file = generation.history_file();

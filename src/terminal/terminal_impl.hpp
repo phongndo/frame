@@ -124,7 +124,8 @@ struct Terminal::Impl final {
   [[nodiscard]] auto populate_render_metadata(RenderUpdate& update) noexcept
       -> std::expected<void, Error>;
   [[nodiscard]] auto dirty_row_count() noexcept -> std::expected<std::size_t, Error>;
-  [[nodiscard]] auto calculate_row_hash() noexcept -> std::expected<std::uint64_t, Error>;
+  [[nodiscard]] auto calculate_row_hash(std::size_t row_index) noexcept
+      -> std::expected<std::uint64_t, Error>;
   [[nodiscard]] auto detect_scroll() const noexcept -> std::int32_t;
   void apply_physical_scroll(std::int32_t scroll) noexcept;
   // A redraw can probe plain rows for an unchanged fingerprint before visiting their cells.
@@ -132,6 +133,24 @@ struct Terminal::Impl final {
                                 bool probe_unchanged, std::uint16_t origin_column,
                                 std::uint16_t origin_row, bool erase_line_tail) noexcept
       -> std::expected<detail::RowEncoding, Error>;
+  // Row passes specialized on whether the row presents hyperlinks. The link-free instantiations
+  // are the common path; once the opened row turns out to carry links, they reopen it in the
+  // out-of-line linked pass, so hyperlink support adds nothing to their cell loops. Instantiated
+  // only by the renderer.
+  template <bool Links>
+  [[nodiscard]] auto calculate_row_hash_as(std::size_t row_index) noexcept
+      -> std::expected<std::uint64_t, Error>;
+  template <bool Links>
+  [[nodiscard]] auto encode_row_as(detail::AnsiWriter& writer, std::size_t row_index, bool force,
+                                   bool probe_unchanged, std::uint16_t origin_column,
+                                   std::uint16_t origin_row, bool erase_line_tail) noexcept
+      -> std::expected<detail::RowEncoding, Error>;
+  [[nodiscard, gnu::noinline]] auto calculate_linked_row_hash(std::size_t row_index) noexcept
+      -> std::expected<std::uint64_t, Error>;
+  [[nodiscard, gnu::noinline]] auto
+  encode_linked_row(detail::AnsiWriter& writer, std::size_t row_index, bool force,
+                    bool probe_unchanged, std::uint16_t origin_column, std::uint16_t origin_row,
+                    bool erase_line_tail) noexcept -> std::expected<detail::RowEncoding, Error>;
 
   TerminalOptions options;
   TerminalTheme session_theme{};
@@ -184,6 +203,10 @@ struct Terminal::Impl final {
   bool mirrored_compositor_modes_valid{false};
   bool projected_cursor_valid{false};
   bool ansi_physical_valid{false};
+  // Whether the retained physical state was presented with OSC 8 hyperlinks.
+  bool ansi_hyperlinks{true};
+  // OSC 8 bytes the current render pass may still emit; see pane_ansi_hyperlink_bytes_per_cell.
+  std::size_t hyperlink_bytes_remaining{0};
   bool selection_checkpoint_rectangle{false};
   // At most limits::terminal_pty_response_bytes_max pending bytes. Capacity grows only when replies
   // need it and is retained after draining, so the bound is not resident for every pane.

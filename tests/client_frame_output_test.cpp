@@ -116,7 +116,7 @@ TEST(ClientFrameOutputTest, RejectsCapacityAndPreservesStorageAfterFailedLifecyc
 
   const auto protocol_maximum = render::frame_capacity_for_viewport({.columns = 500, .rows = 200});
   ASSERT_TRUE(protocol_maximum.has_value());
-  EXPECT_EQ(*protocol_maximum, 36'604'096U + limits::outer_attention_frame_bytes_max +
+  EXPECT_EQ(*protocol_maximum, 39'804'096U + limits::outer_attention_frame_bytes_max +
                                    limits::outer_title_frame_bytes_max);
   EXPECT_LE(*protocol_maximum, render::frame_bytes_max);
 

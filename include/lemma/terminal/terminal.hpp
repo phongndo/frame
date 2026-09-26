@@ -233,12 +233,21 @@ struct AnsiRenderResult final {
 // UTF-8 requires at most four bytes per retained codepoint.
 inline constexpr std::size_t pane_grapheme_codepoints_max = 65;
 inline constexpr std::size_t pane_ansi_grapheme_bytes_max = pane_grapheme_codepoints_max * 4U;
+// OSC 8 bytes one render pass may spend per pane cell, pooled across the pass. Links beyond the
+// pooled allowance are presented as plain text rather than exhausting the frame.
+inline constexpr std::size_t pane_ansi_hyperlink_bytes_per_cell = 32;
 // Per-cell allocation contract for a composed pane: one maximum grapheme, a 78-byte full SGR
 // transition, a conservatively per-cell 14-byte absolute position (normally once per row), the
-// 10-byte autowrap boundary for a last-column grapheme, and the 4-byte reset emitted once per
-// nonempty pane.
+// 10-byte autowrap boundary for a last-column grapheme, the 4-byte reset emitted once per
+// nonempty pane, and the pooled hyperlink allowance.
 inline constexpr std::size_t pane_ansi_bytes_per_cell_max =
-    pane_ansi_grapheme_bytes_max + 78U + 14U + 10U + 4U;
+    pane_ansi_grapheme_bytes_max + 78U + 14U + 10U + 4U + pane_ansi_hyperlink_bytes_per_cell;
+
+// Whether a Pane's OSC 8 URI may be re-emitted to the outer terminal: 1 to
+// limits::outer_hyperlink_uri_bytes_max printable ASCII bytes (OSC 8 permits only bytes 32-126)
+// beginning with an RFC 3986 scheme and `:`. Any other URI is dropped, never altered.
+[[nodiscard]] auto outer_hyperlink_uri_forwardable(std::span<const std::uint8_t> uri) noexcept
+    -> bool;
 
 // How the outer terminal may move a pane's already presented rows when its content scrolls.
 enum class TerminalScroll : std::uint8_t {
@@ -261,6 +270,8 @@ struct PaneRenderOptions final {
   bool focused{false};
   bool cursor_override{false};
   TerminalScroll terminal_scroll{TerminalScroll::none};
+  // Re-emit Pane OSC 8 hyperlinks. Changing it repaints the pane in full.
+  bool hyperlinks{true};
 };
 
 enum class KeyAction : std::uint8_t {
@@ -771,7 +782,7 @@ private:
   render_ansi_impl(std::span<std::byte> output, bool force_full, std::uint16_t origin_column,
                    std::uint16_t origin_row, bool composed, bool focused, bool cursor_override,
                    std::uint16_t cursor_override_column, std::uint16_t cursor_override_row,
-                   TerminalScroll terminal_scroll) noexcept
+                   TerminalScroll terminal_scroll, bool hyperlinks) noexcept
       -> std::expected<AnsiRenderResult, Error>;
 
   std::unique_ptr<Impl> impl_;
