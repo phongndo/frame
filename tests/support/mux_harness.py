@@ -247,6 +247,8 @@ class LemmaServer:
         zdot = self.root / "zdot"
         for directory in (home, config, zdot):
             directory.mkdir(mode=0o700)
+        # A fresh ZDOTDIR must not launch zsh-newuser-install instead of the test shell.
+        (zdot / ".zshrc").write_text("", encoding="utf-8")
         if config_text is not None:
             lemma_config = config / "lemma"
             lemma_config.mkdir(mode=0o700)
