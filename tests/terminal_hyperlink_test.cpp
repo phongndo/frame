@@ -85,6 +85,37 @@ void expect_links_contained(const std::string_view encoded) {
   EXPECT_FALSE(active) << "link open at frame end";
 }
 
+void expect_link_bytes_bounded(const std::string_view encoded, const std::size_t maximum) {
+  std::size_t bytes = 0;
+  auto remaining = encoded;
+  for (auto begin = remaining.find("\x1B]8;"); begin != std::string_view::npos;
+       begin = remaining.find("\x1B]8;")) {
+    remaining.remove_prefix(begin);
+    const auto end = remaining.find("\x1B\\");
+    ASSERT_NE(end, std::string_view::npos);
+    bytes += end + 2U;
+    remaining.remove_prefix(end + 2U);
+  }
+  EXPECT_GT(bytes, 0U);
+  EXPECT_LE(bytes, maximum);
+  expect_links_contained(encoded);
+}
+
+[[nodiscard]] auto visible_text(Terminal& terminal) -> std::string {
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  const auto bytes =
+      terminal.format_visible_tail(ScreenFormat::plain, terminal.size().rows, output);
+  EXPECT_TRUE(bytes.has_value());
+  return std::string(view(output, bytes.value_or(0)));
+}
+
+[[nodiscard]] auto full_frame(Terminal& terminal) -> std::string {
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  const auto rendered = terminal.render_ansi(output, true);
+  EXPECT_TRUE(rendered.has_value());
+  return std::string(view(output, rendered.has_value() ? rendered->bytes : 0));
+}
+
 // GoogleTest assertions inflate the measured branch count.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(TerminalHyperlinkTest, ForwardsOnlyBoundedPrintableUrisWithAScheme) {
@@ -286,6 +317,72 @@ TEST(TerminalHyperlinkTest, LinksBeyondTheRenderAllowancePresentPlainText) {
   EXPECT_THAT(encoded, testing::HasSubstr(link_open(terminal, "https://a.test/") + "\x1B[0mok" +
                                           std::string(link_close)));
   expect_links_contained(encoded);
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(TerminalHyperlinkTest, ExhaustedAllowancePreservesTextAndClearsReplacedDestinations) {
+  auto terminal = make_terminal(8, 2);
+  // The observing terminal has enough allowance for all 16 tested URIs, so its own renderer
+  // cannot mask a stale destination retained after the small pane exhausts its budget.
+  auto outer = make_terminal(8, 16);
+  constexpr std::string_view text = "abcdefghabcdefgh";
+  constexpr std::size_t allowance = 16U * pane_ansi_hyperlink_bytes_per_cell;
+  const auto uri_for = [](const std::size_t cell) {
+    return "https://a.test/" + std::string(128, 'a') + "/" + std::to_string(cell);
+  };
+  write_text(terminal, linked("https://a.test/old", text));
+  const auto original_text = visible_text(terminal);
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  auto rendered = terminal.render_ansi(output, true);
+  ASSERT_TRUE(rendered.has_value());
+  outer.write(std::span(output).first(rendered->bytes));
+  EXPECT_THAT(full_frame(outer), testing::HasSubstr("https://a.test/old"));
+
+  // Every cell gets a distinct URI. Each URI fits alone, but their total exhausts the pass's
+  // pooled allowance, including within the first row that used to share the old destination.
+  write_text(terminal, "\x1B[H");
+  for (std::size_t cell = 0; cell < text.size(); ++cell) {
+    write_text(terminal, linked(uri_for(cell), text.substr(cell, 1)));
+  }
+  rendered = terminal.render_ansi(output);
+  ASSERT_TRUE(rendered.has_value());
+  const auto encoded = view(output, rendered->bytes);
+  expect_link_bytes_bounded(encoded, allowance);
+  EXPECT_THAT(encoded, testing::Not(testing::HasSubstr("/15\x1B\\")));
+  outer.write(std::span(output).first(rendered->bytes));
+  EXPECT_EQ(visible_text(outer), original_text);
+  const auto observed = full_frame(outer);
+  EXPECT_THAT(observed, testing::Not(testing::HasSubstr("https://a.test/old")));
+  // Every admitted link belongs to one character. In particular, cells omitted when the
+  // allowance runs out must not inherit the last admitted link until the end of their row.
+  for (std::size_t cell = 0; cell < text.size(); ++cell) {
+    const auto open = link_open(outer, uri_for(cell));
+    const auto begin = observed.find(open);
+    if (begin == std::string::npos) {
+      continue;
+    }
+    auto run = std::string_view(observed).substr(begin + open.size());
+    const auto end = run.find(link_close);
+    ASSERT_NE(end, std::string_view::npos);
+    run = run.substr(0, end);
+    if (run.starts_with("\x1B[0m")) {
+      run.remove_prefix(4);
+    }
+    EXPECT_EQ(run, text.substr(cell, 1)) << "linked cell " << cell;
+  }
+
+  // Changing only the URI of an omitted link repaints that cell and can link it within a fresh
+  // pass's allowance, without changing the text or reviving the old destination.
+  write_text(terminal, "\x1B[2;8H" + linked("https://a.test/new", "h"));
+  rendered = terminal.render_ansi(output);
+  ASSERT_TRUE(rendered.has_value());
+  expect_link_bytes_bounded(view(output, rendered->bytes), allowance);
+  outer.write(std::span(output).first(rendered->bytes));
+  EXPECT_EQ(visible_text(outer), original_text);
+  const auto outer_links = full_frame(outer);
+  EXPECT_THAT(outer_links, testing::HasSubstr("https://a.test/new"));
+  EXPECT_THAT(outer_links, testing::Not(testing::HasSubstr("https://a.test/old")));
 }
 
 TEST(TerminalHyperlinkTest, DisablingLinksRepaintsWithoutThemAndSkipsLookups) {
