@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -433,6 +434,131 @@ TEST(ApiTest, DecodesAndEncodesSurfaceLifecycleCommands) {
       parse_json(R"({"command":"surface.create","placement":{"kind":"dock.left","size":0}})");
   ASSERT_TRUE(invalid.value.has_value());
   EXPECT_FALSE(decode_command(*invalid.value).command.has_value());
+}
+
+// GoogleTest assertions inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(ApiTest, DecodesAndEncodesFloatingPaneCommands) {
+  const auto decode = [](const std::string_view text) {
+    const auto parsed = parse_json(text);
+    EXPECT_TRUE(parsed.value.has_value()) << text;
+    return parsed.value.has_value() ? decode_command(*parsed.value) : CommandDecodeResult{};
+  };
+  const auto created = decode(R"({
+    "command":"pane.float",
+    "session":{"name":"work"},
+    "tab":{"position":2},
+    "placement":{"kind":"absolute","column":4,"row":2,"columns":40,"rows":12},
+    "argv":["htop"],
+    "cwd":"/tmp",
+    "hold":true,
+    "focus":"preserve"
+  })");
+  ASSERT_TRUE(created.command.has_value()) << created.error.reason << created.error.field;
+  EXPECT_EQ(created.command->kind, CommandKind::pane_float);
+  EXPECT_EQ(created.command->tab.position, 2U);
+  EXPECT_EQ(created.command->float_placement, core::FloatPlacement::absolute(4, 2, 40, 12));
+  EXPECT_EQ(created.command->focus, FocusPolicy::preserve);
+  EXPECT_TRUE(created.command->hold);
+  const auto encoded = encode_command(*created.command);
+  ASSERT_TRUE(encoded.has_value());
+  const auto round_trip = decode(*encoded);
+  ASSERT_TRUE(round_trip.command.has_value()) << *encoded;
+  EXPECT_EQ(round_trip.command->float_placement, created.command->float_placement);
+  EXPECT_EQ(round_trip.command->arguments, created.command->arguments);
+  EXPECT_EQ(round_trip.command->focus, FocusPolicy::preserve);
+
+  const auto placed = decode(R"({
+    "command":"pane.place","session":{"id":"0:1"},"pane":{"id":"3:1"},
+    "placement":{"kind":"relative","width_percent":80,"height_percent":60}
+  })");
+  ASSERT_TRUE(placed.command.has_value()) << placed.error.reason;
+  EXPECT_EQ(placed.command->kind, CommandKind::pane_place);
+  EXPECT_EQ(placed.command->float_placement, core::FloatPlacement::relative(80, 60));
+  const auto placed_encoded = encode_command(*placed.command);
+  ASSERT_TRUE(placed_encoded.has_value());
+  EXPECT_NE(placed_encoded->find(
+                R"("placement":{"kind":"relative","width_percent":80,"height_percent":60})"),
+            std::string::npos);
+
+  const auto hidden = decode(
+      R"({"command":"tab.floats","session":{"id":"0:1"},"tab":{"id":"1:1"},"visible":false})");
+  ASSERT_TRUE(hidden.command.has_value()) << hidden.error.reason;
+  EXPECT_EQ(hidden.command->kind, CommandKind::tab_floats);
+  EXPECT_FALSE(hidden.command->visible);
+  EXPECT_EQ(command_name(CommandKind::tab_floats), "tab.floats");
+  const auto hidden_encoded = encode_command(*hidden.command);
+  ASSERT_TRUE(hidden_encoded.has_value());
+  EXPECT_NE(hidden_encoded->find(R"("visible":false)"), std::string::npos);
+
+  // Placements are closed per kind, and the Core factories own their bounds.
+  constexpr std::array rejected{
+      std::string_view{R"({"kind":"centered","columns":2,"rows":10})"},
+      std::string_view{R"({"kind":"centered","columns":10})"},
+      std::string_view{R"({"kind":"centered","columns":10,"rows":10,"column":1})"},
+      std::string_view{R"({"kind":"absolute","column":990,"row":0,"columns":20,"rows":5})"},
+      std::string_view{R"({"kind":"absolute","column":70000,"row":0,"columns":20,"rows":5})"},
+      std::string_view{R"({"kind":"relative","width_percent":0,"height_percent":50})"},
+      std::string_view{R"({"kind":"relative","width_percent":50,"height_percent":101})"},
+      std::string_view{R"({"kind":"float","column":0,"row":0,"columns":5,"rows":5})"},
+      std::string_view{R"({"columns":10,"rows":10})"},
+  };
+  for (const auto placement : rejected) {
+    const auto document = std::string(R"({"command":"pane.place","session":{"id":"0:1"},)") +
+                          R"("pane":{"id":"3:1"},"placement":)" + std::string(placement) + "}";
+    const auto result = decode(document);
+    EXPECT_FALSE(result.command.has_value()) << placement;
+    EXPECT_EQ(result.error.field, "placement") << placement;
+  }
+  EXPECT_FALSE(decode(R"({"command":"tab.floats","session":{"id":"0:1"},"tab":{"id":"1:1"}})")
+                   .command.has_value());
+  EXPECT_FALSE(decode(R"({"command":"pane.float","session":{"id":"0:1"},"tab":{"id":"1:1"},)"
+                      R"("placement":{"kind":"centered","columns":9,"rows":9},"title":"x"})")
+                   .command.has_value());
+}
+
+// GoogleTest assertions and nested schema traversal inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(ApiTest, DefinesClosedFloatingPaneContracts) {
+  const auto parsed = parse_json(schema_document());
+  ASSERT_TRUE(parsed.value.has_value()) << parsed.error_offset;
+  const auto* const definitions = json_member(*parsed.value, "$defs");
+  ASSERT_NE(definitions, nullptr);
+  const auto* const commands = json_member(*json_member(*definitions, "command"), "oneOf");
+  ASSERT_NE(commands, nullptr);
+  const auto command_variant = [commands](const std::string_view name) -> const JsonValue* {
+    for (const auto& variant : commands->array) {
+      const auto* const properties = json_member(variant, "properties");
+      const auto* const command =
+          properties == nullptr ? nullptr : json_member(*properties, "command");
+      if (command != nullptr && json_string(*command, "const") == std::optional{name}) {
+        return &variant;
+      }
+    }
+    return nullptr;
+  };
+  for (const auto name : {std::string_view{"pane.float"}, std::string_view{"pane.place"},
+                          std::string_view{"tab.floats"}}) {
+    const auto* const variant = command_variant(name);
+    ASSERT_NE(variant, nullptr) << name;
+    EXPECT_EQ(json_boolean(*variant, "additionalProperties"), std::optional{false}) << name;
+  }
+  const auto* const placements = json_member(*json_member(*definitions, "floatPlacement"), "oneOf");
+  ASSERT_NE(placements, nullptr);
+  ASSERT_EQ(placements->array.size(), 3U);
+  for (const auto& variant : placements->array) {
+    EXPECT_EQ(json_boolean(variant, "additionalProperties"), std::optional{false});
+  }
+  const auto requires_field = [definitions](const std::string_view definition,
+                                            const std::string_view field) {
+    const auto* const required = json_member(*json_member(*definitions, definition), "required");
+    return required != nullptr &&
+           std::ranges::any_of(required->array, [field](const JsonValue& entry) {
+             return entry.kind == JsonKind::string && entry.string == field;
+           });
+  };
+  EXPECT_TRUE(requires_field("paneListing", "layer"));
+  EXPECT_TRUE(requires_field("tabInspection", "floats"));
 }
 
 TEST(ApiTest, RejectsExplicitZeroCaptureLines) {

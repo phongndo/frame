@@ -28,6 +28,10 @@ enum class OperationKind : std::uint8_t {
   tab_erase,
   tab_place,
   tab_probe_stale,
+  float_push,
+  float_erase,
+  float_raise,
+  float_place,
 };
 
 struct Operation final {
@@ -69,6 +73,14 @@ struct Operation final {
     return "tab.place";
   case OperationKind::tab_probe_stale:
     return "tab.probe-stale";
+  case OperationKind::float_push:
+    return "float.push";
+  case OperationKind::float_erase:
+    return "float.erase";
+  case OperationKind::float_raise:
+    return "float.raise";
+  case OperationKind::float_place:
+    return "float.place";
   }
   return "unknown";
 }

@@ -19,6 +19,7 @@
 #include "core/command_line.hpp"
 #include "core/connection_output.hpp"
 #include "core/copy_mode.hpp"
+#include "core/float_layer.hpp"
 #include "core/frame_scheduler.hpp"
 #include "core/input.hpp"
 #include "core/layout.hpp"
@@ -707,7 +708,7 @@ void service_clipboard(SessionRecord& session, PaneRuntimeStore& runtimes) noexc
                       : nullptr;
   const auto* tab = find_tab(session, session.active_tab);
   const bool eligible = runtime != nullptr && runtime->live() && attachment.client >= 0 &&
-                        tab != nullptr && attachment.clipboard_owner == tab->focused_pane;
+                        tab != nullptr && attachment.clipboard_owner == tab->focused_pane();
   auto request = runtime != nullptr ? runtime->terminal.clipboard_request() : std::nullopt;
   const auto paste = attachment.clipboard_paste.lock();
   const bool explicit_paste = transaction.request_id() == 0;
@@ -1271,12 +1272,15 @@ void production_hold_pane(void* const context, const SessionId session, const Pa
   };
 }
 
+void reconcile_copy_target(SessionRecord& session, PaneRuntimeStore& runtimes) noexcept;
+
 void apply_session_change(ProductionSessionRuntimeContext& context,
                           const SessionChange change) noexcept {
   LEMMA_ASSERT(context.session != nullptr && context.runtimes != nullptr);
   auto& session = *context.session;
   auto& runtimes = *context.runtimes;
-  if (std::exchange(context.copy_target_reflowed, false)) {
+  reconcile_copy_target(session, runtimes);
+  if (std::exchange(context.copy_target_reflowed, false) && session.attachment.copy_mode.active()) {
     refresh_copy_selection_after_reflow(session, runtimes);
   }
   if (change.status_changed) {
@@ -1427,6 +1431,24 @@ void leave_copy_mode(SessionRecord& session, PaneRuntimeStore& runtimes) noexcep
   session.attachment_runtime.copy_mode = {};
   if (changed) {
     schedule_frame(session, FrameUrgency::state_change, true);
+  }
+}
+
+// Copy input follows the effective focus. Inaccessible floats release their selection even when
+// their PTYs keep the old size, so suspension cannot leave input trapped in a hidden copy target.
+void reconcile_copy_target(SessionRecord& session, PaneRuntimeStore& runtimes) noexcept {
+  const auto target = session.attachment.selection_target;
+  if (!target.has_value()) {
+    return;
+  }
+  const auto* const tab = find_tab(session, target->tab);
+  const bool focus_changed =
+      session.attachment.copy_mode.active() &&
+      (tab == nullptr || tab->id != session.active_tab || tab->focused_pane() != target->pane);
+  const bool inaccessible_float =
+      tab != nullptr && tab->is_float(target->pane) && !tab->float_presentable(target->pane);
+  if (focus_changed || inaccessible_float) {
+    leave_copy_mode(session, runtimes);
   }
 }
 
@@ -2525,7 +2547,7 @@ template <typename Effect>
   runtime.hosted_command =
       AttachmentRuntime::PendingHostedCommand{.context = {.session = session.id,
                                                           .tab = tab->id,
-                                                          .pane = tab->focused_pane,
+                                                          .pane = tab->focused_pane(),
                                                           .connection = runtime.connection_id},
                                               .index = command->index};
   return true;
@@ -2720,7 +2742,7 @@ struct LaunchDirectory final {
   const auto* const current = active_tab(session);
   const auto directory = launch_directory(
       session, runtimes,
-      current == nullptr ? nullptr : find_pane(session, *current, current->focused_pane),
+      current == nullptr ? nullptr : find_pane(session, *current, current->focused_pane()),
       working_directory, inherited);
   const auto transition = machine.create_tab({.command = command,
                                               .working_directory = directory.directory,
@@ -2739,7 +2761,8 @@ struct LaunchDirectory final {
                               const std::span<const std::byte> launch_command = {},
                               const std::string_view working_directory = {},
                               const PaneExitPolicy exit_policy = PaneExitPolicy::close,
-                              const bool focus_created = true) noexcept -> Pane* {
+                              const bool focus_created = true,
+                              TransitionReason* const reason = nullptr) noexcept -> Pane* {
   ProductionSessionRuntimeContext runtime_context{.session = &session, .runtimes = &runtimes};
   SessionMachine machine(session, production_session_options(runtime_context));
   const auto command = launch_command.empty() ? reactor_default_program() : launch_command;
@@ -2753,9 +2776,37 @@ struct LaunchDirectory final {
                                               .exit_policy = exit_policy,
                                               .focus_created = focus_created});
   apply_session_change(runtime_context, transition.change);
+  if (reason != nullptr) {
+    *reason = transition.reason;
+  }
   return transition.result.status == CommandStatus::applied
              ? find_pane(session, transition.created_pane)
              : nullptr;
+}
+
+// Floats inherit their launch directory from the Tab's focused Pane, as splits do from their
+// source.
+[[nodiscard]] auto float_pane(SessionRecord& session, Tab& tab, PaneRuntimeStore& runtimes,
+                              const FloatPlacement placement,
+                              const std::span<const std::byte> launch_command,
+                              const std::string_view working_directory,
+                              const PaneExitPolicy exit_policy, const bool focus_created) noexcept
+    -> SessionTransition {
+  ProductionSessionRuntimeContext runtime_context{.session = &session, .runtimes = &runtimes};
+  SessionMachine machine(session, production_session_options(runtime_context));
+  const auto command = launch_command.empty() ? reactor_default_program() : launch_command;
+  InheritedDirectory inherited;
+  const auto directory = launch_directory(
+      session, runtimes, find_pane(session, tab, tab.focused_pane()), working_directory, inherited);
+  const auto transition =
+      machine.float_pane(tab.id, {.placement = placement,
+                                  .command = command,
+                                  .working_directory = directory.directory,
+                                  .fallback_working_directory = directory.fallback,
+                                  .exit_policy = exit_policy,
+                                  .focus_created = focus_created});
+  apply_session_change(runtime_context, transition.change);
+  return transition;
 }
 
 template <typename Value>
@@ -2901,14 +2952,14 @@ template <typename Value>
     const auto* const tab = active_tab(session);
     const auto other = tab == nullptr
                            ? std::nullopt
-                           : pane_in_direction(session, *tab, tab->focused_pane, direction);
+                           : pane_in_direction(session, *tab, tab->focused_pane(), direction);
     if (tab == nullptr || !other.has_value()) {
       return std::nullopt;
     }
     command.kind = CommandKind::swap_panes;
     command.target = {.session = session.id,
                       .tab = tab->id,
-                      .pane = tab->focused_pane,
+                      .pane = tab->focused_pane(),
                       .peer_pane = {},
                       .attachment = {}};
     command.payload = PaneSwapCommand{.other = *other};
@@ -3109,6 +3160,8 @@ struct SessionCommandContext final {
   PaneRuntimeStore* runtimes{nullptr};
   SessionNameConflict name_conflict{nullptr};
   void* name_conflict_context{nullptr};
+  // Why the lifecycle transition could not apply, for the public result.
+  TransitionReason reason{TransitionReason::none};
 };
 
 // This is the only function that translates validated commands into authoritative mux mutations.
@@ -3146,6 +3199,7 @@ struct SessionCommandContext final {
     const auto transition = machine.dispatch(command);
     LEMMA_ASSERT(transition.handled);
     apply_session_change(runtime_context, transition.change);
+    command_context.reason = transition.reason;
     return transition.result;
   }
   if (command.kind == CommandKind::detach_client) {
@@ -3188,7 +3242,7 @@ struct SessionCommandContext final {
   }
   auto* const targeted_pane = command.target.pane.is_valid()
                                   ? find_pane(session, *tab, command.target.pane)
-                                  : find_pane(session, *tab, tab->focused_pane);
+                                  : find_pane(session, *tab, tab->focused_pane());
   if (targeted_pane == nullptr) {
     return {.status = command.target.pane.is_valid() ? CommandStatus::stale_target
                                                      : CommandStatus::failed};
@@ -3357,7 +3411,7 @@ void report_pane_focus(PaneRuntime& runtime, const bool focused) noexcept {
       session.attachment_runtime.client >= 0 && session.attachment_runtime.outer_focused
           ? active_tab(session)
           : nullptr;
-  return tab == nullptr ? PaneId{} : tab->focused_pane;
+  return tab == nullptr ? PaneId{} : tab->focused_pane();
 }
 
 // Each Pane sees alternating gained/lost reports, queued in order with its other input.
@@ -3380,7 +3434,8 @@ void reconcile_focus_reports(SessionRecord& session, PaneRuntimeStore& runtimes)
 [[nodiscard]] auto dispatch_session_command(SessionRecord& session, PaneRuntimeStore& runtimes,
                                             const Command& command,
                                             const SessionNameConflict name_conflict = nullptr,
-                                            void* const name_conflict_context = nullptr) noexcept
+                                            void* const name_conflict_context = nullptr,
+                                            TransitionReason* const reason = nullptr) noexcept
     -> CommandResult {
   auto resolved = command;
   if (!resolved.target.session.is_valid()) {
@@ -3406,7 +3461,7 @@ void reconcile_focus_reports(SessionRecord& session, PaneRuntimeStore& runtimes)
   if (targets_pane(resolved.kind) && !resolved.target.pane.is_valid()) {
     const auto* const tab = find_tab(session, resolved.target.tab);
     if (tab != nullptr) {
-      resolved.target.pane = tab->focused_pane;
+      resolved.target.pane = tab->focused_pane();
     }
   }
   SessionCommandContext context{.session = &session,
@@ -3415,6 +3470,9 @@ void reconcile_focus_reports(SessionRecord& session, PaneRuntimeStore& runtimes)
                                 .name_conflict_context = name_conflict_context};
   const CommandDispatcher dispatcher(&execute_session_command, &context);
   const auto result = dispatcher.dispatch(resolved);
+  if (reason != nullptr) {
+    *reason = context.reason;
+  }
   if (result.status == CommandStatus::applied && !session_lifecycle_command(resolved.kind)) {
     record_session_mutation(session);
   }
@@ -4182,7 +4240,7 @@ static_assert(input::key_modifier_num_lock == protocol::key_input_modifier_num_l
 [[nodiscard]] auto focused_input_runtime(SessionRecord& session,
                                          PaneRuntimeStore& runtimes) noexcept -> PaneRuntime* {
   auto* const tab = active_tab(session);
-  auto* const pane = tab == nullptr ? nullptr : find_pane(session, *tab, tab->focused_pane);
+  auto* const pane = tab == nullptr ? nullptr : find_pane(session, *tab, tab->focused_pane());
   return pane == nullptr ? nullptr : find_pane_runtime(runtimes, session, *tab, *pane);
 }
 
@@ -5146,7 +5204,7 @@ geometry_client_message(const protocol::ClientMessage& message) noexcept -> bool
         break;
       }
       auto* const tab = active_tab(session);
-      auto* const pane = tab == nullptr ? nullptr : find_pane(session, *tab, tab->focused_pane);
+      auto* const pane = tab == nullptr ? nullptr : find_pane(session, *tab, tab->focused_pane());
       if (pane == nullptr) {
         return ParseResult::error;
       }
@@ -5311,8 +5369,7 @@ geometry_client_message(const protocol::ClientMessage& message) noexcept -> bool
         owner = capture.owner;
       } else {
         for (auto& slot : session.panes) {
-          if (slot.pane == nullptr || slot.pane->tab != tab->id ||
-              (tab->zoomed && slot.pane->id != tab->focused_pane)) {
+          if (slot.pane == nullptr || !pane_presented(*tab, *slot.pane)) {
             continue;
           }
           const auto& candidate = slot.pane->rectangle;
@@ -5338,7 +5395,7 @@ geometry_client_message(const protocol::ClientMessage& message) noexcept -> bool
                                 message.mouse.button == protocol::MouseInputButton::five;
       if (message.mouse.action == protocol::MouseInputAction::press) {
         if (message.mouse.button == protocol::MouseInputButton::left && target_tab == tab &&
-            pane->id != tab->focused_pane) {
+            pane->id != tab->focused_pane()) {
           const Command focus{
               .kind = CommandKind::focus_pane,
               .origin = CommandOrigin::client,
@@ -6059,7 +6116,7 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
     result.session = inserted->id;
     result.session_revision = inserted->mutation_generation;
     result.tab = tab->id;
-    result.pane = tab->focused_pane;
+    result.pane = tab->focused_pane();
     return result;
   }
 
@@ -6181,12 +6238,54 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
     result.status = CommandStatus::applied;
     result.session_revision = session->mutation_generation;
     result.tab = created->id;
-    result.pane = created->focused_pane;
-    const auto* const created_pane = find_pane(*session, created->focused_pane);
+    result.pane = created->focused_pane();
+    const auto* const created_pane = find_pane(*session, created->focused_pane());
     const auto* const created_runtime =
         created_pane == nullptr ? nullptr : find_pane_runtime(runtimes, *session, *created_pane);
     result.terminal_generation =
         created_runtime == nullptr ? 0 : created_runtime->observation_generation;
+    return result;
+  }
+  if (request.kind == api::CommandKind::tab_floats ||
+      request.kind == api::CommandKind::pane_float) {
+    auto* const tab = public_tab(*session, request.tab);
+    if (tab == nullptr) {
+      result.status = CommandStatus::stale_target;
+      return result;
+    }
+    result.tab = tab->id;
+    SessionTransition transition;
+    if (request.kind == api::CommandKind::tab_floats) {
+      ProductionSessionRuntimeContext runtime_context{.session = session, .runtimes = &runtimes};
+      SessionMachine machine(*session, production_session_options(runtime_context));
+      transition = machine.set_floats_visible(tab->id, request.visible);
+      apply_session_change(runtime_context, transition.change);
+    } else {
+      std::vector<std::byte> command;
+      if (pane_count(*session) >= panes_per_session_max ||
+          runtimes.size() >= limits::panes_hard_max) {
+        result.status = CommandStatus::capacity;
+        return result;
+      }
+      if (!request.float_placement.has_value() || !public_launch_command(request, command)) {
+        result.status = CommandStatus::failed;
+        return result;
+      }
+      transition = float_pane(*session, *tab, runtimes, *request.float_placement, command,
+                              request.working_directory,
+                              request.hold ? PaneExitPolicy::hold : PaneExitPolicy::close,
+                              request.focus == api::FocusPolicy::created);
+      const auto* const created = find_pane(*session, transition.created_pane);
+      const auto* const created_runtime =
+          created == nullptr ? nullptr : find_pane_runtime(runtimes, *session, *created);
+      if (created_runtime != nullptr) {
+        result.pane = created->id;
+        result.terminal_generation = created_runtime->observation_generation;
+      }
+    }
+    result.status = transition.result.status;
+    result.error_reason = transition_reason_name(transition.reason);
+    result.session_revision = session->mutation_generation;
     return result;
   }
   if (request.kind == api::CommandKind::tab_select || request.kind == api::CommandKind::tab_move ||
@@ -6248,6 +6347,22 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
     result.status = result.value_json.empty() ? CommandStatus::failed : CommandStatus::applied;
     return result;
   }
+  if (request.kind == api::CommandKind::pane_place) {
+    if (!request.float_placement.has_value()) {
+      result.status = CommandStatus::failed;
+      return result;
+    }
+    ProductionSessionRuntimeContext runtime_context{.session = session, .runtimes = &runtimes};
+    SessionMachine machine(*session, production_session_options(runtime_context));
+    const auto transition = machine.place_float(tab->id, pane->id, *request.float_placement);
+    apply_session_change(runtime_context, transition.change);
+    result.status = transition.result.status;
+    result.error_reason = transition_reason_name(transition.reason);
+    result.session_revision = session->mutation_generation;
+    result.terminal_generation = runtime->observation_generation;
+    return result;
+  }
+
   if (request.kind == api::CommandKind::pane_split) {
     if (pane_count(*session) >= panes_per_session_max ||
         runtimes.size() >= limits::panes_hard_max) {
@@ -6261,12 +6376,16 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
     }
     const auto axis =
         request.direction == api::Direction::right ? SplitAxis::left_right : SplitAxis::top_bottom;
+    auto reason = TransitionReason::none;
     auto* const created =
         split_pane(*session, *tab, runtimes, pane->id, axis, command, request.working_directory,
                    request.hold ? PaneExitPolicy::hold : PaneExitPolicy::close,
-                   request.focus == api::FocusPolicy::created);
-    result.status = created == nullptr ? CommandStatus::failed : CommandStatus::applied;
+                   request.focus == api::FocusPolicy::created, &reason);
+    result.status =
+        reason == TransitionReason::none ? CommandStatus::failed : CommandStatus::unavailable;
+    result.error_reason = transition_reason_name(reason);
     if (created != nullptr) {
+      result.status = CommandStatus::applied;
       result.pane = created->id;
       const auto* const created_runtime = find_pane_runtime(runtimes, *session, *created);
       result.terminal_generation =
@@ -6386,7 +6505,10 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
   if (request.kind == api::CommandKind::pane_resize) {
     command.payload = CommandCoordinate{.value = request.amount};
   }
-  result.status = dispatch_session_command(*session, runtimes, command).status;
+  auto reason = TransitionReason::none;
+  result.status =
+      dispatch_session_command(*session, runtimes, command, nullptr, nullptr, &reason).status;
+  result.error_reason = transition_reason_name(reason);
   result.session_revision = session->mutation_generation;
   return result;
 }
@@ -6668,7 +6790,7 @@ struct RuntimeProcOwner final {
   const auto* tab = session != nullptr ? find_tab(*session, session->active_tab) : nullptr;
   return session != nullptr && session->active && session->attachment_runtime.client >= 0 &&
          session->attachment_runtime.connection_id == paste.connection && tab != nullptr &&
-         tab->focused_pane == paste.pane;
+         tab->focused_pane() == paste.pane;
 }
 
 auto begin_image_paste(const api::Command& request, Sessions& sessions,
@@ -6676,7 +6798,7 @@ auto begin_image_paste(const api::Command& request, Sessions& sessions,
   auto* session = public_session(sessions, request.session);
   auto* tab = session != nullptr ? find_tab(*session, session->active_tab) : nullptr;
   if (session == nullptr || tab == nullptr || session->attachment_runtime.client < 0 ||
-      tab->focused_pane != request.pane.id) {
+      tab->focused_pane() != request.pane.id) {
     result.status = CommandStatus::unavailable;
     result.error_reason = "focused_attachment_required";
     return {};
@@ -7103,7 +7225,8 @@ struct ProcPrepareError final {
     const auto id = api::json_string(source, "id");
     const bool creates = request->kind == api::CommandKind::session_start ||
                          request->kind == api::CommandKind::tab_new ||
-                         request->kind == api::CommandKind::pane_split;
+                         request->kind == api::CommandKind::pane_split ||
+                         request->kind == api::CommandKind::pane_float;
     if ((id_value != nullptr && !id.has_value()) ||
         (id.has_value() &&
          (!creates || !proc_id_valid(*id) || proc_binding(shapes, *id) != nullptr))) {
@@ -7281,6 +7404,7 @@ void handoff_public_focus(const api::Command& request, const PublicCommandExecut
       (request.kind == api::CommandKind::pane_focus ||
        request.kind == api::CommandKind::tab_select ||
        ((request.kind == api::CommandKind::pane_split ||
+         request.kind == api::CommandKind::pane_float ||
          request.kind == api::CommandKind::tab_new) &&
         request.focus == api::FocusPolicy::created))) {
     if (auto* const focused_session = sessions.get(execution.session); focused_session != nullptr) {
@@ -7901,7 +8025,7 @@ void finish_pending_create(PendingConnection& pending, const SessionRecord& sess
   const auto* const tab = active_tab(session);
   LEMMA_ASSERT(tab != nullptr);
   const auto tab_id = protocol::encode_control_id(tab->id);
-  const auto pane_id = protocol::encode_control_id(tab->focused_pane);
+  const auto pane_id = protocol::encode_control_id(tab->focused_pane());
   pending.output.reset();
   const auto name = session.session_name();
   const auto name_size = static_cast<std::byte>(name.size());
@@ -8302,7 +8426,7 @@ void prepare_surface_create(PendingConnection& pending, Sessions& sessions,
     }
     const bool titled = tab->set_title_override(title);
     LEMMA_ASSERT(titled);
-    finish_pending_surface(pending, tab->id, tab->focused_pane);
+    finish_pending_surface(pending, tab->id, tab->focused_pane());
     return;
   }
   if (kind != protocol::SurfaceCreateKind::split_right &&
@@ -9541,7 +9665,7 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
     return;
   }
   const bool clipboard_eligible = session.attachment_runtime.client >= 0 &&
-                                  tab.id == session.active_tab && pane.id == tab.focused_pane;
+                                  tab.id == session.active_tab && pane.id == tab.focused_pane();
   runtime.terminal.set_clipboard_access(
       clipboard_eligible && active_reactor_environment->clipboard_read,
       clipboard_eligible && active_reactor_environment->clipboard_write);
@@ -9596,7 +9720,7 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
       assess_pane_damage(session, runtimes, runtime, drained, track_interactive_damage,
                          bytes_drained, interactive_status_before);
 #ifdef LEMMA_ENABLE_LATENCY_TRACE
-  if (drained.correlation != 0 && tab.id == session.active_tab && pane.id == tab.focused_pane) {
+  if (drained.correlation != 0 && tab.id == session.active_tab && pane.id == tab.focused_pane()) {
     session.attachment_runtime.frame_trace_correlation = drained.correlation;
   }
 #endif
@@ -10042,7 +10166,7 @@ void service_attachment_command_lines(Sessions& sessions, PaneRuntimeStore& runt
     }
     remember_attachment_command_line(session.attachment);
     auto* const tab = active_tab(session);
-    auto* const pane = tab == nullptr ? nullptr : find_pane(session, *tab, tab->focused_pane);
+    auto* const pane = tab == nullptr ? nullptr : find_pane(session, *tab, tab->focused_pane());
     if (tab == nullptr || pane == nullptr) {
       finish_command_line_error(session, "Error: Target not found");
       continue;
