@@ -72,6 +72,7 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -284,11 +285,17 @@ private:
                                           timeout_milliseconds);
 }
 
+[[nodiscard]] auto reactor_send(const int descriptor, const std::span<const std::byte> head,
+                                const std::span<const std::byte> tail, const int flags) noexcept
+    -> ReactorIoResult {
+  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  return active_reactor_environment->send(active_reactor_environment->context, descriptor, head,
+                                          tail, flags);
+}
+
 [[nodiscard]] auto reactor_send(const int descriptor, const std::span<const std::byte> bytes,
                                 const int flags) noexcept -> ReactorIoResult {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
-  return active_reactor_environment->send(active_reactor_environment->context, descriptor, bytes,
-                                          flags);
+  return reactor_send(descriptor, bytes, {}, flags);
 }
 
 [[nodiscard]] auto production_poll([[maybe_unused]] void* context,
@@ -303,9 +310,25 @@ private:
 }
 
 [[nodiscard]] auto production_send([[maybe_unused]] void* context, const int descriptor,
-                                   const std::span<const std::byte> bytes, const int flags) noexcept
+                                   const std::span<const std::byte> head,
+                                   const std::span<const std::byte> tail, const int flags) noexcept
     -> ReactorIoResult {
-  const auto sent = ::send(descriptor, bytes.data(), bytes.size(), flags);
+  if (head.empty() || tail.empty()) {
+    const auto bytes = head.empty() ? tail : head;
+    const auto sent = ::send(descriptor, bytes.data(), bytes.size(), flags);
+    return {.bytes = sent, .error = sent < 0 ? errno : 0};
+  }
+  // iovec is a C ABI that never writes through iov_base for sendmsg.
+  // NOLINTBEGIN(cppcoreguidelines-pro-type-const-cast)
+  std::array<iovec, 2> vectors{{
+      {.iov_base = const_cast<std::byte*>(head.data()), .iov_len = head.size()},
+      {.iov_base = const_cast<std::byte*>(tail.data()), .iov_len = tail.size()},
+  }};
+  // NOLINTEND(cppcoreguidelines-pro-type-const-cast)
+  msghdr message{};
+  message.msg_iov = vectors.data();
+  message.msg_iovlen = vectors.size();
+  const auto sent = ::sendmsg(descriptor, &message, flags);
   return {.bytes = sent, .error = sent < 0 ? errno : 0};
 }
 
@@ -5816,7 +5839,7 @@ void record_reaped_child(Sessions& sessions, PaneRuntimeStore& runtimes,
 }
 
 [[nodiscard]] auto queue_outer_progress_removal(SessionRecord& session) noexcept -> bool;
-[[nodiscard]] auto write_attached_client(void* context, std::span<const std::byte> bytes) noexcept
+[[nodiscard]] auto write_attached_client(void* context, ClientFrameBytes bytes) noexcept
     -> ClientFrameWriteAttempt;
 
 // An ending Session closes its client without a disconnect exchange. Progress has no outer
@@ -10407,11 +10430,11 @@ void queue_due_frames(Sessions& sessions, PaneRuntimeStore& runtimes,
   }
 }
 
-[[nodiscard]] auto write_attached_client(void* const context,
-                                         const std::span<const std::byte> bytes) noexcept
+[[nodiscard]] auto write_attached_client(void* const context, const ClientFrameBytes bytes) noexcept
     -> ClientFrameWriteAttempt {
   auto& session = *static_cast<SessionRecord*>(context);
-  const auto sent = reactor_send(session.attachment_runtime.client, bytes, MSG_NOSIGNAL);
+  const auto sent =
+      reactor_send(session.attachment_runtime.client, bytes.head, bytes.tail, MSG_NOSIGNAL);
   return {.bytes = sent.bytes, .error = sent.error};
 }
 
