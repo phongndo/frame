@@ -28,6 +28,7 @@
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -48,7 +49,7 @@ constexpr std::string_view outer_terminal_enter =
     "\x1B[?2048s\x1B[?2048h\x1B[?5522$p\x1B[22;2t";
 constexpr std::string_view outer_terminal_restore =
     "\x18\x1B_Gq=2,m=0;\x1B\\\x1B_Ga=d,d=A,q=2\x1B\\"
-    "\x1B[0m\x1B[?2026l\x1B[?1l\x1B[?9l\x1B[?1000l\x1B[?1002l\x1B[?1003l"
+    "\x1B[0m\x1B[?2026l\x1B[r\x1B[?1l\x1B[?9l\x1B[?1000l\x1B[?1002l\x1B[?1003l"
     "\x1B[?1004l\x1B[?1005l\x1B[?1006l\x1B[?1007l\x1B[?1015l\x1B[?1016l"
     "\x1B[?2004l\x1B]112\x1B\\\x1B[0 q\x1B[?25h\x1B[?7h\x1B[<u\x1B[?2048r\x1B[23;2t\x1B[?1049l";
 constexpr std::string_view interruption_diagnostic = "lemma attach interrupted by signal\n";
@@ -131,6 +132,10 @@ volatile sig_atomic_t termination_render_closed = 0;
     const auto written = ::write(descriptor, chunk.data(), chunk.size());
     if (written > 0) {
       offset += static_cast<std::size_t>(written);
+      if (offset == bytes.size()) {
+        // Complete: the caller's reactor observes signal wakeup; readiness only gates more bytes.
+        return true;
+      }
       progress_deadline = std::chrono::steady_clock::now() + progress_timeout;
       // Observe signal wakeup without adding a presentation latency floor. A later saturated write
       // is nonblocking and enters the bounded readiness path below.
@@ -569,12 +574,51 @@ private:
              sequence);
 }
 
+// One sendmsg delivers a header and its payload together, so the daemon never wakes for a
+// header alone and each forwarded input costs one syscall.
+[[nodiscard]] auto send_message_interruptibly(const int socket,
+                                              const std::span<const std::byte> header,
+                                              const std::span<const std::byte> payload) noexcept
+    -> bool {
+  std::size_t offset = 0;
+  const auto total = header.size() + payload.size();
+  while (offset < total) {
+    if (termination_signal != 0) {
+      return false;
+    }
+    const auto header_offset = std::min(offset, header.size());
+    const auto payload_offset = offset - header_offset;
+    // iovec is a C ABI that never writes through iov_base for sendmsg.
+    // NOLINTBEGIN(cppcoreguidelines-pro-type-const-cast)
+    std::array<iovec, 2> vectors{{
+        {.iov_base = const_cast<std::byte*>(header.subspan(header_offset).data()),
+         .iov_len = header.size() - header_offset},
+        {.iov_base = const_cast<std::byte*>(payload.subspan(payload_offset).data()),
+         .iov_len = payload.size() - payload_offset},
+    }};
+    // NOLINTEND(cppcoreguidelines-pro-type-const-cast)
+    const auto first = header_offset == header.size() ? std::size_t{1} : std::size_t{0};
+    msghdr message{};
+    message.msg_iov = std::span(vectors).subspan(first).data();
+    message.msg_iovlen = vectors.size() - first;
+    const auto sent = ::sendmsg(socket, &message, MSG_NOSIGNAL);
+    if (sent > 0) {
+      offset += static_cast<std::size_t>(sent);
+      continue;
+    }
+    if (sent < 0 && errno == EINTR) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 template <typename Header>
 [[nodiscard]] auto send_payload(const int connection, const Header& header,
                                 const std::span<const std::byte> input,
                                 std::uint32_t& sequence) noexcept -> bool {
-  return send_interruptibly(connection, header) && send_interruptibly(connection, input) &&
-         advance_sequence(sequence);
+  return send_message_interruptibly(connection, header, input) && advance_sequence(sequence);
 }
 
 [[nodiscard]] auto send_input(const int connection, const std::span<const std::byte> input,
@@ -930,6 +974,8 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
     OuterResizeSchedule outer_resize;
     auto sent_size = size;
     auto observed_size = size;
+    // The outer PTY size changes only with SIGWINCH, which is observed before any later input read.
+    auto ioctl_size = size;
     bool in_band_geometry = false;
     bool attached = terminal_setup_succeeded;
     // Sends the latest pending geometry regardless of pacing. Every forwarded non-geometry host
@@ -938,7 +984,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
       if (!outer_resize.pending()) {
         return true;
       }
-      const auto settled_size = in_band_geometry ? observed_size : terminal_size();
+      const auto settled_size = in_band_geometry ? observed_size : ioctl_size;
       const bool changed = settled_size.columns != sent_size.columns ||
                            settled_size.rows != sent_size.rows ||
                            settled_size.cell_width_px != sent_size.cell_width_px ||
@@ -952,6 +998,9 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
     };
     const auto observe_outer_resize = [&]() noexcept {
       resize_pending = 0;
+      if (!in_band_geometry) {
+        ioctl_size = terminal_size();
+      }
       outer_resize.observe(std::chrono::steady_clock::now());
     };
     const auto commit_due_outer_resize = [&]() noexcept {
@@ -1030,7 +1079,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
       return true;
     };
     const auto forward_physical_input = [&](const std::span<const std::byte> bytes) noexcept {
-      const auto current_size = in_band_geometry ? observed_size : terminal_size();
+      const auto current_size = in_band_geometry ? observed_size : ioctl_size;
       const auto previous_report = host_input_parser.pending_report();
       const auto parsed = host_input_parser.parse(
           bytes, classified_input, {.columns = current_size.columns, .rows = current_size.rows});

@@ -15,6 +15,13 @@
 
 namespace lemma::core {
 
+[[nodiscard]] auto ClientFrameBytes::first(const std::size_t bytes) const noexcept
+    -> ClientFrameBytes {
+  const auto head_bytes = std::min(bytes, head.size());
+  return {.head = head.first(head_bytes),
+          .tail = tail.first(std::min(bytes - head_bytes, tail.size()))};
+}
+
 [[nodiscard]] auto ClientFrameOutput::begin_queue(const std::size_t bytes, const TimePoint now,
                                                   const std::uint64_t trace_correlation) noexcept
     -> bool {
@@ -94,24 +101,23 @@ void ClientFrameOutput::prepare_frame_chunk(const bool full_redraw) noexcept {
 }
 
 [[nodiscard]] auto ClientFrameOutput::readable(const render::FrameBuffer& frame) const noexcept
-    -> std::span<const std::byte> {
+    -> ClientFrameBytes {
   if (offset_ > size_) {
     return {};
   }
   if (source_ == Source::inline_message) {
-    return std::span(inline_message_).first(size_).subspan(offset_);
+    return {.head = std::span(inline_message_).first(size_).subspan(offset_), .tail = {}};
   }
   if (source_ != Source::frame) {
     return {};
   }
-  if (frame_header_offset_ < frame_header_.size()) {
-    return std::span(frame_header_).subspan(frame_header_offset_);
-  }
   const auto bytes = frame.readable(frame_bytes_);
-  return bytes.size() == frame_bytes_ && frame_offset_ <= bytes.size() &&
-                 frame_chunk_offset_ <= frame_chunk_bytes_
-             ? bytes.subspan(frame_offset_, frame_chunk_bytes_ - frame_chunk_offset_)
-             : std::span<const std::byte>{};
+  if (bytes.size() != frame_bytes_ || frame_offset_ > bytes.size() ||
+      frame_chunk_offset_ > frame_chunk_bytes_) {
+    return {};
+  }
+  return {.head = std::span(frame_header_).subspan(frame_header_offset_),
+          .tail = bytes.subspan(frame_offset_, frame_chunk_bytes_ - frame_chunk_offset_)};
 }
 
 #ifdef LEMMA_ENABLE_LATENCY_TRACE
@@ -144,26 +150,26 @@ void ClientFrameOutput::mark_write_ready() noexcept {
   if (bytes == 0 || bytes > size_ - offset_) {
     return false;
   }
-  if (source_ == Source::frame) {
-    const auto segment_bytes = frame_header_offset_ < frame_header_.size()
-                                   ? frame_header_.size() - frame_header_offset_
-                                   : frame_chunk_bytes_ - frame_chunk_offset_;
-    if (bytes > segment_bytes) {
-      return false;
-    }
+  // One write covers at most the current message: its header remainder and chunk remainder.
+  const auto header_bytes = source_ == Source::frame
+                                ? std::min(bytes, frame_header_.size() - frame_header_offset_)
+                                : std::size_t{0};
+  const auto chunk_bytes = bytes - header_bytes;
+  if (source_ == Source::frame && chunk_bytes > frame_chunk_bytes_ - frame_chunk_offset_) {
+    return false;
   }
   offset_ += bytes;
   last_progress_at_ = now;
   if (source_ != Source::frame) {
     return true;
   }
-  if (frame_header_offset_ < frame_header_.size()) {
-    frame_header_offset_ += bytes;
+  frame_header_offset_ += header_bytes;
+  if (chunk_bytes == 0) {
     return true;
   }
 
-  frame_offset_ += bytes;
-  frame_chunk_offset_ += bytes;
+  frame_offset_ += chunk_bytes;
+  frame_chunk_offset_ += chunk_bytes;
   if (frame_chunk_offset_ == frame_chunk_bytes_ && frame_offset_ < frame_bytes_) {
     ++frame_sequence_;
     prepare_frame_chunk(false);

@@ -1061,7 +1061,7 @@
       "maximum_frame_bytes": 256,
       "maximum_queued_messages": 1,
       "maximum_frame_messages_per_frame": 1,
-      "maximum_writer_attempts_per_frame": 2,
+      "maximum_writer_attempts_per_frame": 1,
       "maximum_wire_overhead_bytes_per_frame": 24,
       "required_routed_input_bytes_per_iteration": 1,
       "required_extension_accounting_scans_per_iteration": 1,
@@ -1074,7 +1074,7 @@
       "test": "ReactorEnvironmentTest.ScriptedWorldControlsFragmentationBackpressureChildExitAndOrdering",
       "maximum_poll_calls": 12,
       "maximum_readiness_events": 10,
-      "maximum_outbound_send_calls": 4,
+      "maximum_outbound_send_calls": 3,
       "required_blocked_sends": 1,
       "required_partial_sends": 1,
       "required_child_wakeups": 1

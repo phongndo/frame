@@ -299,16 +299,30 @@ void invalidate_focused_cursor_projection(const std::span<const PaneSurface> pan
          (!force_full || append(output, used, "\x1B[2J\x1B[H"));
 }
 
-[[nodiscard]] auto is_single_full_viewport(const std::span<const PaneSurface> panes,
-                                           const Viewport viewport) noexcept -> bool {
-  return panes.size() == 1 && panes.front().rectangle.column == 0 &&
-         panes.front().rectangle.row == 0 && panes.front().rectangle.columns == viewport.columns &&
-         panes.front().rectangle.rows == viewport.rows;
+// DECSTBM margins are vertical only, so the outer terminal can move a Pane's rows only when that
+// Pane spans the full width and no other Pane or Grid shares those rows. Docks outside the Pane,
+// such as the status row, keep their rows.
+[[nodiscard]] auto terminal_scroll(const Scene scene, const Viewport viewport,
+                                   const std::uint16_t column_offset,
+                                   const std::uint16_t row_offset) noexcept -> vt::TerminalScroll {
+  if (scene.panes.size() != 1 || column_offset != 0) {
+    return vt::TerminalScroll::none;
+  }
+  const auto pane = scene.panes.front().rectangle;
+  if (pane.column != 0 || pane.columns != viewport.columns ||
+      std::ranges::any_of(scene.grids, [&](const GridSurface& grid) {
+        return rectangles_overlap(pane, grid.rectangle);
+      })) {
+    return vt::TerminalScroll::none;
+  }
+  return row_offset == 0 && pane.row == 0 && pane.rows == viewport.rows
+             ? vt::TerminalScroll::screen
+             : vt::TerminalScroll::margins;
 }
 
 [[nodiscard]] auto render_surface(const PaneSurface& pane, const std::span<std::byte> output,
                                   std::size_t& used, const bool force_full,
-                                  const bool allow_terminal_scroll,
+                                  const vt::TerminalScroll scroll,
                                   const std::uint16_t column_offset, const std::uint16_t row_offset,
                                   CompositionResult& composition,
                                   std::optional<vt::AnsiCursorPosition>& pane_cursor) noexcept
@@ -321,7 +335,7 @@ void invalidate_focused_cursor_projection(const std::span<const PaneSurface> pan
       .force_full = force_full,
       .focused = pane.focused,
       .cursor_override = pane.cursor_override,
-      .allow_terminal_scroll = allow_terminal_scroll,
+      .terminal_scroll = scroll,
   };
   const auto rendered = pane.terminal->render_pane_ansi(output.subspan(used), options);
   if (!rendered.has_value()) {
@@ -344,8 +358,7 @@ void invalidate_focused_cursor_projection(const std::span<const PaneSurface> pan
                                 const std::uint16_t row_offset, CompositionResult& composition,
                                 std::optional<vt::AnsiCursorPosition>& pane_cursor) noexcept
     -> std::expected<void, CompositionError> {
-  const bool allow_terminal_scroll = column_offset == 0 && row_offset == 0 && scene.grids.empty() &&
-                                     is_single_full_viewport(scene.panes, viewport);
+  const auto scroll = terminal_scroll(scene, viewport, column_offset, row_offset);
   const auto render_pass = [&](const bool focused) -> std::expected<void, CompositionError> {
     for (const auto& pane : scene.panes) {
       if (pane.focused != focused || pane.presentation_suppressed ||
@@ -357,9 +370,9 @@ void invalidate_focused_cursor_projection(const std::span<const PaneSurface> pan
             return !grid.opaque && grid.grid->damaged() &&
                    rectangles_overlap(pane.rectangle, grid.rectangle);
           });
-      const auto rendered = render_surface(pane, output, used, force_full || repair_transparency,
-                                           allow_terminal_scroll, column_offset, row_offset,
-                                           composition, pane_cursor);
+      const auto rendered =
+          render_surface(pane, output, used, force_full || repair_transparency, scroll,
+                         column_offset, row_offset, composition, pane_cursor);
       if (!rendered.has_value()) {
         invalidate_scene(scene);
         return rendered;

@@ -240,6 +240,16 @@ inline constexpr std::size_t pane_ansi_grapheme_bytes_max = pane_grapheme_codepo
 inline constexpr std::size_t pane_ansi_bytes_per_cell_max =
     pane_ansi_grapheme_bytes_max + 78U + 14U + 10U + 4U;
 
+// How the outer terminal may move a pane's already presented rows when its content scrolls.
+enum class TerminalScroll : std::uint8_t {
+  // Other surfaces share the pane's rows; moved rows are re-encoded.
+  none,
+  // The pane is the whole outer screen: scroll the screen.
+  screen,
+  // The pane spans the outer width and alone owns its rows: scroll inside top/bottom margins.
+  margins,
+};
+
 // Placement and outer-terminal policy for one surface in a composed frame. Coordinates are
 // zero-based. The compositor, rather than the pane, owns synchronized-update framing and clearing.
 struct PaneRenderOptions final {
@@ -250,7 +260,7 @@ struct PaneRenderOptions final {
   bool force_full{false};
   bool focused{false};
   bool cursor_override{false};
-  bool allow_terminal_scroll{false};
+  TerminalScroll terminal_scroll{TerminalScroll::none};
 };
 
 enum class KeyAction : std::uint8_t {
@@ -761,7 +771,8 @@ private:
   render_ansi_impl(std::span<std::byte> output, bool force_full, std::uint16_t origin_column,
                    std::uint16_t origin_row, bool composed, bool focused, bool cursor_override,
                    std::uint16_t cursor_override_column, std::uint16_t cursor_override_row,
-                   bool allow_terminal_scroll) noexcept -> std::expected<AnsiRenderResult, Error>;
+                   TerminalScroll terminal_scroll) noexcept
+      -> std::expected<AnsiRenderResult, Error>;
 
   std::unique_ptr<Impl> impl_;
 };
