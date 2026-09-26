@@ -37,6 +37,7 @@ struct OuterPresentation final {
   // Off by default: terminals without OSC 9;4 can show each report as an OSC 9 notification.
   bool progress{false};
   bool cwd{true};
+  bool hyperlinks{true};
 };
 
 struct UiConfiguration final {

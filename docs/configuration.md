@@ -128,6 +128,8 @@ All `lemma.setup()` groups and fields are optional:
   the working directory, and progress to the outer terminal as described in
   [Attention and directory](usage.md#attention-and-directory). Enable progress only for an outer
   terminal that supports OSC 9;4.
+- `ui.outer_hyperlinks` is Boolean and defaults to `true`. It re-emits Pane OSC 8
+  [hyperlinks](usage.md#hyperlinks) to the outer terminal; changing it repaints Panes.
 - `launch.default_cwd` is empty or an absolute path. It applies when creation does not specify
   `--cwd` and, for a split or new Tab, the source Pane has no usable
   [OSC 7 directory](usage.md#sessions-tabs-and-panes).

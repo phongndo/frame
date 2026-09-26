@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import re
+import signal
 import socket
 import sys
 import time
@@ -556,6 +557,99 @@ class OuterAttentionMuxTest(unittest.TestCase):
         self.assertGreater(
             tail.rfind(PROGRESS_REMOVED), tail.rfind(b"\x1b]9;4;3\x1b\\"), tail[-512:]
         )
+
+    def test_pane_hyperlinks_reach_the_outer_terminal_scoped_per_pane(self) -> None:
+        session = self.start("links")
+        client = session.require_client()
+        left = session.state().focused_pane
+        right = self.server.require_command(
+            "split",
+            "--session",
+            session.name,
+            "--pane",
+            left,
+            "--right",
+            "--",
+            sys.executable,
+            "-c",
+            EMITTER,
+        ).output.strip()
+
+        def link(uri: bytes, text: bytes) -> bytes:
+            return b"\x1b]8;;" + uri + b"\x1b\\" + text + b"\x1b]8;;\x1b\\"
+
+        def expect_link(uri: bytes, text: bytes) -> bytes:
+            # The link opens with a Pane-scoped ID, may restyle, and closes after its text.
+            pattern = re.compile(
+                rb"\x1b\]8;id=(lemma-\d+);"
+                + re.escape(uri)
+                + rb"\x1b\\(?:\x1b\[[0-9;:]*m)*"
+                + re.escape(text)
+                + rb"\x1b\]8;;\x1b\\"
+            )
+
+            def observe() -> bytes | None:
+                client.drain(0.01)
+                match = pattern.search(client.process.output_tail)
+                return match.group(1) if match else None
+
+            return wait_until(
+                f"outer link {text!r}", observe, diagnostics=client.diagnostics
+            )
+
+        # The same URI in two Panes gets distinct IDs, so the outer terminal never joins them.
+        self.emit(session, left, link(b"https://example.com/a?b=c;d", b"left-docs"))
+        left_id = expect_link(b"https://example.com/a?b=c;d", b"left-docs")
+        self.emit(session, right, link(b"https://example.com/a?b=c;d", b"right-docs"))
+        right_id = expect_link(b"https://example.com/a?b=c;d", b"right-docs")
+        self.assertNotEqual(left_id, right_id)
+
+        # URIs that are not printable ASCII with a scheme are shown without their link.
+        self.emit_visible(
+            session,
+            left,
+            link(b"https://example.com/\xe2\x98\x83", b"snowman")
+            + link(b"no-scheme", b"relative"),
+        )
+        client.expect_output("snowman")
+        client.drain(0.2)
+        self.assertNotIn(
+            b"https://example.com/\xe2\x98\x83", client.process.output_tail
+        )
+        self.assertNotIn(b";no-scheme", client.process.output_tail)
+
+        # Disabling forwarding repaints without links and forwards none afterwards.
+        self.reload("outer_hyperlinks = false")
+        self.emit_visible(session, left, link(b"https://example.com/off", b"unlinked"))
+        client.drain(0.2)
+        self.assertNotIn(b"https://example.com/off", client.process.output_tail)
+
+    def test_client_cleanup_closes_hyperlinks_on_detach_and_signal(self) -> None:
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted):
+                self.emitted.clear()
+                session = self.start(f"link_cleanup_{interrupted}")
+                client = session.require_client()
+                self.emit_visible(
+                    session,
+                    session.state().focused_pane,
+                    b"\x1b]8;;https://example.com/\x1b\\linked\x1b]8;;\x1b\\",
+                )
+                client.expect_raw(b";https://example.com/\x1b\\")
+                if interrupted:
+                    os.kill(client.pid, signal.SIGTERM)
+                    with self.assertRaisesRegex(RuntimeError, "exited unsuccessfully"):
+                        client.wait_for_exit()
+                else:
+                    session.detach()
+                # A transport interruption can occur after an OSC 8 opener. CAN cancels only
+                # partial escape sequences, so restoration must close an already active link too.
+                cleanup = client.process.final_output.split(b"\x18")[-1]
+                self.assertIn(b"\x1b]8;;\x1b\\", cleanup)
+                self.assertLess(
+                    cleanup.index(b"\x1b]8;;\x1b\\"), cleanup.index(b"\x1b[?1049l")
+                )
+                self.assertTrue(client.process.terminal_state_restored)
 
     def test_focused_pane_directory_is_forwarded_and_inherited(self) -> None:
         session = self.start("cwd")

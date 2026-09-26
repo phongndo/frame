@@ -449,6 +449,7 @@ if(LEMMA_BUILD_TESTS)
     tests/core_input_test.cpp
     tests/pty_writer_test.cpp
     tests/render_composition_test.cpp
+    tests/terminal_hyperlink_test.cpp
     tests/terminal_integration_regression_test.cpp
     tests/terminal_test.cpp
   )

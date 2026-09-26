@@ -992,6 +992,48 @@ void benchmark_terminal_full_frames(benchmark::State& state) {
       benchmark::Counter(static_cast<double>(output_bytes), benchmark::Counter::kAvgIterations);
 }
 
+// Full 80x24 frames of `ls --hyperlink`-style rows: four 16-column names per row. Argument 1 links
+// each name to its own file URI (96 links per frame); argument 0 is the same text without links.
+void benchmark_terminal_hyperlink_frames(benchmark::State& state) {
+  const bool links = state.range(0) != 0;
+  auto result = vt::Terminal::create({});
+  if (!result.has_value()) {
+    state.SkipWithError("failed to create terminal");
+    return;
+  }
+  auto terminal = std::move(result).value();
+  std::string contents;
+  for (std::size_t row = 1; row <= 24; ++row) {
+    contents += "\x1B[" + std::to_string(row) + ";1H";
+    for (std::size_t name = 0; name < 4; ++name) {
+      const auto file = "file-" + std::to_string(row) + "-" + std::to_string(name) + ".txt";
+      if (links) {
+        contents += "\x1B]8;;file://build-host/home/user/project/src/" + file + "\x1B\\";
+      }
+      contents += "\x1B[1;34m" + file + "\x1B[0m";
+      if (links) {
+        contents += "\x1B]8;;\x1B\\";
+      }
+      contents.append(20U - file.size(), ' ');
+    }
+  }
+  terminal.write(std::as_bytes(std::span(contents.data(), contents.size())));
+  std::array<std::byte, std::size_t{256} * 1'024U> frame{};
+  std::uint64_t output_bytes = 0;
+
+  for ([[maybe_unused]] const auto iteration : state) {
+    auto rendered = terminal.render_ansi(frame, true);
+    benchmark::DoNotOptimize(rendered);
+    if (!rendered.has_value()) {
+      state.SkipWithError("failed to render hyperlink frame");
+      break;
+    }
+    output_bytes += rendered->bytes;
+  }
+  state.counters["frame_bytes"] =
+      benchmark::Counter(static_cast<double>(output_bytes), benchmark::Counter::kAvgIterations);
+}
+
 BENCHMARK(benchmark_command_dispatch);
 BENCHMARK(benchmark_input_router_unbound_run);
 BENCHMARK(benchmark_input_router_context_command);
@@ -1021,6 +1063,7 @@ BENCHMARK(benchmark_terminal_multiple_panes)->Arg(1)->Arg(4)->Arg(16)->Arg(64);
 BENCHMARK(benchmark_idle_extension_runtime)->Arg(0)->Arg(1)->Arg(32);
 BENCHMARK(benchmark_scene_grid_row_updates);
 BENCHMARK(benchmark_terminal_full_frames);
+BENCHMARK(benchmark_terminal_hyperlink_frames)->Arg(0)->Arg(1);
 
 } // namespace
 } // namespace lemma

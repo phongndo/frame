@@ -612,6 +612,7 @@ void release_owned_endpoint(void* const context) noexcept {
     reactor_environment.outer_notifications = outer.notifications;
     reactor_environment.outer_progress = outer.progress;
     reactor_environment.outer_cwd = outer.cwd;
+    reactor_environment.outer_hyperlinks = outer.hyperlinks;
     reactor_environment.clipboard_read = configured_runtime.generation->clipboard_read();
     reactor_environment.clipboard_write = configured_runtime.generation->clipboard_write();
     if (!configured_runtime.commands.empty()) {

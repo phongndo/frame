@@ -237,6 +237,9 @@ struct LuaConfiguration final {
       Option{.name = "outer_cwd",
              .outer = &config::OuterPresentation::cwd,
              .error = "ui.outer_cwd must be a boolean"},
+      Option{.name = "outer_hyperlinks",
+             .outer = &config::OuterPresentation::hyperlinks,
+             .error = "ui.outer_hyperlinks must be a boolean"},
   };
   const auto absolute = lua_absindex(state, table);
   lua_pushnil(state);

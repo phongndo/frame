@@ -646,6 +646,8 @@ auto encode(const Configuration& configuration) -> std::optional<std::string> {
     output += configuration.ui.outer.progress ? "true" : "false";
     output += R"(,"outer_cwd":)";
     output += configuration.ui.outer.cwd ? "true" : "false";
+    output += R"(,"outer_hyperlinks":)";
+    output += configuration.ui.outer.hyperlinks ? "true" : "false";
     output += R"(,"default_cwd":)";
     if (!api::append_json_string(output, configuration.launch.default_cwd,
                                  configuration_document_bytes_max)) {
@@ -703,8 +705,8 @@ auto decode(const api::JsonValue& document) noexcept -> DecodeResult {
                      {"schema", "preset", "prefix", "contexts", "bindings", "scrollback_lines",
                       "status_line", "default_cwd", "history_file", "default_program", "extensions",
                       "clipboard_read", "clipboard_write", "outer_title", "outer_bell",
-                      "outer_notifications", "outer_progress", "outer_cwd"}) ||
-      (document.object.size() < 10U || document.object.size() > 18U)) {
+                      "outer_notifications", "outer_progress", "outer_cwd", "outer_hyperlinks"}) ||
+      (document.object.size() < 10U || document.object.size() > 19U)) {
     return {.configuration = std::nullopt,
             .failure = {.error = Error::invalid_document, .field = {}}};
   }
@@ -816,10 +818,11 @@ auto decode(const api::JsonValue& document) noexcept -> DecodeResult {
     }
     result.terminal.scrollback_lines = static_cast<std::size_t>(*lines);
   }
-  for (const auto name : {std::string_view{"clipboard_read"}, std::string_view{"clipboard_write"},
-                          std::string_view{"outer_title"}, std::string_view{"outer_bell"},
-                          std::string_view{"outer_notifications"},
-                          std::string_view{"outer_progress"}, std::string_view{"outer_cwd"}}) {
+  for (const auto name :
+       {std::string_view{"clipboard_read"}, std::string_view{"clipboard_write"},
+        std::string_view{"outer_title"}, std::string_view{"outer_bell"},
+        std::string_view{"outer_notifications"}, std::string_view{"outer_progress"},
+        std::string_view{"outer_cwd"}, std::string_view{"outer_hyperlinks"}}) {
     if (api::json_member(document, name) == nullptr) {
       continue;
     }
@@ -840,8 +843,10 @@ auto decode(const api::JsonValue& document) noexcept -> DecodeResult {
       result.ui.outer.notifications = *allowed;
     } else if (name == "outer_progress") {
       result.ui.outer.progress = *allowed;
-    } else {
+    } else if (name == "outer_cwd") {
       result.ui.outer.cwd = *allowed;
+    } else {
+      result.ui.outer.hyperlinks = *allowed;
     }
   }
   const auto status_line = api::json_boolean(document, "status_line");

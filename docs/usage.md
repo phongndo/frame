@@ -379,6 +379,26 @@ does not replay earlier bells or notifications, which remain available as
 [Pane signals](api.md#pane-signals). The [`ui.outer_bell`, `ui.outer_notifications`,
 `ui.outer_progress`, and `ui.outer_cwd`](configuration.md#api) options control each kind.
 
+### Hyperlinks
+
+OSC 8 hyperlinks written in a Pane, such as those from `ls --hyperlink`, GCC diagnostics, `git`,
+`delta`, or `rg --hyperlink-format`, stay clickable in an outer terminal that supports OSC 8, such
+as Ghostty, Kitty, WezTerm, or iTerm2. Lemma re-emits each link with the Pane's text, so links
+survive redraws, scrolling, layout changes, and reattach. Outer terminals without OSC 8 ignore them.
+
+- **Identity.** Each link carries an ID scoped to its Pane in place of the application's own `id`,
+  so links in different Panes never highlight together. Within a Pane, text linking to the same URI
+  highlights together on hover.
+- **URIs.** A link is forwarded only if its URI is at most 2 KiB of printable ASCII (bytes 32-126,
+  as OSC 8 requires; other characters must be percent-encoded) and begins with a scheme such as
+  `https:` or `file:`. Any other link is dropped rather than altered, and its text is shown unlinked.
+  Lemma does not restrict schemes further: opening a link, including any confirmation, follows the
+  outer terminal's policy, as when the application runs there directly.
+- **Bound.** Presenting a Pane spends at most 32 bytes of link sequences per Pane cell. Links beyond
+  that allowance are shown unlinked until their cells change.
+
+Set [`ui.outer_hyperlinks`](configuration.md#api) to `false` to present Pane text without links.
+
 ### Kitty graphics
 
 Lemma retains Kitty images and placements in the daemon's native terminal state; it does not pass

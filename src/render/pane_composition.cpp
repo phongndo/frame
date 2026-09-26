@@ -322,6 +322,7 @@ void invalidate_focused_cursor_projection(const std::span<const PaneSurface> pan
       .focused = pane.focused,
       .cursor_override = pane.cursor_override,
       .allow_terminal_scroll = allow_terminal_scroll,
+      .hyperlinks = pane.hyperlinks,
   };
   const auto rendered = pane.terminal->render_pane_ansi(output.subspan(used), options);
   if (!rendered.has_value()) {

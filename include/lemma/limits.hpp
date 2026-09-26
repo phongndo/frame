@@ -73,6 +73,9 @@ inline constexpr std::size_t outer_title_frame_bytes_max = outer_title_bytes_max
 inline constexpr std::size_t outer_notification_title_bytes_max = 256;
 inline constexpr std::size_t outer_notification_body_bytes_max = 1'024;
 inline constexpr std::size_t outer_cwd_bytes_max = 2'048;
+// Longest Pane OSC 8 hyperlink URI re-emitted to the outer terminal; longer links are not
+// forwarded.
+inline constexpr std::size_t outer_hyperlink_uri_bytes_max = 2'048;
 // Attention appended to one frame after composition: BEL; one notification
 // (`ESC ] 777 ; notify ;` TITLE `;` BODY `ESC \`); progress (at most `ESC ] 9 ; 4 ; 1 ; 100 ESC
 // \`); and a working directory (`ESC ] 7 ;` URI `ESC \`).
@@ -108,7 +111,6 @@ inline constexpr std::size_t terminal_effect_text_bytes_max = std::size_t{4} * 1
 inline constexpr std::size_t clipboard_decoded_bytes_max = std::size_t{1} * 1'024U * 1'024U;
 inline constexpr std::size_t clipboard_response_bytes_max =
     (std::size_t{2} * 1'024U * 1'024U) + 8192U;
-inline constexpr std::size_t hyperlink_uri_bytes_max = std::size_t{8} * 1'024U;
 inline constexpr std::size_t unknown_sequence_bytes_max = std::size_t{4} * 1'024U;
 inline constexpr std::size_t snapshot_bytes_max = std::size_t{64} * 1'024U * 1'024U;
 inline constexpr std::size_t snapshot_continuation_bytes_max = std::size_t{1} * 1'024U * 1'024U;
