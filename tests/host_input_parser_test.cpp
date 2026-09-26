@@ -98,8 +98,9 @@ TEST(HostInputParserTest, DistinguishesVerticalAndHorizontalSgrWheelButtons) {
   ASSERT_TRUE(parsed.has_value());
   ASSERT_EQ(parsed->event_count, expected.size());
   for (std::size_t index = 0; index < expected.size(); ++index) {
-    EXPECT_EQ(parsed->events.at(index).kind, HostInputKind::mouse);
-    EXPECT_EQ(parsed->events.at(index).mouse.button, expected.at(index));
+    const auto& event = parsed->events.subspan(index, 1).front();
+    EXPECT_EQ(event.kind, HostInputKind::mouse);
+    EXPECT_EQ(event.mouse.button, expected.at(index));
   }
 }
 

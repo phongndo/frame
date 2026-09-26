@@ -1,5 +1,6 @@
 #include "lemma/limits.hpp"
 #include "lemma/terminal/terminal.hpp"
+#include "terminal/fingerprint.hpp"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -7,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -508,6 +510,175 @@ TEST(TerminalTest, ScrollHashPassSkipsRowsAlreadyMatchingPhysicalState) {
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   const std::string_view encoded(reinterpret_cast<const char*>(output.data()), changed->bytes);
   EXPECT_THAT(encoded, testing::HasSubstr("\x1B[3;1H\x1B[0mnext"));
+}
+
+TEST(TerminalTest, RedrawWithoutTerminalScrollSkipsUnchangedPlainRows) {
+  TerminalOptions options;
+  options.size = {.columns = 20, .rows = 4};
+  auto terminal = make_terminal(options);
+  write_text(terminal, "same\r\nsame\r\nsame\r\n");
+
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  ASSERT_TRUE(terminal.render_pane_ansi(output, {.force_full = true, .focused = true}).has_value());
+  // A pane that cannot scroll the terminal redraws every dirty row. Identical output lines leave
+  // all but one row unchanged, and plain rows prove that without visiting their cells.
+  write_text(terminal, "same\r\n");
+  const auto repeated = terminal.render_pane_ansi(output, {.focused = true});
+  ASSERT_TRUE(repeated.has_value());
+  EXPECT_EQ(repeated->scrolled_rows, 0);
+  EXPECT_EQ(repeated->rows, 0U);
+  EXPECT_EQ(repeated->encoded_rows, 0U);
+
+  write_text(terminal, "next\r\n");
+  const auto changed = terminal.render_pane_ansi(output, {.focused = true});
+  ASSERT_TRUE(changed.has_value());
+  EXPECT_EQ(changed->rows, 1U);
+  EXPECT_EQ(changed->encoded_rows, 1U);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const std::string_view encoded(reinterpret_cast<const char*>(output.data()), changed->bytes);
+  EXPECT_THAT(encoded, testing::HasSubstr("\x1B[3;1H\x1B[0mnext"));
+}
+
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(TerminalFingerprintTest, KeyDeterminesEveryFingerprintForm) {
+  constexpr detail::FingerprintKey first{
+      .state = 0x0123'4567'89AB'CDEFULL,
+      .value = 0x0F1E'2D3C'4B5A'6978ULL,
+      .initial = 0x1111'2222'3333'4444ULL,
+      .plain_lanes = {0x5555'6666'7777'8888ULL, 0x9999'AAAA'BBBB'CCCCULL, 0xDDDD'EEEE'FFFF'0001ULL,
+                      0x1357'9BDF'2468'ACE0ULL}};
+  auto second = first;
+  second.state ^= 1U;
+  auto third = first;
+  third.plain_lanes.back() ^= 1U;
+  ASSERT_TRUE(first.valid() && second.valid() && third.valid());
+  constexpr std::array<std::uint64_t, 7> row{'a', 'b', 'c', 'd', 'e', 'f', 'g'};
+
+  const auto plain = [&row](const detail::FingerprintKey& key) {
+    return detail::RowFingerprint::of(key, key.plain_lanes, row, 0);
+  };
+  EXPECT_NE(plain(first), plain(second));
+  EXPECT_NE(plain(first), plain(third));
+  EXPECT_NE(detail::fingerprint_mix(first, first.initial, 'a'),
+            detail::fingerprint_mix(second, second.initial, 'a'));
+
+  // The whole-row and cell-by-cell forms agree under one key.
+  detail::RowFingerprint incremental(first, first.plain_lanes);
+  for (std::size_t column = 0; column < row.size(); ++column) {
+    incremental.add(column, row.at(column));
+  }
+  EXPECT_EQ(incremental.finish(row.size(), 0), plain(first));
+
+  // Terminals are keyed by the process, never by fixed constants.
+  const auto* const process = detail::process_fingerprint_key();
+  ASSERT_NE(process, nullptr);
+  EXPECT_TRUE(process->valid());
+  EXPECT_EQ(process, detail::process_fingerprint_key());
+  EXPECT_NE(plain(*process), plain(first));
+}
+
+TEST(TerminalTest, ComposedRedrawRepaintsPlainRowsWhenTheirColorsChange) {
+  TerminalOptions options;
+  options.size = {.columns = 6, .rows = 4};
+  auto terminal = make_terminal(options);
+  // Unstyled background-color cells keep their raw values when palette entry 1 changes; a
+  // composed redraw must not let their unchanged fingerprint skip the new projection.
+  write_text(terminal, "\x1B[41m\x1B[2K\x1B[0m\r\nplain\r\nrows\r\nhere");
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  ASSERT_TRUE(terminal.render_pane_ansi(output, {.force_full = true, .focused = true}).has_value());
+
+  write_text(terminal, "\x1B]4;1;rgb:0a/14/1e\x1B\\");
+  const auto recolored = terminal.render_pane_ansi(output, {.focused = true});
+  ASSERT_TRUE(recolored.has_value());
+  EXPECT_EQ(recolored->rows, 1U);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const std::string_view encoded(reinterpret_cast<const char*>(output.data()), recolored->bytes);
+  EXPECT_THAT(encoded, testing::HasSubstr("48;2;10;20;30"));
+  EXPECT_THAT(encoded, testing::Not(testing::HasSubstr("plain")));
+}
+
+TEST(TerminalTest, ComposedRedrawRepaintsRowWhoseSelectionCleared) {
+  TerminalOptions options;
+  options.size = {.columns = 20, .rows = 4};
+  auto terminal = make_terminal(options);
+  write_text(terminal, "same\r\nsame\r\nsame\r\n");
+  ASSERT_TRUE(
+      terminal.select(SelectionUnit::word, {.space = PointSpace::viewport, .column = 0, .row = 1})
+          .value_or(false));
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  ASSERT_TRUE(terminal.render_pane_ansi(output, {.force_full = true, .focused = true}).has_value());
+
+  // Without its selection the row is plain again. Its retained fingerprint describes the
+  // highlighted projection, so the redraw probe must repaint it rather than match it.
+  terminal.clear_selection();
+  write_text(terminal, "same\r\n");
+  const auto cleared = terminal.render_pane_ansi(output, {.focused = true});
+  ASSERT_TRUE(cleared.has_value());
+  EXPECT_EQ(cleared->rows, 1U);
+  EXPECT_EQ(cleared->encoded_rows, 1U);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const std::string_view encoded(reinterpret_cast<const char*>(output.data()), cleared->bytes);
+  EXPECT_THAT(encoded, testing::HasSubstr("\x1B[2;1H\x1B[0msame"));
+
+  write_text(terminal, "same\r\n");
+  const auto repeated = terminal.render_pane_ansi(output, {.focused = true});
+  ASSERT_TRUE(repeated.has_value());
+  EXPECT_EQ(repeated->encoded_rows, 0U);
+}
+
+TEST(TerminalTest, ScrollDetectionMatchesPlainAndStyledRowsTogether) {
+  TerminalOptions options;
+  options.size = {.columns = 12, .rows = 4};
+  auto canonical = make_terminal(options);
+  auto projected = make_terminal(options);
+  // Plain rows are fingerprinted from raw cells and styled rows from decoded cells; one scroll must
+  // align both kinds, and only the new row may be encoded.
+  write_text(canonical,
+             "plain-one\r\n\x1B[1;31mstyled\x1B[0m-two\r\nplain-three\r\n\x1B[44mfour\x1B[0m");
+
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  const auto initial = canonical.render_ansi(output, true);
+  ASSERT_TRUE(initial.has_value());
+  projected.write(std::span(output).first(initial->bytes));
+
+  write_text(canonical, "\r\nplain-five");
+  const auto changed = canonical.render_ansi(output);
+  ASSERT_TRUE(changed.has_value());
+  EXPECT_EQ(changed->scrolled_rows, 1);
+  EXPECT_EQ(changed->encoded_rows, 1U);
+  EXPECT_EQ(changed->rows, 1U);
+  projected.write(std::span(output).first(changed->bytes));
+
+  canonical.invalidate_ansi_render_state();
+  projected.invalidate_ansi_render_state();
+  std::array<std::byte, std::size_t{16} * 1'024U> canonical_output{};
+  std::array<std::byte, std::size_t{16} * 1'024U> projected_output{};
+  const auto canonical_full = canonical.render_ansi(canonical_output, true);
+  const auto projected_full = projected.render_ansi(projected_output, true);
+  ASSERT_TRUE(canonical_full.has_value());
+  ASSERT_TRUE(projected_full.has_value());
+  EXPECT_TRUE(std::ranges::equal(std::span(canonical_output).first(canonical_full->bytes),
+                                 std::span(projected_output).first(projected_full->bytes)));
+}
+
+TEST(TerminalTest, PlainRowsRepaintWhenTheirProjectedColorsChange) {
+  TerminalOptions options;
+  options.size = {.columns = 6, .rows = 4};
+  auto terminal = make_terminal(options);
+  // Erasing with a background leaves unstyled background-color cells whose raw values name a
+  // palette entry. Their raw values do not change when that entry does, but their projection must.
+  write_text(terminal, "\x1B[41m\x1B[2K\x1B[0m\r\nplain\r\nrows\r\nhere");
+  std::array<std::byte, std::size_t{16} * 1'024U> output{};
+  ASSERT_TRUE(terminal.render_ansi(output, true).has_value());
+
+  write_text(terminal, "\x1B]4;1;rgb:0a/14/1e\x1B\\");
+  const auto recolored = terminal.render_ansi(output);
+  ASSERT_TRUE(recolored.has_value());
+  EXPECT_EQ(recolored->scrolled_rows, 0);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const std::string_view encoded(reinterpret_cast<const char*>(output.data()), recolored->bytes);
+  EXPECT_THAT(encoded, testing::HasSubstr("48;2;10;20;30"));
+  EXPECT_THAT(encoded, testing::Not(testing::HasSubstr("plain")));
 }
 
 TEST(TerminalTest, ScrollDetectionHashesCompleteGraphemes) {

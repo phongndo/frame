@@ -66,6 +66,32 @@ TEST(CoreInputTest, EncodesEnterSemanticallyWhenKittyKeyboardModeIsActive) {
   EXPECT_EQ(output, input);
 }
 
+TEST(CoreInputTest, NormalizesSpecialKeysBetweenPassThroughRuns) {
+  auto terminal_result = vt::Terminal::create({});
+  ASSERT_TRUE(terminal_result.has_value());
+  auto terminal = std::move(*terminal_result);
+  // Application cursor keys make arrows observable: they must be re-encoded, not copied along
+  // with the printable and UTF-8 runs around them.
+  write_terminal(terminal, "\x1B[?1h");
+
+  PanePtyWriteQueue queue;
+  constexpr std::string_view input = "ab\x1B[Acd\xC3\xA9\x1B[Bz\x1B";
+  constexpr std::string_view expected = "ab\x1BOAcd\xC3\xA9\x1BOBz\x1B";
+  const auto bytes = std::as_bytes(std::span(input.data(), input.size()));
+
+  ASSERT_EQ(queue_normalized_input(queue, terminal, bytes), InputQueueResult::queued);
+  std::array<std::byte, 32> output{};
+  const auto size = queue.read(output);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(output.data()), size), expected);
+
+  // A held message that does not fit is rejected whole, leaving the queue unchanged.
+  const std::vector<std::byte> prior(queue.input_remaining() - 4U, std::byte{'x'});
+  ASSERT_TRUE(queue.append(prior));
+  EXPECT_EQ(queue_normalized_input(queue, terminal, bytes), InputQueueResult::full);
+  EXPECT_EQ(queue.size(), prior.size());
+}
+
 TEST(CoreInputTest, EncodesTypedPrintableKeyThroughGhostty) {
   auto terminal_result = vt::Terminal::create({});
   ASSERT_TRUE(terminal_result.has_value());

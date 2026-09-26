@@ -2,6 +2,7 @@
 #define LEMMA_TERMINAL_TERMINAL_IMPL_HPP
 
 #include "lemma/terminal/terminal.hpp"
+#include "terminal/fingerprint.hpp"
 
 #include <ghostty/vt.h>
 
@@ -17,6 +18,14 @@ namespace lemma::vt {
 namespace detail {
 
 class AnsiWriter;
+
+enum class RowEncoding : std::uint8_t {
+  // A plain row whose fingerprint already equals the retained physical row; no cell was visited.
+  matched,
+  // Every cell was compared with physical state, and none needed bytes.
+  unchanged,
+  emitted,
+};
 
 // Covers allocations routed through Ghostty's C allocator. The render and other adapter-owned
 // buffers remain independently bounded by their owning Lemma components.
@@ -118,9 +127,11 @@ struct Terminal::Impl final {
   [[nodiscard]] auto calculate_row_hash() noexcept -> std::expected<std::uint64_t, Error>;
   [[nodiscard]] auto detect_scroll() const noexcept -> std::int32_t;
   void apply_physical_scroll(std::int32_t scroll) noexcept;
+  // A redraw can probe plain rows for an unchanged fingerprint before visiting their cells.
   [[nodiscard]] auto encode_row(detail::AnsiWriter& writer, std::size_t row_index, bool force,
-                                std::uint16_t origin_column, std::uint16_t origin_row,
-                                bool erase_line_tail) noexcept -> std::expected<bool, Error>;
+                                bool probe_unchanged, std::uint16_t origin_column,
+                                std::uint16_t origin_row, bool erase_line_tail) noexcept
+      -> std::expected<detail::RowEncoding, Error>;
 
   TerminalOptions options;
   TerminalTheme session_theme{};
@@ -153,6 +164,9 @@ struct Terminal::Impl final {
   }
 
   GhosttyRenderStateColors render_colors{};
+  // Plain-row fingerprints are raw cell values, valid only under the colors they were projected
+  // with. Advancing this when projected cell colors change retires every earlier fingerprint.
+  std::uint64_t plain_row_color_epoch{0};
   // Two equal halves sized to the current geometry, grown only on resize. Idle panes therefore do
   // not keep hard-maximum row arrays resident.
   std::vector<std::uint64_t> row_hash_storage;
@@ -185,6 +199,8 @@ struct Terminal::Impl final {
   bool clipboard_write_allowed{false};
   bool capturing_clipboard_reply{false};
   bool pty_response_integrity_failed{false};
+  // Copied from the process key at creation; keys every presentation fingerprint of this terminal.
+  detail::FingerprintKey fingerprint_key{};
 };
 
 } // namespace lemma::vt

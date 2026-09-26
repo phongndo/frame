@@ -557,6 +557,7 @@ auto HostInputParser::prepare() noexcept -> std::expected<void, HostInputError> 
     return {};
   }
   try {
+    events_ = std::make_unique<HostInputEvents>();
     paste_storage_ =
         // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
         std::make_unique_for_overwrite<std::byte[]>(limits::structured_input_payload_bytes_max);
@@ -575,17 +576,18 @@ auto HostInputParser::parse(const std::span<const std::byte> input,
   if (paste_storage_ == nullptr) {
     return std::unexpected(HostInputError::not_prepared);
   }
-  HostInputBatch batch;
-  const auto append_event = [&batch](const HostInputEvent& event) noexcept -> bool {
-    if (batch.event_count >= batch.events.size()) {
+  const std::span<HostInputEvent> events(*events_);
+  HostInputBatch batch{.events = events};
+  const auto append_event = [&batch, events](const HostInputEvent& event) noexcept -> bool {
+    if (batch.event_count >= events.size()) {
       return false;
     }
-    std::span(batch.events).subspan(batch.event_count, 1).front() = event;
+    events.subspan(batch.event_count, 1).front() = event;
     ++batch.event_count;
     return true;
   };
   const auto append_bytes =
-      [&batch, output, &append_event](
+      [&batch, events, output, &append_event](
           const HostInputKind kind,
           const std::span<const std::byte> bytes) noexcept -> std::expected<void, HostInputError> {
     if (bytes.empty()) {
@@ -598,7 +600,7 @@ auto HostInputParser::parse(const std::span<const std::byte> input,
     std::ranges::copy(bytes, output.subspan(offset, bytes.size()).begin());
     batch.bytes += bytes.size();
     if (batch.event_count > 0) {
-      auto& previous = std::span(batch.events).subspan(batch.event_count - 1U, 1).front();
+      auto& previous = events.subspan(batch.event_count - 1U, 1).front();
       if (kind != HostInputKind::terminal_reply && kind != HostInputKind::terminal_reply_stream &&
           kind != HostInputKind::theme_reply && previous.kind == kind &&
           previous.offset + previous.size == offset) {
@@ -908,6 +910,7 @@ auto HostInputParser::flush_pending(const std::span<std::byte> output) noexcept
   if (pending_size_ == 0 || paste_active_) {
     return batch;
   }
+  LEMMA_ASSERT(events_ != nullptr);
   if (report_ == Report::clipboard || report_ == Report::legacy_clipboard) {
     return std::unexpected(HostInputError::incomplete_terminal_reply);
   }
@@ -918,7 +921,9 @@ auto HostInputParser::flush_pending(const std::span<std::byte> output) noexcept
     return std::unexpected(HostInputError::output_exhausted);
   }
   std::ranges::copy(std::span(pending_).first(pending_size_), output.begin());
-  batch.events.front() = {.kind = HostInputKind::ordinary, .offset = 0, .size = pending_size_};
+  const std::span<HostInputEvent> events(*events_);
+  events.front() = {.kind = HostInputKind::ordinary, .offset = 0, .size = pending_size_};
+  batch.events = events;
   batch.event_count = 1;
   batch.bytes = pending_size_;
   pending_size_ = 0;
