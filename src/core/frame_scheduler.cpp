@@ -1,6 +1,7 @@
 #include "core/frame_scheduler.hpp"
 #include "lemma/id.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 
@@ -17,47 +18,55 @@ void InteractiveDamageLatch::await_write(const std::size_t queued_bytes_before,
   }
 }
 
-[[nodiscard]] auto InteractiveDamageLatch::record_write(const std::size_t bytes) noexcept -> bool {
+void InteractiveDamageLatch::prepare_write(const std::size_t bytes,
+                                           const PtyReadableOutput readable,
+                                           void* const context) noexcept {
+  // A pending latch keeps its backlog: output readable now may already include the response to
+  // the input that armed it.
+  const bool arms_idle_latch = !pending_ && bytes_until_armed_ > 0 && bytes >= bytes_until_armed_;
+  sampled_output_ = arms_idle_latch ? readable(context) : 0;
+}
+
+void InteractiveDamageLatch::record_write(const std::size_t bytes) noexcept {
+  const auto sampled = sampled_output_;
+  sampled_output_ = 0;
   if (bytes_until_armed_ == 0) {
-    return false;
+    return;
   }
   if (bytes < bytes_until_armed_) {
     bytes_until_armed_ -= bytes;
-    return false;
+    return;
   }
   bytes_until_armed_ = 0;
-  output_backlog_ = 0;
-  pending_ = true;
-  return true;
-}
-
-void InteractiveDamageLatch::record_output_backlog(const std::size_t bytes) noexcept {
-  if (pending_) {
-    output_backlog_ = bytes;
+  if (!pending_) {
+    output_backlog_ = sampled;
+    pending_ = true;
   }
 }
 
-[[nodiscard]] auto InteractiveDamageLatch::record_output(const std::size_t bytes) noexcept -> bool {
-  if (output_backlog_ == 0) {
-    return true;
-  }
-  if (bytes <= output_backlog_) {
-    output_backlog_ -= bytes;
+[[nodiscard]] auto InteractiveDamageLatch::take_response(const std::size_t drained_bytes,
+                                                         const bool visible_damage) noexcept
+    -> bool {
+  if (!pending_) {
     return false;
   }
-  output_backlog_ = 0;
-  return true;
-}
-
-[[nodiscard]] auto InteractiveDamageLatch::consume() noexcept -> bool {
-  const bool consumed = pending_;
+  if (output_backlog_ > 0) {
+    const auto backlog = std::min(drained_bytes, output_backlog_);
+    output_backlog_ -= backlog;
+    if (drained_bytes == backlog) {
+      return false;
+    }
+  }
+  if (!visible_damage) {
+    return false;
+  }
   pending_ = false;
-  output_backlog_ = 0;
-  return consumed;
+  return true;
 }
 
 void InteractiveDamageLatch::reset() noexcept {
   bytes_until_armed_ = 0;
+  sampled_output_ = 0;
   output_backlog_ = 0;
   pending_ = false;
 }

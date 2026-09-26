@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <expected>
 #include <limits>
 #include <memory>
@@ -55,6 +56,9 @@ enum class WriterMode : std::uint8_t {
 
 struct BoundedPtyWriter final {
   core::InteractiveDamageLatch* latch{nullptr};
+  // The child output readable on the modeled PTY master before each write.
+  core::PtyReadableOutput readable{nullptr};
+  void* readable_context{nullptr};
   std::size_t chunk_max{1};
   std::size_t bytes_written{0};
   WriterMode mode{WriterMode::ready};
@@ -63,6 +67,9 @@ struct BoundedPtyWriter final {
 [[nodiscard]] auto write_pty(void* const context, const std::span<const std::byte> bytes) noexcept
     -> core::PtyWriteAttempt {
   auto& writer = *static_cast<BoundedPtyWriter*>(context);
+  if (writer.latch != nullptr) {
+    writer.latch->prepare_write(bytes.size(), writer.readable, writer.readable_context);
+  }
   switch (writer.mode) {
   case WriterMode::blocked:
     return {.bytes = -1, .error = EAGAIN};
@@ -80,7 +87,7 @@ struct BoundedPtyWriter final {
   }
   writer.bytes_written += written;
   if (writer.latch != nullptr) {
-    static_cast<void>(writer.latch->record_write(written));
+    writer.latch->record_write(written);
   }
   return {.bytes = static_cast<std::ptrdiff_t>(written)};
 }
@@ -158,6 +165,8 @@ public:
     }
     decoder_.reset(1, false);
     pty_writer_.latch = &latch_;
+    pty_writer_.readable = &readable_child_output;
+    pty_writer_.readable_context = this;
     scheduler_.request(core::FrameUrgency::state_change, true, now_, sink_state());
   }
 
@@ -224,7 +233,7 @@ public:
     writer_.chunk_max = writer_.bytes.size();
     pty_writer_.mode = WriterMode::ready;
     pty_writer_.chunk_max = core::pty_write_bytes_per_pane_turn_max;
-    while (!pty_writes_.empty()) {
+    while (!pty_writes_.empty() || !child_output_.empty()) {
       flush_pty();
     }
     Random healing_random(0);
@@ -331,6 +340,10 @@ private:
     constexpr std::array input{std::byte{'i'}, std::byte{'n'}, std::byte{'p'}, std::byte{'u'},
                                std::byte{'t'}};
     const auto accepted = 1U + random.index(input.size());
+    // The child may already have written output that the reactor has not drained.
+    if (const auto background = random.index(64); background > 0) {
+      child_output_.push_back({.bytes = background, .response_to = 0});
+    }
     const auto queued_before = pty_writes_.size();
     if (!pty_writes_.append(std::span(input).first(accepted))) {
       integrity_failed_ = true;
@@ -344,17 +357,61 @@ private:
     pty_writer_.chunk_max = 1U + random.index(8);
   }
 
+  [[nodiscard]] static auto readable_child_output(void* const context) noexcept -> std::size_t {
+    const auto& world = *static_cast<const PresentationWorld*>(context);
+    std::size_t readable = 0;
+    for (const auto& output : world.child_output_) {
+      readable += output.bytes;
+    }
+    return readable;
+  }
+
   void flush_pty() {
+    const bool was_waiting = latch_.waiting_for_write();
+    const bool was_pending = latch_.pending();
     std::size_t budget = core::pty_write_bytes_per_pane_turn_max;
     const auto status = core::flush_pty_write_queue(pty_writes_, budget, &write_pty, &pty_writer_);
     if (status == core::PtyFlushStatus::hard_error) {
       pty_writes_.clear();
       latch_.reset();
+    } else if (was_waiting && !latch_.waiting_for_write()) {
+      // The accepted input reached the child, which answers after any output already queued.
+      ++input_generation_;
+      if (!was_pending) {
+        latch_generation_ = input_generation_;
+      }
+      child_output_.push_back({.bytes = response.size(), .response_to = input_generation_});
+    }
+    drain_child_output();
+  }
+
+  // Reads a bounded chunk, as one reactor turn drains a PTY. A response to the input that armed
+  // the latch, or to one written while it stayed armed, must present as interactive damage.
+  void drain_child_output() {
+    std::size_t budget = pty_writer_.chunk_max * 8U;
+    std::size_t drained = 0;
+    bool armed_response = false;
+    while (budget > 0 && !child_output_.empty()) {
+      auto& front = child_output_.front();
+      const auto taken = std::min(budget, front.bytes);
+      armed_response =
+          armed_response || (front.response_to != 0 && front.response_to >= latch_generation_);
+      drained += taken;
+      budget -= taken;
+      front.bytes -= taken;
+      if (front.bytes == 0) {
+        child_output_.pop_front();
+      }
+    }
+    if (drained == 0) {
       return;
     }
-    if (latch_.consume()) {
-      write_terminal("interactive");
+    const bool pending = latch_.pending();
+    if (latch_.take_response(drained, true)) {
+      write_terminal(response);
       scheduler_.request(core::FrameUrgency::interactive, false, now_, sink_state());
+    } else if (pending && armed_response) {
+      response_lost_ = true;
     }
   }
 
@@ -515,6 +572,9 @@ private:
     if (integrity_failed_ || terminal_.integrity_failed() || projected_.integrity_failed()) {
       return std::string{"terminal, protocol, or presentation integrity failed"};
     }
+    if (response_lost_) {
+      return std::string{"an input response drained as pre-input backlog"};
+    }
     if (frame_budget_.used() != frame_.capacity() || frame_.capacity() > frame_budget_.maximum()) {
       return std::string{"retained frame accounting diverged"};
     }
@@ -539,6 +599,18 @@ private:
   core::ClientFrameOutput output_;
   core::FrameScheduler scheduler_;
   core::InteractiveDamageLatch latch_;
+  // Child output not yet drained from the modeled PTY, in the order the child wrote it.
+  struct ChildOutput final {
+    std::size_t bytes{0};
+    // The input generation this output answers, or zero for background output.
+    std::uint64_t response_to{0};
+  };
+  static constexpr std::string_view response = "interactive";
+  std::deque<ChildOutput> child_output_;
+  std::uint64_t input_generation_{0};
+  // The input that armed the latch from idle; later inputs keep its backlog while it is pending.
+  std::uint64_t latch_generation_{0};
+  bool response_lost_{false};
   core::PresentationGate gate_;
   core::PanePtyWriteQueue pty_writes_;
   BoundedPtyWriter pty_writer_;

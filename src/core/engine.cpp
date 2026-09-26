@@ -9416,7 +9416,7 @@ struct PaneDamageAssessment final {
 [[nodiscard]] auto assess_pane_damage(SessionRecord& session, const PaneRuntimeStore& runtimes,
                                       PaneRuntime& runtime, const PtyDrainResult& drained,
                                       const bool track_interactive_damage,
-                                      const bool drained_past_backlog,
+                                      const std::size_t drained_bytes,
                                       const std::uint64_t interactive_status_before) noexcept
     -> PaneDamageAssessment {
   const auto status_after = current_status_signature(session, runtimes);
@@ -9427,14 +9427,12 @@ struct PaneDamageAssessment final {
   const bool visible_damage =
       drained.render_damage || interactive_status_damage || drained.damage_capture_failed;
   // Output the child wrote before the input reached it keeps burst cadence; spending the latch on
-  // it would add an intermediate frame just ahead of the response.
+  // it would add an intermediate frame just ahead of the response. Damage in an inactive tab still
+  // consumes the latch: its next full redraw covers it, and the latch must not promote an unrelated
+  // update after the tab becomes active again.
   const bool interactive_damage =
-      runtime.interactive_damage.pending() && drained_past_backlog && visible_damage;
-  if (interactive_damage) {
-    // Damage in an inactive tab is already covered by its next full redraw. Do not let the input
-    // latch promote an unrelated update after the tab becomes active again.
-    static_cast<void>(runtime.interactive_damage.consume());
-  }
+      track_interactive_damage &&
+      runtime.interactive_damage.take_response(drained_bytes, visible_damage);
   return {.interactive = interactive_damage, .status_changed = status_changed};
 }
 
@@ -9504,8 +9502,6 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
     start_clipboard_request(session, pane, runtime);
   }
   const auto bytes_drained = pane_budget_before - pane_budget;
-  const bool drained_past_backlog =
-      track_interactive_damage && runtime.interactive_damage.record_output(bytes_drained);
   global_budget -= bytes_drained;
   if (blocked_sink) {
     blocked_session_budget -= bytes_drained;
@@ -9543,7 +9539,7 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
   }
   const auto damage =
       assess_pane_damage(session, runtimes, runtime, drained, track_interactive_damage,
-                         drained_past_backlog, interactive_status_before);
+                         bytes_drained, interactive_status_before);
 #ifdef LEMMA_ENABLE_LATENCY_TRACE
   if (drained.correlation != 0 && tab.id == session.active_tab && pane.id == tab.focused_pane) {
     session.attachment_runtime.frame_trace_correlation = drained.correlation;
@@ -10076,16 +10072,19 @@ void service_attachment_command_lines(Sessions& sessions, PaneRuntimeStore& runt
   }
 }
 
+[[nodiscard]] auto readable_pane_output(void* const context) noexcept -> std::size_t {
+  return platform::pty_readable_bytes(static_cast<const PaneRuntime*>(context)->pty);
+}
+
 [[nodiscard]] auto write_pane_pty(void* const context,
                                   const std::span<const std::byte> bytes) noexcept
     -> PtyWriteAttempt {
   auto& runtime = *static_cast<PaneRuntime*>(context);
+  runtime.interactive_damage.prepare_write(bytes.size(), &readable_pane_output, &runtime);
   const auto written = ::write(runtime.pty, bytes.data(), bytes.size());
   if (written > 0) {
     const auto size = static_cast<std::size_t>(written);
-    if (runtime.interactive_damage.record_write(size)) {
-      runtime.interactive_damage.record_output_backlog(platform::pty_readable_bytes(runtime.pty));
-    }
+    runtime.interactive_damage.record_write(size);
     std::uint64_t trace_correlation = 0;
 #ifdef LEMMA_ENABLE_LATENCY_TRACE
     trace_correlation = runtime.input_trace_matcher.observe(bytes.first(size));
