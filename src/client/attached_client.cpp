@@ -602,7 +602,8 @@ private:
     const auto first = header_offset == header.size() ? std::size_t{1} : std::size_t{0};
     msghdr message{};
     message.msg_iov = std::span(vectors).subspan(first).data();
-    message.msg_iovlen = vectors.size() - first;
+    // msg_iovlen is int on Darwin and size_t on Linux; the count is at most 2.
+    message.msg_iovlen = static_cast<decltype(message.msg_iovlen)>(vectors.size() - first);
     const auto sent = ::sendmsg(socket, &message, MSG_NOSIGNAL);
     if (sent > 0) {
       offset += static_cast<std::size_t>(sent);
