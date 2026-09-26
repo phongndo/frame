@@ -12,27 +12,140 @@ using namespace std::chrono_literals;
 
 constexpr auto origin = FrameScheduler::TimePoint{};
 
+// A scripted PTY master: the child output currently readable, and how often it was sampled.
+struct ScriptedPtyOutput final {
+  std::size_t readable{0};
+  std::size_t samples{0};
+};
+
+[[nodiscard]] auto scripted_readable_output(void* const context) noexcept -> std::size_t {
+  auto& output = *static_cast<ScriptedPtyOutput*>(context);
+  ++output.samples;
+  return output.readable;
+}
+
+// Mirrors write_pane_pty: sample before the write, then record its progress.
+void write_input(InteractiveDamageLatch& latch, ScriptedPtyOutput& output,
+                 const std::size_t bytes) noexcept {
+  latch.prepare_write(bytes, &scripted_readable_output, &output);
+  latch.record_write(bytes);
+}
+
+// GoogleTest assertion macros inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(FrameSchedulerTest, ClassifiesInputAndArmsOnlyAfterItsPtyWriteProgress) {
   EXPECT_FALSE(latency_sensitive_input(0));
   EXPECT_TRUE(latency_sensitive_input(interactive_input_bytes_max));
   EXPECT_FALSE(latency_sensitive_input(interactive_input_bytes_max + 1U));
 
   InteractiveDamageLatch latch;
+  ScriptedPtyOutput output;
   latch.await_write(3, 4);
   EXPECT_TRUE(latch.waiting_for_write());
   EXPECT_FALSE(latch.pending());
-  EXPECT_FALSE(latch.consume());
+  EXPECT_FALSE(latch.take_response(1, true));
 
-  latch.record_write(3);
+  // A write that cannot reach the accepted input neither arms the latch nor samples the PTY.
+  write_input(latch, output, 3);
+  EXPECT_EQ(output.samples, 0U);
   EXPECT_TRUE(latch.waiting_for_write());
   EXPECT_FALSE(latch.pending());
-  EXPECT_FALSE(latch.consume());
+  EXPECT_FALSE(latch.take_response(1, true));
 
-  latch.record_write(1);
+  write_input(latch, output, 1);
+  EXPECT_EQ(output.samples, 1U);
   EXPECT_FALSE(latch.waiting_for_write());
   EXPECT_TRUE(latch.pending());
-  EXPECT_TRUE(latch.consume());
+  // Output that is not visible damage leaves the latch for the response.
+  EXPECT_FALSE(latch.take_response(1, false));
+  EXPECT_TRUE(latch.pending());
+  EXPECT_TRUE(latch.take_response(1, true));
   EXPECT_FALSE(latch.pending());
+  EXPECT_FALSE(latch.take_response(1, true));
+}
+
+// GoogleTest assertion macros inflate the measured branch count.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(FrameSchedulerTest, OutputQueuedBeforeInputCannotAnswerIt) {
+  InteractiveDamageLatch latch;
+  ScriptedPtyOutput output{.readable = 81};
+  latch.await_write(0, 1);
+  write_input(latch, output, 1);
+  ASSERT_TRUE(latch.pending());
+
+  // The backlog drains in pieces without answering the input, even as visible damage; the latch
+  // stays armed for the response behind it.
+  EXPECT_FALSE(latch.take_response(50, true));
+  EXPECT_FALSE(latch.take_response(31, true));
+  EXPECT_TRUE(latch.pending());
+  EXPECT_TRUE(latch.take_response(30, true));
+
+  // A read that reaches past the backlog carries output written after the input.
+  latch.await_write(0, 1);
+  write_input(latch, output, 1);
+  EXPECT_TRUE(latch.take_response(111, true));
+
+  // Consuming the latch retires its backlog; later output answers the next input directly.
+  output.readable = 0;
+  latch.await_write(0, 1);
+  write_input(latch, output, 1);
+  EXPECT_TRUE(latch.take_response(1, true));
+
+  // Reset retires an armed latch's backlog.
+  output.readable = 81;
+  latch.await_write(0, 1);
+  write_input(latch, output, 1);
+  latch.reset();
+  output.readable = 0;
+  latch.await_write(0, 1);
+  write_input(latch, output, 1);
+  EXPECT_TRUE(latch.take_response(1, true));
+}
+
+// A terminal echo can be readable as soon as the write returns. The sample is taken before the
+// write, so the echo is never mistaken for output that preceded the input.
+TEST(FrameSchedulerTest, EchoReadableAfterTheWriteStillAnswersTheInput) {
+  InteractiveDamageLatch latch;
+  ScriptedPtyOutput output{.readable = 5};
+  latch.await_write(0, 1);
+  latch.prepare_write(1, &scripted_readable_output, &output);
+  output.readable += 3;
+  latch.record_write(1);
+  ASSERT_TRUE(latch.pending());
+  EXPECT_EQ(output.samples, 1U);
+
+  // One drain returns the earlier output together with the echo.
+  EXPECT_TRUE(latch.take_response(output.readable, true));
+
+  // A failed write samples nothing lasting: the retry samples again before writing.
+  output.readable = 7;
+  latch.await_write(0, 1);
+  latch.prepare_write(1, &scripted_readable_output, &output);
+  output.readable = 0;
+  write_input(latch, output, 1);
+  EXPECT_TRUE(latch.take_response(1, true));
+}
+
+// A second input can arm while the first input's response is still unread. That response must
+// keep its immediate frame instead of becoming backlog for the second input.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST(FrameSchedulerTest, RearmWhilePendingKeepsTheFirstBacklog) {
+  InteractiveDamageLatch latch;
+  ScriptedPtyOutput output{.readable = 4};
+  latch.await_write(0, 1);
+  write_input(latch, output, 1);
+  ASSERT_TRUE(latch.pending());
+  ASSERT_EQ(output.samples, 1U);
+
+  // The first response arrives but is not drained before the second input is written.
+  output.readable += 6;
+  latch.await_write(0, 1);
+  write_input(latch, output, 1);
+  EXPECT_TRUE(latch.pending());
+  EXPECT_EQ(output.samples, 1U);
+
+  EXPECT_FALSE(latch.take_response(4, true));
+  EXPECT_TRUE(latch.take_response(6, true));
 }
 
 TEST(FrameSchedulerTest, HigherUrgencyAdvancesButLaterRequestsNeverPostponeDeadline) {
@@ -147,13 +260,13 @@ TEST(FrameSchedulerTest, BackgroundDamageCannotDelayFollowingInputResponse) {
   InteractiveDamageLatch latch;
   latch.await_write(0, 1);
   latch.record_write(1);
-  ASSERT_TRUE(latch.consume());
+  ASSERT_TRUE(latch.take_response(1, true));
   const auto first_damage = origin + 55ms;
   scheduler.request(FrameUrgency::interactive, false, first_damage, FrameSinkState::ready, source);
   ASSERT_TRUE(scheduler.due(first_damage, FrameSinkState::ready));
   scheduler.complete();
 
-  ASSERT_FALSE(latch.consume());
+  ASSERT_FALSE(latch.take_response(1, true));
   scheduler.request(FrameUrgency::burst, false, first_damage + 40us, FrameSinkState::ready, source);
   const auto followup = first_damage + 40us;
   EXPECT_EQ(scheduler.deadline(FrameSinkState::ready), followup);

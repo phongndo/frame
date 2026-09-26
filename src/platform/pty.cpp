@@ -353,4 +353,14 @@ auto capture_process_environment(const std::span<std::byte> output) noexcept
   return ::ioctl(pty_descriptor, TIOCSWINSZ, &native_size) == 0;
 }
 
+[[nodiscard]] auto pty_readable_bytes(const int pty_descriptor) noexcept -> std::size_t {
+  int readable = 0;
+  // ioctl is variadic because its third argument depends on the request.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+  if (::ioctl(pty_descriptor, FIONREAD, &readable) != 0 || readable < 0) {
+    return 0;
+  }
+  return static_cast<std::size_t>(readable);
+}
+
 } // namespace lemma::platform
