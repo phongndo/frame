@@ -11,7 +11,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from tests.support.mux_harness import Client, LemmaServer, Session
+from extensions.lemma_client import Client as ExtensionClient
+from tests.support.mux_harness import Client, LemmaServer, Session, wait_until
 
 # Mirrors OuterResizeSchedule::commit_interval.
 OUTER_RESIZE_COMMIT_INTERVAL = 0.016
@@ -350,6 +351,62 @@ while True:
         # reflow per bounded read rather than one per superseded message.
         self.assertLessEqual(len(applied), 4, applied)
 
+    def test_docked_tab_activation_resizes_its_pane_once(self) -> None:
+        # The statusline is a top dock. Activating a Tab must size its Panes to the content
+        # viewport directly, not to the full geometry first and then again for the dock.
+        session, client, log, synced = self.start_geometry_recorder("docked_tabs")
+        name = session.name
+
+        def activate_other_tab_and_resize(columns: int, rows: int) -> None:
+            self.server.require_command(
+                "proc",
+                "tab",
+                "new",
+                "--session",
+                name,
+                "--focus",
+                "created",
+                "--",
+                "sleep",
+                "3600",
+            )
+            client.resize(columns, rows)
+            self.server.wait_for_state(
+                name,
+                lambda state: (state.columns, state.rows) == (columns, rows),
+                f"{columns}x{rows} while the recorder Tab is inactive",
+            )
+
+        def assert_one_resize(after: int, size: list[int], marker: str) -> int:
+            client.send(marker.encode())
+            received = self.wait_for_input(client, log, marker)
+            events = self.recorded(log)
+            index = events.index(received)
+            self.assertEqual(received["winsz"], size)
+            applied = [
+                event["size"]
+                for event in events[after + 1 : index]
+                if "input" not in event
+            ]
+            self.assertEqual(applied, [size])
+            return index
+
+        activate_other_tab_and_resize(100, 30)
+        self.server.require_command(
+            "proc", "tab", "select", "--session", name, "--tab", "1"
+        )
+        synced = assert_one_resize(synced, [29, 100], "S")
+        self.server.require_command(
+            "proc", "tab", "kill", "--session", name, "--tab", "2"
+        )
+
+        activate_other_tab_and_resize(90, 28)
+        # Closing the active Tab auto-selects the recorder's Tab.
+        self.server.require_command(
+            "proc", "tab", "kill", "--session", name, "--tab", "2"
+        )
+        assert_one_resize(synced, [27, 90], "C")
+
     def test_nested_resize_reaches_each_real_child_pty(self) -> None:
         session = self.server.create_session("nested_resize")
         left = session.pane()
@@ -412,6 +469,163 @@ while True:
         pane.split_down()
         pane.expect_output("__2048_SPLIT_11_80__")
         pane.expect_alive()
+
+
+class CopyModeReflowMuxTest(unittest.TestCase):
+    """Every geometry change that reflows the copy-mode Pane re-anchors its selection.
+
+    Copy mode pins its viewport by absolute history offset while output arrives. A reflow
+    changes which content each offset names, so the next output would jump the viewport away
+    from the copy cursor unless the reflow reinstalls the selection and records the new offset.
+    """
+
+    LINES = 400
+    # Each line wraps into two rows below 66 columns. The copy cursor starts on the row after
+    # the last line; moving up this many rows lands on a marker row in either geometry.
+    MOVES = 150
+
+    def setUp(self) -> None:
+        self.server = LemmaServer.from_environment()
+        self.addCleanup(self.server.close)
+
+    def start(self, name: str) -> tuple[Session, Client, Path]:
+        trigger = self.server.root / f"{name}.output"
+        script = f"""
+import os, sys, time
+sys.stdout.write(''.join('L%04d %s\\n' % (index, 'x' * 60) for index in range({self.LINES})))
+sys.stdout.flush()
+while not os.path.exists({str(trigger)!r}):
+    time.sleep(0.01)
+sys.stdout.write('AFTER_REFLOW\\n')
+sys.stdout.flush()
+time.sleep(3600)
+"""
+        session = self.server.create_session(
+            name, command=(sys.executable, "-c", script)
+        )
+        client = session.require_client()
+        client.expect_output(f"L{self.LINES - 1:04d}")
+        return session, client, trigger
+
+    @staticmethod
+    def rows(client: Client) -> list[str]:
+        client.drain()
+        return client.screen_text().splitlines()
+
+    def enter_copy_mode(self, client: Client, marker: str) -> None:
+        client.prefix("[")
+        wait_until(
+            "copy mode",
+            lambda: True if self.rows(client)[0].startswith("COPY") else None,
+        )
+        client.send("k" * self.MOVES)
+        wait_until(
+            f"copy cursor on {marker}",
+            lambda: True if self.rows(client)[1].startswith(marker) else None,
+            diagnostics=client.diagnostics,
+        )
+
+    def assert_anchor_survives_output(
+        self, client: Client, trigger: Path, marker: str
+    ) -> None:
+        wait_until(
+            f"{marker} visible after reflow",
+            lambda: True if marker in "\n".join(self.rows(client)[1:]) else None,
+            diagnostics=client.diagnostics,
+        )
+        before = self.rows(client)[0]
+        self.assertTrue(before.startswith("COPY"), before)
+        trigger.touch()
+        # Output grows history, so the COPY position changes once the Pane processed it; the
+        # Pane frame precedes the statusline's update of that position.
+        wait_until(
+            "copy position after output",
+            lambda: True if self.rows(client)[0] != before else None,
+            diagnostics=client.diagnostics,
+        )
+        rows = self.rows(client)
+        self.assertTrue(rows[0].startswith("COPY"), rows[0])
+        self.assertIn(marker, "\n".join(rows[1:]), client.diagnostics())
+
+    def test_outer_resize_reanchors_copy_selection(self) -> None:
+        _, client, trigger = self.start("copy_outer_resize")
+        self.enter_copy_mode(client, "L0250")
+        client.resize(40, 24)
+        self.assert_anchor_survives_output(client, trigger, "L0250")
+
+    def test_dock_creation_reanchors_copy_selection(self) -> None:
+        session, client, trigger = self.start("copy_dock_create")
+        self.enter_copy_mode(client, "L0250")
+        with ExtensionClient(
+            str(self.server.socket_path),
+            name="copy-dock",
+            session=session.state().id,
+            capabilities=("proc", "surface"),
+        ) as extension:
+            extension.command(
+                "surface.create", placement={"kind": "dock.right", "size": 40}
+            )
+            self.assert_anchor_survives_output(client, trigger, "L0250")
+
+    def test_dock_removal_reanchors_copy_selection(self) -> None:
+        session, client, trigger = self.start("copy_dock_remove")
+        extension = ExtensionClient(
+            str(self.server.socket_path),
+            name="copy-dock",
+            session=session.state().id,
+            capabilities=("proc", "surface"),
+        )
+        self.addCleanup(extension.close)
+        extension.command(
+            "surface.create", placement={"kind": "dock.right", "size": 40}
+        )
+        self.enter_copy_mode(client, "L0325")
+        # Disconnecting releases the dock; native geometry reconciliation widens the Pane.
+        extension.close()
+        self.assert_anchor_survives_output(client, trigger, "L0325")
+
+    def test_sibling_exit_reanchors_copy_selection(self) -> None:
+        session, client, trigger = self.start("copy_sibling_exit")
+        exit_trigger = self.server.root / "sibling.exit"
+        self.server.require_command(
+            "split",
+            "--session",
+            session.name,
+            "--pane",
+            session.state().focused_pane,
+            "--right",
+            "--focus",
+            "preserve",
+            "--",
+            sys.executable,
+            "-c",
+            "import os, time\n"
+            f"while not os.path.exists({str(exit_trigger)!r}): time.sleep(0.01)\n",
+        )
+        self.enter_copy_mode(client, "L0325")
+        exit_trigger.touch()
+        self.server.wait_for_state(
+            session.name, lambda state: state.panes == 1, "sibling Pane to close"
+        )
+        self.assert_anchor_survives_output(client, trigger, "L0325")
+
+    def test_api_split_reanchors_copy_selection(self) -> None:
+        session, client, trigger = self.start("copy_api_split")
+        self.enter_copy_mode(client, "L0250")
+        self.server.require_command(
+            "split",
+            "--session",
+            session.name,
+            "--pane",
+            session.state().focused_pane,
+            "--right",
+            "--focus",
+            "preserve",
+            "--",
+            "sleep",
+            "3600",
+        )
+        self.assert_anchor_survives_output(client, trigger, "L0250")
 
 
 if __name__ == "__main__":

@@ -300,6 +300,10 @@ struct Attachment final {
   SessionId session;
   std::uint16_t columns{80};
   std::uint16_t rows{24};
+  // The Pane viewport inside the physical geometry after native chrome and docks, as last
+  // committed by SessionMachine. Tab activation and creation fit this rectangle directly, so a
+  // docked Attachment never sizes a Tab to the full geometry first.
+  PaneRectangle content_viewport{.columns = 80, .rows = 24};
   std::optional<AttachmentPaneTarget> selection_target;
   std::optional<MouseCapture> mouse_capture;
   CopyModeState copy_mode;
