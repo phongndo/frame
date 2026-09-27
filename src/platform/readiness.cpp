@@ -1,17 +1,18 @@
 #include "platform/readiness.hpp"
 
+#include <cstddef>
+#include <span>
+
+#ifdef __linux__
 #include "platform/io.hpp"
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <span>
 #include <unordered_map>
 #include <vector>
 
-#ifdef __linux__
 #include <sys/epoll.h>
 #endif
 
@@ -183,6 +184,8 @@ Readiness::~Readiness() = default;
 
 auto Readiness::uses_native_wait() const noexcept -> bool { return impl_ != nullptr; }
 
+// Only Linux retains native registration state; elsewhere this is a plain poll.
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 auto Readiness::wait(const std::span<pollfd> descriptors,
                      [[maybe_unused]] const std::span<const ReadinessIdentity> identities,
                      const int timeout_milliseconds) noexcept -> int {

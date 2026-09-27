@@ -346,9 +346,13 @@ class FocusReportMuxTest(unittest.TestCase):
         )
 
     def expect_reports(self, path: Path, expected: bytes) -> None:
+        def observe() -> bool | None:
+            self.server.drain_clients()
+            return True if path.exists() and path.read_bytes() == expected else None
+
         wait_until(
             f"{path.name} to record {expected!r}",
-            lambda: True if path.exists() and path.read_bytes() == expected else None,
+            observe,
             diagnostics=lambda: (
                 f"recorded={path.read_bytes() if path.exists() else None!r}\n"
                 f"{self.server.diagnostics()}"

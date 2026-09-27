@@ -125,13 +125,15 @@ class FloatingPaneTest(unittest.TestCase):
         return entry["result"]
 
     def recorded_size(self, path: Path, size: tuple[int, int]) -> None:
+        def observe() -> bool | None:
+            self.server.drain_clients()
+            if path.exists() and tuple(map(int, path.read_text().split())) == size:
+                return True
+            return None
+
         wait_until(
             f"float PTY size {size}",
-            lambda: (
-                True
-                if path.exists() and tuple(map(int, path.read_text().split())) == size
-                else None
-            ),
+            observe,
             diagnostics=lambda: (
                 path.read_text() if path.exists() else "no size recorded"
             ),

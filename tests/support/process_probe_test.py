@@ -188,8 +188,15 @@ class PainterTest(unittest.TestCase):
     def test_paints_a_hidden_frame_before_acknowledging(self) -> None:
         process = self.start("paint", b"__LEMMA_PAINT_READY__")
         self.receipts.sendto(b"c__LEMMA_SESSION_0002_CCCCCC__", str(self.control))
+        # A frame can exceed the PTY buffer (about 1 KiB on macOS), so keep draining while
+        # waiting for the receipt or the painter blocks before it can acknowledge.
+        deadline = time.monotonic() + 5.0
+        while not select.select([self.receipts], [], [], 0)[0]:
+            self.assertLess(time.monotonic(), deadline, "painter did not acknowledge")
+            process.drain(0.01)
         self.assertEqual(self.receipts.recv(256), b"__LEMMA_SESSION_0002_CCCCCC__")
-        process.read_until(b"__LEMMA_SESSION_0002_CCCCCC__", 2.0)
+        process.drain(0.05)
+        self.assertIn("__LEMMA_SESSION_0002_CCCCCC__", process.screen.text())
         self.assertIn("c" * 40, process.screen.text())
 
     def test_rejects_a_control_without_a_fill_letter(self) -> None:
