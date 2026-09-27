@@ -21,6 +21,9 @@ HeaderFilterRegex: '(^|/)(include|src|tests|benchmarks)/'
 FormatStyle: file
 SystemHeaders: false
 CheckOptions:
+  # Standard-library contract violations (for example string_view::substr past the end) terminate
+  # inside noexcept code. libc++ defines its throw helpers inline, so only Darwin exposes them.
+  bugprone-exception-escape.IgnoredExceptions: 'out_of_range,length_error,bad_array_new_length'
   readability-function-cognitive-complexity.Threshold: '15'
   readability-identifier-naming.NamespaceCase: lower_case
   readability-identifier-naming.FunctionCase: lower_case

@@ -30,6 +30,14 @@ for line in sys.stdin:
 """
 
 
+TICKER = """
+import os, time
+while True:
+    os.write(1, b'.')
+    time.sleep(0.1)
+"""
+
+
 class OuterTitleMuxTest(unittest.TestCase):
     def setUp(self) -> None:
         self.server = LemmaServer.from_environment(
@@ -53,15 +61,17 @@ class OuterTitleMuxTest(unittest.TestCase):
         )
 
     def test_title_prefers_tab_name_then_pane_title_then_process_name(self) -> None:
-        # The ticking shell has no terminal title, so its label is the process name.
+        # The ticker has no terminal title, so its label is the process name. Darwin's /bin/sh
+        # re-executes another shell, so tick from the interpreter whose name is known.
         session = self.server.create_session(
             "title_order",
-            command=("/bin/sh", "-c", "while :; do printf .; sleep 0.1; done"),
+            command=(sys.executable, "-c", TICKER),
         )
+        process_title = f"title_order: {Path(sys.executable).resolve().name}"
         client = session.require_client()
         state = session.state()
         left_id = state.focused_pane
-        self.expect_title(client, "title_order: sh")
+        self.expect_title(client, process_title)
 
         right_id = self.server.require_command(
             "split",
@@ -79,7 +89,7 @@ class OuterTitleMuxTest(unittest.TestCase):
         self.server.require_command(
             "focus", "--session", session.name, "--pane", left_id
         )
-        self.expect_title(client, "title_order: sh")
+        self.expect_title(client, process_title)
         self.server.require_command(
             "focus", "--session", session.name, "--pane", right_id
         )
@@ -185,12 +195,13 @@ for index, line in enumerate(sys.stdin):
         data += bytes.fromhex(text) * int(count or 1)
     os.write(1, data + b'__EMITTED_%d__\\r\\n' % index)
 """
+# Darwin sleeps overshoot enough that 20 x 10 ms can cross a second 250 ms bell refill.
 BELL_FLOOD = """
 import os, sys, time
 sys.stdin.readline()
 for _ in range(20):
     os.write(1, b'\\x07')
-    time.sleep(0.01)
+    time.sleep(0.005)
 time.sleep(60)
 """
 PROGRESS_REMOVED = b"\x1b]9;4;0\x1b\\"
@@ -331,9 +342,10 @@ class OuterAttentionMuxTest(unittest.TestCase):
 
         # Notifications before forwarding coalesce into the Pane's latest. The body is bounded,
         # and control characters never reach the outer terminal.
-        body = b"\xc2\x9d" + b"x" * 2000
         burst = b"".join(b"\x1b]9;first %d\x07" % index for index in range(3))
-        self.emit(session, background, burst + b"\x1b]9;" + body + b"\x07")
+        # The emitter repeats the filler: Darwin limits a canonical input line to 1 KiB.
+        body_text = " ".join(((burst + b"\x1b]9;\xc2\x9d").hex(), "78*2000", "07"))
+        self.emit(session, background, b"", hex_text=body_text)
         client.expect_raw(b"notify: jobs x;??" + b"x" * 1022 + b"\x1b\\")
         client.drain(0.2)
         self.assertNotIn(b"first 0", client.process.output_tail)

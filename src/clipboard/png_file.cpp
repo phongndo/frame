@@ -27,8 +27,8 @@ extern char** environ; // NOLINT(readability-redundant-declaration)
 namespace lemma::clipboard {
 namespace {
 auto spawn(const std::string& helper, const int child, const int parent) noexcept -> bool {
-  posix_spawn_file_actions_t actions;
-  posix_spawnattr_t attributes;
+  posix_spawn_file_actions_t actions{};
+  posix_spawnattr_t attributes{};
   if (::posix_spawn_file_actions_init(&actions) != 0) {
     return false;
   }
@@ -36,8 +36,8 @@ auto spawn(const std::string& helper, const int child, const int parent) noexcep
     ::posix_spawn_file_actions_destroy(&actions);
     return false;
   }
-  sigset_t defaults;
-  sigset_t mask;
+  sigset_t defaults{};
+  sigset_t mask{};
   sigfillset(&defaults);
   sigemptyset(&mask);
   const short flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK

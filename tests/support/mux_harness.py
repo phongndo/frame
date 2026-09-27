@@ -348,13 +348,17 @@ class LemmaServer:
             )
         return result
 
-    def session_state(self, name: str) -> SessionState | None:
+    def drain_clients(self) -> None:
         # Keep every live outer PTY flowing while observing daemon state. A client can switch
         # away from its original session, so filtering by that name can stop draining its redraw
         # while polling the destination and accidentally turn the observer into a slow client.
+        # Darwin PTYs buffer about 1 KiB, so one undrained frame can stall a client there.
         for client in self.clients:
             if client.running:
                 client.drain(0.002)
+
+    def session_state(self, name: str) -> SessionState | None:
+        self.drain_clients()
 
         # Session inspection and Pane listing are separate Procs. A structural change between
         # them (for example a Pane closing) is not an inconsistency: retry until the Session

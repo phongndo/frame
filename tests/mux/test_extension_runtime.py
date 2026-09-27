@@ -740,9 +740,13 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                 timeout=10,
             )
             # Poll hangup without consuming queued bytes: only the reactor's deadline can wake it.
-            self.assertTrue(
-                poller.poll(8000), "stalled Surface owner was never revoked"
-            )
+            # Darwin does not wake a pending POLLHUP-only poll when unread bytes are queued, but
+            # each new poll reports the hangup, so poll in short intervals.
+            deadline = started + 8
+            hung_up: list[tuple[int, int]] = []
+            while not hung_up and time.monotonic() < deadline:
+                hung_up = poller.poll(50)
+            self.assertTrue(hung_up, "stalled Surface owner was never revoked")
             self.assertGreaterEqual(time.monotonic() - started, 4.5)
             sent.result(timeout=3)
         self.assertTrue(session.state().attached)
