@@ -235,7 +235,7 @@ struct ProtocolVersion final {
 };
 
 inline constexpr ProtocolVersion current_version{};
-inline constexpr std::array<std::byte, 4> attach_magic{std::byte{0x89}, std::byte{'L'},
+inline constexpr std::array<std::byte, 4> attach_magic{std::byte{0x89}, std::byte{'F'},
                                                        std::byte{'M'}, std::byte{'A'}};
 inline constexpr std::size_t attach_header_bytes = 16;
 inline constexpr std::size_t render_generation_bytes = 4;

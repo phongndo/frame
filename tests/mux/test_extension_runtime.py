@@ -18,7 +18,7 @@ from extensions.frame_client import PROC as PROC_REQUEST
 from extensions.frame_client import Client
 from tests.support.mux_harness import FrameServer, Session, wait_until
 
-MAGIC = b"\x8aLME"
+MAGIC = b"\x8aFME"
 HEADER = struct.Struct(">4sBBBBII")
 HELLO = 1
 PROC = 3

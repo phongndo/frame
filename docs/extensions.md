@@ -265,7 +265,7 @@ The connection owns one `ExtensionGenerationId`.
 Every record has a 16-byte network-byte-order header; the initial magic byte selects this protocol:
 
 ```text
-0..3   magic       8a 4c 4d 45 ("LME" after the discriminator)
+0..3   magic       8a 46 4d 45 ("FME" after the discriminator)
 4      major       1
 5      minor       0
 6      kind        Hello=1 Welcome=2 Proc=3 ProcResult=4 SurfaceUpdate=5 Event=6 Error=7

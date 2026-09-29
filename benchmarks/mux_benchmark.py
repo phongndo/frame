@@ -116,7 +116,7 @@ ATTACH_VISIBLE_MARKER = b"__FRAME_ATTACH_VISIBLE__"
 # Keep the first byte distinct from fixture markers. Differential terminal renderers can retain a
 # shared prefix on screen without retransmitting it to an attached outer client.
 SHELL_READY_MARKER = b"FRAME-SHELL-READY"
-ATTACH_MAGIC = b"\x89LMA"
+ATTACH_MAGIC = b"\x89FMA"
 ATTACH_PROTOCOL_MAJOR = 2
 ATTACH_PROTOCOL_MINOR = 11
 # These known versions share the hello/input wire layouts used by the paired harness.
@@ -3869,7 +3869,7 @@ def latency_trace_metadata(directory: Path | None) -> dict[str, Any]:
             files.append({"path": str(path), "valid": False, "error": str(error)})
             continue
         valid = (
-            magic == 0x3145_4341_5254_4D4C
+            magic == 0x3145_4341_5254_4D46
             and version == 2
             and role in (1, 2)
             and event_size == 40

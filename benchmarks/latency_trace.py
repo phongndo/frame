@@ -12,7 +12,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
-TRACE_MAGIC = 0x3145_4341_5254_4D4C
+TRACE_MAGIC = 0x3145_4341_5254_4D46
 TRACE_VERSION = 2
 EVENTS_MAX = 524_288
 HEADER = struct.Struct("<QIHHIIQQ24x")
