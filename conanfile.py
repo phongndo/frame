@@ -3,7 +3,7 @@ from typing import ClassVar
 from conan import ConanFile
 
 
-class LemmaConan(ConanFile):
+class FrameConan(ConanFile):
     package_type = "application"
     settings = "os", "arch", "compiler", "build_type"
 

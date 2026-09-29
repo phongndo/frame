@@ -1,5 +1,5 @@
-#ifndef LEMMA_CORE_ENGINE_STATE_HPP
-#define LEMMA_CORE_ENGINE_STATE_HPP
+#ifndef FRAME_CORE_ENGINE_STATE_HPP
+#define FRAME_CORE_ENGINE_STATE_HPP
 
 #include "clipboard/png_file.hpp"
 #include "clipboard/transaction.hpp"
@@ -10,18 +10,18 @@
 #include "core/presentation_gate.hpp"
 #include "core/session.hpp"
 #include "extension/commands.hpp"
+#include "frame/assert.hpp"
+#include "frame/generational_store.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "input/input_router.hpp"
-#include "lemma/assert.hpp"
-#include "lemma/generational_store.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
 #include "protocol/attachment.hpp"
 #include "render/frame_buffer.hpp"
 #include "render/graphics.hpp"
 #include "render/pane_composition.hpp"
 
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
 #include "diagnostic/latency_trace.hpp"
 #endif
 
@@ -39,7 +39,7 @@
 
 #include <unistd.h>
 
-namespace lemma::core::engine_detail {
+namespace frame::core::engine_detail {
 
 inline constexpr std::size_t process_name_bytes_max = 64;
 inline constexpr std::size_t copy_escape_bytes_max = 16;
@@ -118,7 +118,7 @@ struct PaneRuntime final {
   // Last focus state queued to (or, without mode 1004, assumed by) the child. Reconciliation
   // derives the desired state from committed Session and Attachment state.
   bool focus_reported{false};
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   diagnostic::LatencyTraceMarkerMatcher input_trace_matcher;
   diagnostic::LatencyTraceMarkerMatcher output_trace_matcher;
 #endif
@@ -157,7 +157,7 @@ class PaneRuntimeStore final {
   }
 
   void release_scrollback(const std::size_t bytes) noexcept {
-    LEMMA_ASSERT(scrollback_bytes_reserved_ >= bytes);
+    FRAME_ASSERT(scrollback_bytes_reserved_ >= bytes);
     scrollback_bytes_reserved_ -= bytes;
   }
 
@@ -311,7 +311,7 @@ struct AttachmentRuntime final {
   std::optional<std::chrono::steady_clock::time_point> status_message_deadline;
   std::array<std::byte, input::deferred_input_bytes_max + 1U> pending_routed_input{};
   std::uint8_t pending_routed_input_size{0};
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   diagnostic::LatencyTraceMarkerMatcher decoded_input_trace_matcher;
   std::uint64_t frame_trace_correlation{0};
 #endif
@@ -358,7 +358,7 @@ public:
                                      std::numeric_limits<std::uint32_t>::max();
   }
   [[nodiscard]] auto allocate_connection(const SessionId id) noexcept -> ConnectionId {
-    LEMMA_ASSERT(connection_available(id));
+    FRAME_ASSERT(connection_available(id));
     return ConnectionId::from_parts(
         id.slot(), ++std::span(connection_generations_).subspan(id.slot(), 1).front());
   }
@@ -471,14 +471,14 @@ static_assert(sizeof(SessionRecord) <= std::size_t{96} * 1'024U);
 [[nodiscard]] inline auto find_pane_runtime(PaneRuntimeStore& runtimes,
                                             const SessionRecord& session, const Tab& tab,
                                             const Pane& pane) noexcept -> PaneRuntime* {
-  LEMMA_ASSERT(pane.tab == tab.id);
+  FRAME_ASSERT(pane.tab == tab.id);
   return find_pane_runtime(runtimes, session, pane);
 }
 
 [[nodiscard]] inline auto find_pane_runtime(const PaneRuntimeStore& runtimes,
                                             const SessionRecord& session, const Tab& tab,
                                             const Pane& pane) noexcept -> const PaneRuntime* {
-  LEMMA_ASSERT(pane.tab == tab.id);
+  FRAME_ASSERT(pane.tab == tab.id);
   return find_pane_runtime(runtimes, session, pane);
 }
 
@@ -506,6 +506,6 @@ static_assert(sizeof(SessionRecord) <= std::size_t{96} * 1'024U);
                                      const PaneRuntimeStore& runtimes) noexcept
     -> const PaneRuntime*;
 
-} // namespace lemma::core::engine_detail
+} // namespace frame::core::engine_detail
 
-#endif // LEMMA_CORE_ENGINE_STATE_HPP
+#endif // FRAME_CORE_ENGINE_STATE_HPP

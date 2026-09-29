@@ -63,8 +63,8 @@ class GhosttyPinValidationTests(unittest.TestCase):
 
     def init_source_repo(self, *, dirty: bool = False) -> str:
         self.git("init")
-        self.git("config", "user.email", "lemma@example.com")
-        self.git("config", "user.name", "Lemma")
+        self.git("config", "user.email", "frame@example.com")
+        self.git("config", "user.name", "Frame")
         (self.source / "build.zig").write_text("/* test */\n", encoding="utf-8")
         self.git("add", "build.zig")
         self.git("commit", "-m", "init")

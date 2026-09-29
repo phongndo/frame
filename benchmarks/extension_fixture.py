@@ -84,18 +84,18 @@ class Fixture:
 def admit(path: str, name: str, session: str | None, capabilities: list[str]) -> Peer:
     peer = Peer(path)
     hello: dict[str, Any] = {
-        "schema": "lemma.extension/v1",
+        "schema": "frame.extension/v1",
         "name": name,
         "capabilities": capabilities,
     }
     if session is not None:
         hello["events"] = {
-            "schema": "lemma.events/v1",
+            "schema": "frame.events/v1",
             "session": {"name": session},
         }
     peer.send(HELLO, 1, hello)
     welcome = peer.receive_matching(WELCOME, 1)
-    if welcome.get("schema") != "lemma.extension-welcome/v1":
+    if welcome.get("schema") != "frame.extension-welcome/v1":
         raise RuntimeError("extension fixture did not receive Welcome")
     peer.sequence = 2
     return peer
@@ -104,7 +104,7 @@ def admit(path: str, name: str, session: str | None, capabilities: list[str]) ->
 def proc(peer: Peer, commands: list[dict[str, Any]]) -> dict[str, Any]:
     sequence = peer.sequence
     peer.sequence += 1
-    peer.send(PROC, sequence, {"schema": "lemma.proc/v1", "commands": commands})
+    peer.send(PROC, sequence, {"schema": "frame.proc/v1", "commands": commands})
     result = peer.receive_matching(PROC_RESULT, sequence)
     if result.get("ok") is not True:
         raise RuntimeError(f"extension fixture Proc failed: {result}")
@@ -139,7 +139,7 @@ def create_surfaces(peer: Peer, count: int, *, docked: bool = False) -> None:
             SURFACE_UPDATE,
             peer.sequence,
             {
-                "schema": "lemma.surface-update/v1",
+                "schema": "frame.surface-update/v1",
                 "surface": surface,
                 "rows": [
                     {
@@ -300,7 +300,7 @@ def run(arguments: argparse.Namespace) -> int:
                         SURFACE_UPDATE,
                         peer.sequence,
                         {
-                            "schema": "lemma.surface-update/v1",
+                            "schema": "frame.surface-update/v1",
                             "surface": surface,
                             "rows": [
                                 {

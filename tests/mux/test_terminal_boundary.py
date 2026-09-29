@@ -21,7 +21,7 @@ from pathlib import Path
 
 from tests.support.mux_harness import (
     Client,
-    LemmaServer,
+    FrameServer,
     Session,
     wait_until,
 )
@@ -29,7 +29,7 @@ from tests.support.mux_harness import (
 
 class TerminalBoundaryMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
 
     def test_late_fragmented_host_theme_replies_never_become_keys_or_modify_paste(
@@ -107,7 +107,7 @@ time.sleep(60)
         )
         pane.expect_output("__APP_CURSOR_READY__")
 
-        # One typed outer Up press. Lemma must query Ghostty's canonical DECCKM state and encode SS3.
+        # One typed outer Up press. Frame must query Ghostty's canonical DECCKM state and encode SS3.
         session.require_client().send(b"\x1b[1;1:1A")
 
         pane.expect_output("__APP_CURSOR_1b4f41__")
@@ -302,7 +302,7 @@ while not data.endswith(b'q'):
     output.write_bytes(data)
 """
 
-# Enables focus reports, then withholds reads until a gate exists so Lemma's input queue fills.
+# Enables focus reports, then withholds reads until a gate exists so Frame's input queue fills.
 # The recording omits the filler bytes and keeps focus reports and typed input in arrival order.
 STALLED_FOCUS_RECORDER = """
 import os, sys, time, tty
@@ -323,7 +323,7 @@ class FocusReportMuxTest(unittest.TestCase):
     """Mode-1004 Panes observe focus derived from Pane, Tab, Session, and outer focus."""
 
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
 
     def recorder(self, name: str) -> tuple[tuple[str, ...], Path]:
@@ -546,7 +546,7 @@ class FocusReportMuxTest(unittest.TestCase):
 
 class GraphicsMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
 
     def test_png_is_reprojected_after_resize_and_reattach(self) -> None:
@@ -646,10 +646,10 @@ while True:
 
 class ClipboardMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        cache = tempfile.TemporaryDirectory(prefix="lemma clipboard's-")
+        cache = tempfile.TemporaryDirectory(prefix="frame clipboard's-")
         self.addCleanup(cache.cleanup)
-        self.server = LemmaServer.from_environment(
-            config_text='require("lemma").setup({terminal={clipboard_read=true,clipboard_write=true}})',
+        self.server = FrameServer.from_environment(
+            config_text='require("frame").setup({terminal={clipboard_read=true,clipboard_write=true}})',
             environment={"XDG_CACHE_HOME": cache.name},
         )
         self.addCleanup(self.server.close)
@@ -783,7 +783,7 @@ if fd != 3: os.close(fd)
 if sys.argv[3] == 'limited': resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
 os.execve(sys.argv[2], [sys.argv[2]], os.environ)
 """
-        helper = self.server.server_path.with_name("lemma-clipboard-host")
+        helper = self.server.server_path.with_name("frame-clipboard-host")
         parent, child = socket.socketpair()
         with parent, child:
             parent.settimeout(15)
@@ -955,8 +955,8 @@ while True: time.sleep(1)
         self,
     ) -> None:
         # Explicit user actions do not require granting applications clipboard access.
-        (self.server.root / "config" / "lemma" / "init.lua").write_text(
-            'require("lemma").setup({})'
+        (self.server.root / "config" / "frame" / "init.lua").write_text(
+            'require("frame").setup({})'
         )
         reloaded = self.server.command("config", "reload")
         self.assertEqual(reloaded.status, 0, reloaded.output)
@@ -1042,7 +1042,7 @@ while True: time.sleep(1)
         path = Path(paths[0])
         self.assertTrue(
             path.is_relative_to(
-                Path(self.server.environment["XDG_CACHE_HOME"]) / "lemma" / "clipboard"
+                Path(self.server.environment["XDG_CACHE_HOME"]) / "frame" / "clipboard"
             )
         )
         self.assertEqual(path.read_bytes(), png)
@@ -1080,7 +1080,7 @@ while True: time.sleep(1)
         session_id = original.state().id
         pane_id = original.pane().id
         request = {
-            "schema": "lemma.proc/v1",
+            "schema": "frame.proc/v1",
             "commands": [
                 {
                     "command": "pane.paste-image",
@@ -1194,8 +1194,8 @@ while True: time.sleep(1)
 
     def test_policy_reload_revokes_a_pending_application_read(self) -> None:
         session, client, result, _correlation = self.start_read()
-        (self.server.root / "config" / "lemma" / "init.lua").write_text(
-            'require("lemma").setup({})'
+        (self.server.root / "config" / "frame" / "init.lua").write_text(
+            'require("frame").setup({})'
         )
         reloaded = self.server.command("config", "reload")
         self.assertEqual(reloaded.status, 0, reloaded.output)

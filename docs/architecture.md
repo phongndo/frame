@@ -1,6 +1,6 @@
 # Architecture
 
-Lemma's main C++23 executable has client, daemon, and control roles; the separate `lemma-ui`
+Frame's main C++23 executable has client, daemon, and control roles; the separate `frame-ui`
 executable supplies the shipped user interface. One per-user daemon owns all live mux and terminal
 state. Clients are replaceable input and presentation edges.
 
@@ -44,7 +44,7 @@ or semantic Attachment. Stable IDs cross boundaries; borrowed references remain 
 ## Core and user layers
 
 The architectural split is between native mux mechanisms and user-layer behavior. The native layer
-spans Core, Runtime, Input, Terminal, and Scene; it is broader than the `lemma_core` build target.
+spans Core, Runtime, Input, Terminal, and Scene; it is broader than the `frame_core` build target.
 It owns Session/Tab/Pane semantics, processes and PTYs, terminal state, layout, input routing, frame
 scheduling, composition, and bounded extension admission and cleanup. Extensions compose these
 mechanisms through Procs, Events, and Surfaces. Extend the native interface when a demonstrated mux
@@ -69,7 +69,7 @@ extensions should sleep; terminal screen projections remain opt-in. Validate nat
 resource costs with the [performance requirements](performance.md), including the extension-isolation
 gate when changing this seam.
 
-The shipped `lemma-ui` process supplies the statusline and session-manager UI through public
+The shipped `frame-ui` process supplies the statusline and session-manager UI through public
 Events, Procs, and Surfaces. Native command editing, copy/search state, completion, and recovery
 remain authoritative state machines; their prompt representation is observed and rendered by the
 statusline. Managed extension process groups have bounded restart independently of the Lua command
@@ -81,27 +81,27 @@ host. The [extension contract](extensions.md) defines lifecycle, observation, an
 
 | Component | Responsibility |
 | --- | --- |
-| `lemma_app` | CLI grammar and executable role selection |
-| `lemma_daemon` | Endpoint ownership, connection admission, and reactor |
-| `lemma_api` | Public Proc, Command, Event, JSON, and schema values |
-| `lemma_core` | Session/Tab/Pane semantics, commands, layout, and copy policy |
-| `lemma_input` | Compiled physical keymaps and per-Attachment routing contexts |
-| `lemma_config` | Configuration values, validation, and native generation compilation |
-| `lemma_extension_contract` | Lua command declarations and language-neutral extension protocol |
-| `lemma_extension` | Isolated command host, Lua callbacks, managed programs, external children, and configuration admission |
-| `lemma_extension_client` | Public framed client used only by external user programs |
-| `lemma-ui` | Replaceable first-party statusline and session-manager UI |
-| `lemma_runtime` | Extension generations/Surfaces, processes, PTYs, scheduling, input, resize, and frame progress |
-| `lemma_terminal` | The only boundary allowed to include or link against libghostty-vt |
-| `lemma_render` | Non-authoritative pane and frame presentation |
-| `lemma_status` | Pure status-row projection and UI cells, without terminal-runtime dependencies |
-| `lemma_protocol` | Bounded private attachment codec |
-| `lemma_client` | Host input, outer-terminal presentation, and restoration |
-| `lemma_platform` | OS I/O, PTYs, and terminal mode mechanisms |
+| `frame_app` | CLI grammar and executable role selection |
+| `frame_daemon` | Endpoint ownership, connection admission, and reactor |
+| `frame_api` | Public Proc, Command, Event, JSON, and schema values |
+| `frame_core` | Session/Tab/Pane semantics, commands, layout, and copy policy |
+| `frame_input` | Compiled physical keymaps and per-Attachment routing contexts |
+| `frame_config` | Configuration values, validation, and native generation compilation |
+| `frame_extension_contract` | Lua command declarations and language-neutral extension protocol |
+| `frame_extension` | Isolated command host, Lua callbacks, managed programs, external children, and configuration admission |
+| `frame_extension_client` | Public framed client used only by external user programs |
+| `frame-ui` | Replaceable first-party statusline and session-manager UI |
+| `frame_runtime` | Extension generations/Surfaces, processes, PTYs, scheduling, input, resize, and frame progress |
+| `frame_terminal` | The only boundary allowed to include or link against libghostty-vt |
+| `frame_render` | Non-authoritative pane and frame presentation |
+| `frame_status` | Pure status-row projection and UI cells, without terminal-runtime dependencies |
+| `frame_protocol` | Bounded private attachment codec |
+| `frame_client` | Host input, outer-terminal presentation, and restoration |
+| `frame_platform` | OS I/O, PTYs, and terminal mode mechanisms |
 
 Core links no Lua VM, PTY, socket, process, or terminal-emulator owner. Runtime executes accepted
-semantic intent using those mechanisms. Ghostty representations remain private to `lemma_terminal`;
-Lemma-facing types and borrowed views make lifetimes explicit.
+semantic intent using those mechanisms. Ghostty representations remain private to `frame_terminal`;
+Frame-facing types and borrowed views make lifetimes explicit.
 
 ## Authority
 
@@ -171,13 +171,13 @@ pane lifetime. See [Configuration](configuration.md#failure-and-lifetime) for th
 
 ## Terminal and presentation flow
 
-Ghostty owns VT semantics. Lemma owns process, mux, security, scheduling, and presentation policy.
+Ghostty owns VT semantics. Frame owns process, mux, security, scheduling, and presentation policy.
 PTY bytes are parsed once into the Pane's canonical terminal:
 
 ```text
 PTY -> Ghostty parse
           |-> terminal responses -> ordered PTY write queue
-          |-> effects -> Lemma policy
+          |-> effects -> Frame policy
           +-> damage -> retained Scene composition -> attached client
 ```
 
@@ -235,5 +235,5 @@ closed rather than leaking partial clipboard data as input. Bracketed paste rema
 Complete OSC records allow rendering
 between clipboard chunks; cancellation aborts an unfinished write rather than committing partial
 contents. Permission and focus are rechecked on service. Image-to-path paste retains Proc/connection
-ownership while `lemma-clipboard-host` performs PNG validation and filesystem work outside the
+ownership while `frame-clipboard-host` performs PNG validation and filesystem work outside the
 reactor. [Usage](usage.md#clipboard-images) defines its user-visible file and permission semantics.

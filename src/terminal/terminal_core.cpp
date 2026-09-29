@@ -1,9 +1,9 @@
 #include "terminal/terminal_impl.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
-#include "lemma/terminal_identity.hpp"
+#include "frame/assert.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
+#include "frame/terminal_identity.hpp"
 #include "terminal/fingerprint.hpp"
 
 #include <algorithm>
@@ -23,7 +23,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::vt {
+namespace frame::vt {
 
 [[nodiscard]] auto library_build_info() noexcept -> std::expected<LibraryBuildInfo, Error> {
   GhosttyString version{};
@@ -100,14 +100,14 @@ namespace {
   if (!info.has_value()) {
     return false;
   }
-  constexpr std::string_view expected_version = LEMMA_GHOSTTY_EXPECT_VERSION;
+  constexpr std::string_view expected_version = FRAME_GHOSTTY_EXPECT_VERSION;
   const auto version_matches =
       info->version.size() == expected_version.size() &&
       std::memcmp(info->version.data(), expected_version.data(), expected_version.size()) == 0;
-  return version_matches && info->simd == (LEMMA_GHOSTTY_EXPECT_SIMD != 0) &&
-         info->kitty_graphics == (LEMMA_GHOSTTY_EXPECT_KITTY_GRAPHICS != 0) &&
-         info->tmux_control_mode == (LEMMA_GHOSTTY_EXPECT_TMUX_CONTROL_MODE != 0) &&
-         info->optimization == static_cast<BuildOptimization>(LEMMA_GHOSTTY_EXPECT_OPTIMIZE);
+  return version_matches && info->simd == (FRAME_GHOSTTY_EXPECT_SIMD != 0) &&
+         info->kitty_graphics == (FRAME_GHOSTTY_EXPECT_KITTY_GRAPHICS != 0) &&
+         info->tmux_control_mode == (FRAME_GHOSTTY_EXPECT_TMUX_CONTROL_MODE != 0) &&
+         info->optimization == static_cast<BuildOptimization>(FRAME_GHOSTTY_EXPECT_OPTIMIZE);
 }
 
 [[nodiscard]] auto valid_size(const TerminalSize& size) noexcept -> bool {
@@ -125,7 +125,7 @@ namespace {
                                                  const std::size_t required,
                                                  const std::size_t maximum) noexcept
     -> std::size_t {
-  LEMMA_ASSERT(current > 0 && required > current && required <= maximum);
+  FRAME_ASSERT(current > 0 && required > current && required <= maximum);
   const auto geometric = current + std::max(current / 2U, std::size_t{1});
   return std::min(maximum, std::max(required, geometric));
 }
@@ -245,8 +245,8 @@ namespace detail {
 
 QuotaAllocator::QuotaAllocator(const std::size_t bytes_max) noexcept
     : bytes_max_(bytes_max), native_{.ctx = this, .vtable = &vtable} {
-  LEMMA_ASSERT(bytes_max_ > 0);
-  LEMMA_ASSERT(bytes_max_ <= limits::terminal_allocation_bytes_hard_max);
+  FRAME_ASSERT(bytes_max_ > 0);
+  FRAME_ASSERT(bytes_max_ <= limits::terminal_allocation_bytes_hard_max);
 }
 
 [[nodiscard]] auto QuotaAllocator::native() const noexcept -> const GhosttyAllocator* {
@@ -283,7 +283,7 @@ auto QuotaAllocator::resize(void* context, void* memory, const std::size_t memor
                             [[maybe_unused]] const std::uintptr_t return_address) noexcept -> bool {
   auto& allocator = *static_cast<QuotaAllocator*>(context);
   allocator.assert_allocation(memory, memory_length, alignment);
-  LEMMA_ASSERT(new_length > 0);
+  FRAME_ASSERT(new_length > 0);
 
   if (new_length > memory_length) {
     return false;
@@ -298,7 +298,7 @@ void* QuotaAllocator::remap(void* context, void* memory, const std::size_t memor
                             [[maybe_unused]] const std::uintptr_t return_address) noexcept {
   auto& allocator = *static_cast<QuotaAllocator*>(context);
   allocator.assert_allocation(memory, memory_length, alignment);
-  LEMMA_ASSERT(new_length > 0);
+  FRAME_ASSERT(new_length > 0);
 
   if (new_length <= memory_length) {
     allocator.stats_.bytes_current -= memory_length - new_length;
@@ -338,8 +338,8 @@ void QuotaAllocator::deallocate(void* context, void* memory, const std::size_t m
 }
 
 void QuotaAllocator::record_allocation(const std::size_t length) noexcept {
-  LEMMA_ASSERT(length <= bytes_max_ - stats_.bytes_current);
-  LEMMA_ASSERT(stats_.allocations_current < std::numeric_limits<std::size_t>::max());
+  FRAME_ASSERT(length <= bytes_max_ - stats_.bytes_current);
+  FRAME_ASSERT(stats_.allocations_current < std::numeric_limits<std::size_t>::max());
 
   stats_.bytes_current += length;
   stats_.bytes_peak = std::max(stats_.bytes_peak, stats_.bytes_current);
@@ -361,10 +361,10 @@ void QuotaAllocator::record_total_allocation() noexcept {
 
 void QuotaAllocator::assert_allocation(const void* memory, const std::size_t memory_length,
                                        const std::uint8_t alignment) const noexcept {
-  LEMMA_ASSERT(memory != nullptr);
-  LEMMA_ASSERT(memory_length > 0);
-  LEMMA_ASSERT(memory_length <= stats_.bytes_current);
-  LEMMA_ASSERT(stats_.allocations_current > 0);
+  FRAME_ASSERT(memory != nullptr);
+  FRAME_ASSERT(memory_length > 0);
+  FRAME_ASSERT(memory_length <= stats_.bytes_current);
+  FRAME_ASSERT(stats_.allocations_current > 0);
   assert_valid_alignment(alignment);
 }
 
@@ -385,8 +385,8 @@ void QuotaAllocator::assert_allocation(const void* memory, const std::size_t mem
 
 void QuotaAllocator::assert_valid_alignment(const std::uint8_t alignment) noexcept {
   // Ghostty forwards Zig's log2 alignment enum despite the C header describing bytes.
-  LEMMA_ASSERT(std::has_single_bit(alignof(std::max_align_t)));
-  LEMMA_ASSERT(alignment < std::numeric_limits<std::size_t>::digits);
+  FRAME_ASSERT(std::has_single_bit(alignof(std::max_align_t)));
+  FRAME_ASSERT(alignment < std::numeric_limits<std::size_t>::digits);
 }
 
 const GhosttyAllocatorVtable QuotaAllocator::vtable{
@@ -441,13 +441,13 @@ Terminal::Impl::~Impl() {
   ghostty_render_state_row_iterator_free(row_iterator);
   ghostty_render_state_free(render_state);
   ghostty_terminal_free(terminal);
-  LEMMA_ASSERT(allocator.stats().bytes_current == 0);
-  LEMMA_ASSERT(allocator.stats().allocations_current == 0);
+  FRAME_ASSERT(allocator.stats().bytes_current == 0);
+  FRAME_ASSERT(allocator.stats().allocations_current == 0);
 }
 
 Terminal::Terminal(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 }
 
 Terminal::Terminal(Terminal&& other) noexcept = default;
@@ -623,8 +623,8 @@ auto Terminal::create(const TerminalOptions& options) noexcept -> std::expected<
 }
 
 void Terminal::write(const std::span<const std::byte> bytes) noexcept {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   if (!bytes.empty()) {
     // std::byte and uint8_t are both byte views; Ghostty's C ABI uses the latter.
@@ -636,9 +636,9 @@ void Terminal::write(const std::span<const std::byte> bytes) noexcept {
 
 auto Terminal::write_and_report_damage(const std::span<const std::byte> bytes) noexcept
     -> std::expected<DirtyState, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
-  LEMMA_ASSERT(impl_->render_state != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_->render_state != nullptr);
 
   auto result = ghostty_render_state_update(impl_->render_state, impl_->terminal);
   if (result != GHOSTTY_SUCCESS) {
@@ -682,8 +682,8 @@ auto Terminal::write_and_report_damage(const std::span<const std::byte> bytes) n
 }
 
 auto Terminal::resize(const TerminalSize& size) noexcept -> std::expected<void, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   if (!valid_size(size)) {
     return std::unexpected(Error::invalid_options);
@@ -726,10 +726,10 @@ auto Terminal::resize(const TerminalSize& size) noexcept -> std::expected<void, 
     impl_->row_hash_storage = std::move(row_hash_storage);
   }
   impl_->physical_cell_count = physical_cell_count;
-  LEMMA_ASSERT(impl_->physical_cell_hashes == nullptr ||
+  FRAME_ASSERT(impl_->physical_cell_hashes == nullptr ||
                impl_->physical_cell_capacity >= impl_->physical_cell_count);
   impl_->row_hash_count = size.rows;
-  LEMMA_ASSERT(impl_->row_hash_storage.size() / 2U >= impl_->row_hash_count);
+  FRAME_ASSERT(impl_->row_hash_storage.size() / 2U >= impl_->row_hash_count);
   std::ranges::fill(impl_->row_hashes(), std::uint64_t{0});
   impl_->mirrored_modes_valid = false;
   impl_->mirrored_compositor_modes_valid = false;
@@ -740,20 +740,20 @@ auto Terminal::resize(const TerminalSize& size) noexcept -> std::expected<void, 
 }
 
 auto Terminal::size() const noexcept -> TerminalSize {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   return impl_->options.size;
 }
 
 auto Terminal::theme() const noexcept -> TerminalTheme {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   return impl_->session_theme;
 }
 
 auto Terminal::set_theme(const TerminalTheme& theme) noexcept -> std::expected<void, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   const auto result = apply_theme(impl_->terminal, theme);
   if (result != GHOSTTY_SUCCESS) {
     return std::unexpected(detail::map_error(result));
@@ -764,8 +764,8 @@ auto Terminal::set_theme(const TerminalTheme& theme) noexcept -> std::expected<v
 }
 
 auto Terminal::cursor_at_prompt() const noexcept -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   bool value = false;
   const auto result =
       ghostty_terminal_get(impl_->terminal, GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT, &value);
@@ -774,8 +774,8 @@ auto Terminal::cursor_at_prompt() const noexcept -> std::expected<bool, Error> {
 }
 
 auto Terminal::inspection() const noexcept -> std::expected<TerminalInspection, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   GhosttyTerminalScrollbar scrollbar{};
   GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
@@ -826,8 +826,8 @@ auto Terminal::inspection() const noexcept -> std::expected<TerminalInspection, 
 }
 
 auto Terminal::scrollback_rows() const noexcept -> std::expected<std::size_t, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   std::size_t rows = 0;
   const auto result =
@@ -839,8 +839,8 @@ auto Terminal::scrollback_rows() const noexcept -> std::expected<std::size_t, Er
 }
 
 auto Terminal::integrity_failed() const noexcept -> bool {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   if (impl_->pty_response_integrity_failed) {
     return true;
   }
@@ -851,9 +851,9 @@ auto Terminal::integrity_failed() const noexcept -> bool {
 }
 
 auto Terminal::allocation_stats() const noexcept -> AllocationStats {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   return impl_->allocator.stats();
 }
 
-} // namespace lemma::vt
+} // namespace frame::vt

@@ -1,12 +1,12 @@
-#ifndef LEMMA_EXTENSION_RUNTIME_HPP
-#define LEMMA_EXTENSION_RUNTIME_HPP
+#ifndef FRAME_EXTENSION_RUNTIME_HPP
+#define FRAME_EXTENSION_RUNTIME_HPP
 
 #include "api/command.hpp"
 #include "api/json.hpp"
 #include "extension/protocol.hpp"
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 #include "render/grid.hpp"
 #include "render/scene.hpp"
 
@@ -18,7 +18,7 @@
 #include <string>
 #include <string_view>
 
-namespace lemma::extension {
+namespace frame::extension {
 
 inline constexpr std::uint8_t capability_observe = 1U << 0U;
 inline constexpr std::uint8_t capability_proc = 1U << 1U;
@@ -286,6 +286,6 @@ private:
 [[nodiscard]] auto surface_operation_status_name(SurfaceOperationStatus status) noexcept
     -> std::string_view;
 
-} // namespace lemma::extension
+} // namespace frame::extension
 
-#endif // LEMMA_EXTENSION_RUNTIME_HPP
+#endif // FRAME_EXTENSION_RUNTIME_HPP

@@ -7,7 +7,7 @@ import sys
 
 
 def main() -> int:
-    path = sys.argv[1] if len(sys.argv) == 2 else f"/tmp/lemma-{os.getuid()}.sock"
+    path = sys.argv[1] if len(sys.argv) == 2 else f"/tmp/frame-{os.getuid()}.sock"
     peer = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         peer.connect(path)

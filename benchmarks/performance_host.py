@@ -153,7 +153,7 @@ def main() -> int:
         failures = [str(error)]
     report = {
         "schema": 1,
-        "suite": "lemma-performance-host",
+        "suite": "frame-performance-host",
         "status": "failed" if failures else "passed",
         "policy": str(arguments.policy.resolve()),
         "cpu_affinity": policy.get("cpu_affinity")

@@ -1,4 +1,4 @@
-#include "lemma/terminal/terminal.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <gtest/gtest.h>
 
@@ -10,7 +10,7 @@
 #include <string_view>
 #include <utility>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace {
 
 void write_text(Terminal& terminal, const std::string_view text) {
@@ -134,4 +134,4 @@ TEST(TerminalResourceTest, CompressesScrollbackIncrementallyWithoutChangingLogic
 // NOLINTEND(readability-function-cognitive-complexity)
 
 } // namespace
-} // namespace lemma::vt
+} // namespace frame::vt

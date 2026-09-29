@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 
-namespace lemma::core {
+namespace frame::core {
 
 // Search placement is Core UI policy over Runtime-observed canonical terminal coordinates. Small
 // panes naturally retain a wider safe zone because they cannot represent quarter-pane margins.
@@ -27,4 +27,4 @@ auto copy_search_viewport_offset(const std::uint64_t match_row, const std::uint6
   return std::min(centered, maximum_offset);
 }
 
-} // namespace lemma::core
+} // namespace frame::core

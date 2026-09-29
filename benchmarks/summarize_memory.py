@@ -101,7 +101,7 @@ def load(path: Path) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--lemma-profiles", type=Path, required=True)
+    parser.add_argument("--frame-profiles", type=Path, required=True)
     parser.add_argument("--tmux-profiles", type=Path, required=True)
     parser.add_argument("--zellij-profiles", type=Path)
     parser.add_argument("--herdr-profiles", type=Path)
@@ -111,15 +111,15 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
 
-    lemma = profile_summary(load(arguments.lemma_profiles))
+    frame = profile_summary(load(arguments.frame_profiles))
     tmux = profile_summary(load(arguments.tmux_profiles))
-    lemma_p1 = lemma["P1"]["idle"]["tree_rss_p50_bytes"]
+    frame_p1 = frame["P1"]["idle"]["tree_rss_p50_bytes"]
     tmux_p1 = tmux["P1"]["idle"]["tree_rss_p50_bytes"]
     report = {
         "schema": 1,
-        "lemma_profiles": lemma,
+        "frame_profiles": frame,
         "tmux_profiles": tmux,
-        "p1_idle_tree_rss_lemma_to_tmux_ratio": lemma_p1 / tmux_p1,
+        "p1_idle_tree_rss_frame_to_tmux_ratio": frame_p1 / tmux_p1,
         "competitor_profiles": {
             subject: profile_summary(load(path))
             for subject, path in (

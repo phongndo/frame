@@ -1,5 +1,5 @@
-#ifndef LEMMA_CLIPBOARD_PNG_FILE_HPP
-#define LEMMA_CLIPBOARD_PNG_FILE_HPP
+#ifndef FRAME_CLIPBOARD_PNG_FILE_HPP
+#define FRAME_CLIPBOARD_PNG_FILE_HPP
 #include <chrono>
 #include <cstddef>
 #include <memory>
@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::clipboard {
+namespace frame::clipboard {
 // Filesystem access and PNG validation run in a bounded, short-lived helper, never in the reactor.
 // Cancellation closes the channel. The helper has its own process deadline; the daemon's normal
 // child reaper owns waitpid, so no stale PID can be signalled after another owner reaps it.
@@ -38,5 +38,5 @@ private:
   Clock::time_point next_;
   bool done_{false};
 };
-} // namespace lemma::clipboard
+} // namespace frame::clipboard
 #endif

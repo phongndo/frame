@@ -1,9 +1,9 @@
 #include "core/layout.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/assert.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,7 +14,7 @@
 #include <span>
 #include <utility>
 
-namespace lemma::core {
+namespace frame::core {
 
 namespace {
 
@@ -55,25 +55,25 @@ auto LayoutProjection::rectangle(const PaneId pane) const noexcept -> std::optio
 }
 
 PaneLayout::PaneLayout(const PaneId first_pane) noexcept {
-  LEMMA_ASSERT(first_pane.is_valid() && first_pane.slot() < pane_layout_panes_max);
+  FRAME_ASSERT(first_pane.is_valid() && first_pane.slot() < pane_layout_panes_max);
   nodes_.front() = {.pane = first_pane, .ratio = {}, .active = true};
-  LEMMA_ASSERT(valid());
+  FRAME_ASSERT(valid());
 }
 
 auto PaneLayout::SplitRatio::from_extents(const std::uint16_t first,
                                           const std::uint16_t second) noexcept -> SplitRatio {
-  LEMMA_ASSERT(first > 0 && second > 0);
+  FRAME_ASSERT(first > 0 && second > 0);
   const auto total = static_cast<std::uint32_t>(first) + second;
-  LEMMA_ASSERT(total <= std::numeric_limits<std::uint16_t>::max());
+  FRAME_ASSERT(total <= std::numeric_limits<std::uint16_t>::max());
   const auto scaled = (static_cast<std::uint64_t>(first) * scale) + (total / 2U);
   const auto share = static_cast<std::uint32_t>(scaled / total);
-  LEMMA_ASSERT(share > 0 && share < scale);
+  FRAME_ASSERT(share > 0 && share < scale);
   return SplitRatio(static_cast<std::uint16_t>(share));
 }
 
 auto PaneLayout::SplitRatio::first_extent(const std::uint16_t available) const noexcept
     -> std::uint16_t {
-  LEMMA_ASSERT(valid() && available > 0);
+  FRAME_ASSERT(valid() && available > 0);
   const auto scaled = (static_cast<std::uint64_t>(available) * first_share_) + (scale / 2U);
   return static_cast<std::uint16_t>(scaled / scale);
 }
@@ -517,7 +517,7 @@ auto PaneLayout::split(const PaneId source, const PaneId added, const SplitAxis 
       .ratio = {},
       .active = true,
   };
-  LEMMA_ASSERT(valid());
+  FRAME_ASSERT(valid());
   return true;
 }
 
@@ -532,7 +532,7 @@ auto PaneLayout::swap(const PaneId first, const PaneId second) noexcept -> bool 
   }
   std::swap(std::span(nodes_).subspan(*first_node, 1).front().pane,
             std::span(nodes_).subspan(*second_node, 1).front().pane);
-  LEMMA_ASSERT(valid());
+  FRAME_ASSERT(valid());
   return true;
 }
 
@@ -560,7 +560,7 @@ auto PaneLayout::remove(const PaneId pane) noexcept -> std::optional<PaneId> {
   replacement.parent = parent.parent;
   std::span(nodes_).subspan(parent_index, 1).front() = replacement;
   if (!replacement.leaf) {
-    LEMMA_ASSERT(valid_node_index(replacement.first) && valid_node_index(replacement.second));
+    FRAME_ASSERT(valid_node_index(replacement.first) && valid_node_index(replacement.second));
     std::span(nodes_).subspan(static_cast<std::size_t>(replacement.first), 1).front().parent =
         static_cast<std::int16_t>(parent_index);
     std::span(nodes_).subspan(static_cast<std::size_t>(replacement.second), 1).front().parent =
@@ -569,7 +569,7 @@ auto PaneLayout::remove(const PaneId pane) noexcept -> std::optional<PaneId> {
   std::span(nodes_).subspan(*leaf_index, 1).front() = {};
   std::span(nodes_).subspan(sibling_index, 1).front() = {};
   const auto focus_candidate = first_leaf(parent_index);
-  LEMMA_ASSERT(focus_candidate.is_valid() && valid());
+  FRAME_ASSERT(focus_candidate.is_valid() && valid());
   return focus_candidate;
 }
 
@@ -659,7 +659,7 @@ auto PaneLayout::resize_node(const std::size_t node_index, const PaneRectangle v
     return LayoutResizeStatus::invalid;
   }
 
-  LEMMA_ASSERT(updated_projection != previous_projection && valid());
+  FRAME_ASSERT(updated_projection != previous_projection && valid());
   return LayoutResizeStatus::applied;
 }
 
@@ -760,4 +760,4 @@ auto PaneLayout::valid() const noexcept -> bool {
   return true;
 }
 
-} // namespace lemma::core
+} // namespace frame::core

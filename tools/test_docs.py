@@ -20,7 +20,7 @@ class DocumentationCheckTest(unittest.TestCase):
         self.put("AGENTS.md", "# Project\n\n[Guide](docs/guide.md)\n")
         self.put(".github/pull_request_template.md", "[Guide](../docs/guide.md)\n")
         self.put(
-            "schema/lemma-api-v1.schema.json",
+            "schema/frame-api-v1.schema.json",
             json.dumps(
                 {
                     "type": "object",
@@ -163,7 +163,7 @@ class DocumentationCheckTest(unittest.TestCase):
 
     def test_schema_remote_references_fail_without_network(self) -> None:
         self.put(
-            "schema/lemma-api-v1.schema.json",
+            "schema/frame-api-v1.schema.json",
             '{"$ref":"https://example.invalid/schema"}',
         )
         with patch(

@@ -7,21 +7,21 @@ set -euo pipefail
 rm -rf third_party/ghostty/zig-out
 scripts/ci/validate-fuzz-corpus.py
 scripts/ci/configure sanitizers \
-  -DLEMMA_BUILD_TESTS=ON \
-  -DLEMMA_BUILD_BENCHMARKS=OFF \
-  -DLEMMA_BUILD_FUZZERS=ON
+  -DFRAME_BUILD_TESTS=ON \
+  -DFRAME_BUILD_BENCHMARKS=OFF \
+  -DFRAME_BUILD_FUZZERS=ON
 cmake --build --preset sanitizers --target \
-  lemma \
-  lemma_fast_test_binaries \
-  lemma_core_sim_tests \
-  lemma_protocol_sim_tests \
-  lemma_terminal_sim_tests \
-  lemma_terminal_resource_tests \
-  lemma_steady_state_allocation_audit \
-  lemma_attachment_decoder_fuzz \
-  lemma_host_input_parser_fuzz \
-  lemma_api_json_fuzz \
-  lemma_extension_framing_fuzz
+  frame \
+  frame_fast_test_binaries \
+  frame_core_sim_tests \
+  frame_protocol_sim_tests \
+  frame_terminal_sim_tests \
+  frame_terminal_resource_tests \
+  frame_steady_state_allocation_audit \
+  frame_attachment_decoder_fuzz \
+  frame_host_input_parser_fuzz \
+  frame_api_json_fuzz \
+  frame_extension_framing_fuzz
 
 leak_detection=1
 if [[ "$(uname -s)" == Darwin ]]; then
@@ -35,52 +35,52 @@ scripts/ci/test sanitizers
 ctest --preset sanitizers --no-tests=error -L extended --parallel 1
 scripts/ci/deterministic-budgets sanitizers
 if [[ "$(uname -s)" == Linux ]]; then
-  readonly fuzz_seconds="${LEMMA_FUZZ_SECONDS_PER_TARGET:-10}"
+  readonly fuzz_seconds="${FRAME_FUZZ_SECONDS_PER_TARGET:-10}"
   mkdir -p build/sanitizers/fuzz-work/{attachment,host-input,api,extension} \
     build/sanitizers/fuzz-artifacts/{attachment,host-input,api,extension}
-  ./build/sanitizers/lemma_attachment_decoder_fuzz \
+  ./build/sanitizers/frame_attachment_decoder_fuzz \
     "-max_total_time=${fuzz_seconds}" \
     -dict=fuzz/dictionaries/attachment.dict \
     -artifact_prefix=build/sanitizers/fuzz-artifacts/attachment/ \
     build/sanitizers/fuzz-work/attachment fuzz/corpus/attachment
-  ./build/sanitizers/lemma_host_input_parser_fuzz \
+  ./build/sanitizers/frame_host_input_parser_fuzz \
     "-max_total_time=${fuzz_seconds}" \
     -dict=fuzz/dictionaries/host-input.dict \
     -artifact_prefix=build/sanitizers/fuzz-artifacts/host-input/ \
     build/sanitizers/fuzz-work/host-input fuzz/corpus/host-input
-  ./build/sanitizers/lemma_api_json_fuzz \
+  ./build/sanitizers/frame_api_json_fuzz \
     "-max_total_time=${fuzz_seconds}" \
     -dict=fuzz/dictionaries/api-json.dict \
     -artifact_prefix=build/sanitizers/fuzz-artifacts/api/ \
     build/sanitizers/fuzz-work/api fuzz/corpus/api
-  ./build/sanitizers/lemma_extension_framing_fuzz \
+  ./build/sanitizers/frame_extension_framing_fuzz \
     "-max_total_time=${fuzz_seconds}" \
     -dict=fuzz/dictionaries/extension.dict \
     -artifact_prefix=build/sanitizers/fuzz-artifacts/extension/ \
     build/sanitizers/fuzz-work/extension fuzz/corpus/extension
 else
-  ./build/sanitizers/lemma_extension_framing_fuzz -runs=0 fuzz/corpus/extension
-  ./build/sanitizers/lemma_attachment_decoder_fuzz -runs=0 fuzz/corpus/attachment
-  ./build/sanitizers/lemma_host_input_parser_fuzz -runs=0 fuzz/corpus/host-input
-  ./build/sanitizers/lemma_api_json_fuzz -runs=0 fuzz/corpus/api
+  ./build/sanitizers/frame_extension_framing_fuzz -runs=0 fuzz/corpus/extension
+  ./build/sanitizers/frame_attachment_decoder_fuzz -runs=0 fuzz/corpus/attachment
+  ./build/sanitizers/frame_host_input_parser_fuzz -runs=0 fuzz/corpus/host-input
+  ./build/sanitizers/frame_api_json_fuzz -runs=0 fuzz/corpus/api
 fi
 
 # Select the stress seed outside the test process so a sanitizer crash cannot lose its replay
 # identity. An explicit override reproduces a reported history; otherwise every run gets a new
 # seed. The operation count, rather than wall time, keeps this merge-blocking run bounded.
-if [[ -n "${LEMMA_MUX_SIM_SEED:-}" ]]; then
-  mux_seed="${LEMMA_MUX_SIM_SEED}"
+if [[ -n "${FRAME_MUX_SIM_SEED:-}" ]]; then
+  mux_seed="${FRAME_MUX_SIM_SEED}"
 else
   mux_seed="$(od -An -N8 -tu8 /dev/urandom | tr -d '[:space:]')"
 fi
 readonly mux_seed
-readonly mux_operations="${LEMMA_MUX_SIM_OPERATIONS:-16384}"
+readonly mux_operations="${FRAME_MUX_SIM_OPERATIONS:-16384}"
 if [[ ! "${mux_seed}" =~ ^(0[xX][0-9a-fA-F]+|[0-9]+)$ ]]; then
-  printf 'LEMMA_MUX_SIM_SEED must be an unsigned decimal or hexadecimal integer\n' >&2
+  printf 'FRAME_MUX_SIM_SEED must be an unsigned decimal or hexadecimal integer\n' >&2
   exit 2
 fi
 if [[ ! "${mux_operations}" =~ ^[1-9][0-9]*$ ]] || ((10#${mux_operations} > 16384)); then
-  printf 'LEMMA_MUX_SIM_OPERATIONS must be in [1, 16384]\n' >&2
+  printf 'FRAME_MUX_SIM_OPERATIONS must be in [1, 16384]\n' >&2
   exit 2
 fi
 readonly mux_artifact_dir="build/sanitizers/mux-sim-artifacts"
@@ -97,26 +97,26 @@ mkdir -p "${mux_artifact_dir}"
   printf 'seed=%s\noperations=%s\n' "${mux_seed}" "${mux_operations}"
   printf 'ASAN_OPTIONS=%s\nUBSAN_OPTIONS=%s\n' "${ASAN_OPTIONS}" "${UBSAN_OPTIONS}"
   printf 'command='
-  printf '%q ' env LEMMA_MUX_SIM_SEED="${mux_seed}" \
-    LEMMA_MUX_SIM_OPERATIONS="${mux_operations}" LEMMA_MUX_SIM_TRACE_OUT="${mux_trace}" \
-    LEMMA_MUX_SIM_COVERAGE_OUT="${mux_coverage}" \
-    ./build/sanitizers/lemma_core_sim_tests \
+  printf '%q ' env FRAME_MUX_SIM_SEED="${mux_seed}" \
+    FRAME_MUX_SIM_OPERATIONS="${mux_operations}" FRAME_MUX_SIM_TRACE_OUT="${mux_trace}" \
+    FRAME_MUX_SIM_COVERAGE_OUT="${mux_coverage}" \
+    ./build/sanitizers/frame_core_sim_tests \
     --gtest_filter=MuxSimulationTest.GeneratedCommandsAndRuntimeFaultsPreserveAllInvariants \
     --gtest_brief=1
   printf '\n'
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum ./build/sanitizers/lemma_core_sim_tests
+    sha256sum ./build/sanitizers/frame_core_sim_tests
   else
-    shasum -a 256 ./build/sanitizers/lemma_core_sim_tests
+    shasum -a 256 ./build/sanitizers/frame_core_sim_tests
   fi
   clang++ --version
 } >"${mux_provenance}"
 printf 'deterministic mux stress seed: %s (operations=%s)\n' "${mux_seed}" "${mux_operations}"
 set +e
-LEMMA_MUX_SIM_SEED="${mux_seed}" LEMMA_MUX_SIM_OPERATIONS="${mux_operations}" \
-  LEMMA_MUX_SIM_TRACE_OUT="${mux_trace}" \
-  LEMMA_MUX_SIM_COVERAGE_OUT="${mux_coverage}" \
-  ./build/sanitizers/lemma_core_sim_tests \
+FRAME_MUX_SIM_SEED="${mux_seed}" FRAME_MUX_SIM_OPERATIONS="${mux_operations}" \
+  FRAME_MUX_SIM_TRACE_OUT="${mux_trace}" \
+  FRAME_MUX_SIM_COVERAGE_OUT="${mux_coverage}" \
+  ./build/sanitizers/frame_core_sim_tests \
   --gtest_filter=MuxSimulationTest.GeneratedCommandsAndRuntimeFaultsPreserveAllInvariants \
   --gtest_brief=1 2>&1 | tee "${mux_diagnostics}"
 mux_status="${PIPESTATUS[0]}"
@@ -127,4 +127,4 @@ if ((mux_status != 0)); then
 fi
 rm -f "${mux_trace}" "${mux_diagnostics}"
 
-./build/sanitizers/lemma --help >/dev/null
+./build/sanitizers/frame --help >/dev/null

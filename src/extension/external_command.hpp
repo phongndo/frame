@@ -1,5 +1,5 @@
-#ifndef LEMMA_EXTENSION_EXTERNAL_COMMAND_HPP
-#define LEMMA_EXTENSION_EXTERNAL_COMMAND_HPP
+#ifndef FRAME_EXTENSION_EXTERNAL_COMMAND_HPP
+#define FRAME_EXTENSION_EXTERNAL_COMMAND_HPP
 
 #include <cstddef>
 #include <optional>
@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-namespace lemma::extension {
+namespace frame::extension {
 
 // Used only inside the isolated host. Owns one child and a bounded diagnostic pipe; neither
 // launch, cancellation nor reaping introduces a synchronous dependency in the daemon.
@@ -37,6 +37,6 @@ private:
   std::string diagnostic_;
 };
 
-} // namespace lemma::extension
+} // namespace frame::extension
 
-#endif // LEMMA_EXTENSION_EXTERNAL_COMMAND_HPP
+#endif // FRAME_EXTENSION_EXTERNAL_COMMAND_HPP

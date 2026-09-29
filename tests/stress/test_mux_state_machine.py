@@ -6,7 +6,7 @@ import random
 import unittest
 
 from tests.support.mux_harness import (
-    LemmaServer,
+    FrameServer,
     Pane,
     process_exists,
     wait_for_process_exit,
@@ -18,11 +18,11 @@ class MuxCommandModelStressTest(unittest.TestCase):
     def test_deterministic_commands_preserve_semantic_identity_and_process_ownership(
         self,
     ) -> None:
-        seed = int(os.environ.get("LEMMA_STRESS_SEED", "1369964835"), 0)
-        operation_count = int(os.environ.get("LEMMA_STRESS_OPERATIONS", "64"), 0)
+        seed = int(os.environ.get("FRAME_STRESS_SEED", "1369964835"), 0)
+        operation_count = int(os.environ.get("FRAME_STRESS_OPERATIONS", "64"), 0)
         randomizer = random.Random(seed)
         operations: list[str] = []
-        server = LemmaServer.from_environment()
+        server = FrameServer.from_environment()
         self.addCleanup(server.close)
         session = server.create_session("state_machine")
         first = session.pane()

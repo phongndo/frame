@@ -1,12 +1,12 @@
 #include "core/layout.hpp"
 #include "extension/protocol.hpp"
 #include "extension/runtime.hpp"
+#include "frame/command.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "input/input_router.hpp"
-#include "lemma/command.hpp"
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
 #include "platform/pty.hpp"
 #include "protocol/attachment.hpp"
 #include "render/grid.hpp"
@@ -40,7 +40,7 @@
 #include <pty.h>
 #endif
 
-namespace lemma {
+namespace frame {
 namespace {
 
 struct CommandBenchmarkContext final {
@@ -1065,7 +1065,7 @@ BENCHMARK(benchmark_terminal_full_frames);
 BENCHMARK(benchmark_terminal_hyperlink_frames)->Arg(0)->Arg(1);
 
 } // namespace
-} // namespace lemma
+} // namespace frame
 
 namespace {
 

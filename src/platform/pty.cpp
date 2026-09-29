@@ -1,8 +1,8 @@
 #include "platform/pty.hpp"
 
-#include "lemma/limits.hpp"
-#include "lemma/terminal_identity.hpp"
-#include "lemma/version.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal_identity.hpp"
+#include "frame/version.hpp"
 #include "platform/io.hpp"
 
 #include <algorithm>
@@ -34,10 +34,10 @@
 #include <fcntl.h>
 #include <pty.h>
 #else
-#error "lemma requires forkpty"
+#error "frame requires forkpty"
 #endif
 
-namespace lemma::platform {
+namespace frame::platform {
 namespace {
 
 [[nodiscard]] auto copy_process_name(const std::span<const char> source,
@@ -250,10 +250,10 @@ auto capture_process_environment(const std::span<std::byte> output) noexcept
       // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage)
       ::setenv("TERM", terminal_name.data(), 1) != 0 ||
       ::setenv("TERMINFO", terminfo.data(), 1) != 0 || ::setenv("COLORTERM", "truecolor", 1) != 0 ||
-      ::setenv("TERM_PROGRAM", "lemma", 1) != 0 ||
+      ::setenv("TERM_PROGRAM", "frame", 1) != 0 ||
       // version is backed by a null-terminated string literal.
       // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage)
-      ::setenv("TERM_PROGRAM_VERSION", lemma::version.data(), 1) != 0) {
+      ::setenv("TERM_PROGRAM_VERSION", frame::version.data(), 1) != 0) {
     ::_exit(127);
   }
 
@@ -363,4 +363,4 @@ auto capture_process_environment(const std::span<std::byte> output) noexcept
   return static_cast<std::size_t>(readable);
 }
 
-} // namespace lemma::platform
+} // namespace frame::platform

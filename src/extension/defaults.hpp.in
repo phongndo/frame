@@ -1,7 +1,7 @@
-#ifndef LEMMA_EXTENSION_DEFAULTS_HPP
-#define LEMMA_EXTENSION_DEFAULTS_HPP
+#ifndef FRAME_EXTENSION_DEFAULTS_HPP
+#define FRAME_EXTENSION_DEFAULTS_HPP
 #include <string_view>
-namespace lemma::extension {
-inline constexpr std::string_view bundled_defaults = R"lemma(@LEMMA_DEFAULTS_LUA@)lemma";
+namespace frame::extension {
+inline constexpr std::string_view bundled_defaults = R"frame(@FRAME_DEFAULTS_LUA@)frame";
 }
 #endif

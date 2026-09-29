@@ -2,8 +2,8 @@
 
 #include "platform/terminal_mode.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/limits.hpp"
+#include "frame/assert.hpp"
+#include "frame/limits.hpp"
 #include "protocol/attachment.hpp"
 
 #include <algorithm>
@@ -19,7 +19,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::client {
+namespace frame::client {
 namespace {
 
 constexpr std::array paste_begin{std::byte{0x1B}, std::byte{'['}, std::byte{'2'},
@@ -646,7 +646,7 @@ auto HostInputParser::parse(const std::span<const std::byte> input,
       [this,
        &append_bytes](const HostInputKind kind,
                       const std::size_t count) noexcept -> std::expected<void, HostInputError> {
-    LEMMA_ASSERT(count <= pending_size_);
+    FRAME_ASSERT(count <= pending_size_);
     const auto appended = append_bytes(kind, std::span(pending_).first(count));
     if (!appended.has_value()) {
       return appended;
@@ -910,7 +910,7 @@ auto HostInputParser::flush_pending(const std::span<std::byte> output) noexcept
   if (pending_size_ == 0 || paste_active_) {
     return batch;
   }
-  LEMMA_ASSERT(events_ != nullptr);
+  FRAME_ASSERT(events_ != nullptr);
   if (report_ == Report::clipboard || report_ == Report::legacy_clipboard) {
     return std::unexpected(HostInputError::incomplete_terminal_reply);
   }
@@ -930,4 +930,4 @@ auto HostInputParser::flush_pending(const std::span<std::byte> output) noexcept
   return batch;
 }
 
-} // namespace lemma::client
+} // namespace frame::client

@@ -1,8 +1,8 @@
 #include "render/grid.hpp"
 
-#include "lemma/geometry.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/geometry.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::render {
+namespace frame::render {
 
 // Dimension and retained-byte checks make vector sizes finite; allocating operations catch locally.
 // NOLINTBEGIN(bugprone-exception-escape)
@@ -416,4 +416,4 @@ auto Grid::damaged() const noexcept -> bool {
 
 // NOLINTEND(bugprone-exception-escape)
 
-} // namespace lemma::render
+} // namespace frame::render

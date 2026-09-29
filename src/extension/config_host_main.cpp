@@ -12,6 +12,6 @@ int main(const int argc, char** argv) {
   if (mode != "required" && mode != "optional") {
     return 2;
   }
-  return lemma::extension::run_configuration_host(argv[1], mode == "required");
+  return frame::extension::run_configuration_host(argv[1], mode == "required");
   // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 }

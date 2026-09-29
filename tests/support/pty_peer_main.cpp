@@ -153,7 +153,7 @@ void linger_for_render() noexcept { std::this_thread::sleep_for(250ms); }
 [[nodiscard]] auto run_block(const char* const gate, const std::size_t bytes,
                              const std::chrono::milliseconds idle_timeout) noexcept -> int {
   if (bytes == 0 || bytes > std::size_t{8} * 1'024U * 1'024U || !enter_raw_input() ||
-      !write_all("\r\n__LEMMA_PTY_READY__\r\n") || !wait_for_gate(gate)) {
+      !write_all("\r\n__FRAME_PTY_READY__\r\n") || !wait_for_gate(gate)) {
     return 1;
   }
   std::uint64_t digest = 0;
@@ -163,7 +163,7 @@ void linger_for_render() noexcept { std::this_thread::sleep_for(250ms); }
     const auto received_storage = std::span(received_text);
     const auto encoded =
         std::to_chars(received_storage.data(), std::to_address(received_storage.end()), received);
-    static_cast<void>(write_all("\r\n__LEMMA_PTY_FAILED__ received="));
+    static_cast<void>(write_all("\r\n__FRAME_PTY_FAILED__ received="));
     if (encoded.ec == std::errc{}) {
       static_cast<void>(write_all(
           {received_text.data(), static_cast<std::size_t>(encoded.ptr - received_text.data())}));
@@ -187,7 +187,7 @@ void linger_for_render() noexcept { std::this_thread::sleep_for(250ms); }
     return 1;
   }
   const bool written =
-      write_all("\r\n__LEMMA_PTY_DONE__ bytes=") &&
+      write_all("\r\n__FRAME_PTY_DONE__ bytes=") &&
       write_all({count_text.data(), static_cast<std::size_t>(count.ptr - count_text.data())}) &&
       write_all(" digest=") &&
       write_all({digest_text.data(), static_cast<std::size_t>(encoded.ptr - digest_text.data())}) &&
@@ -201,7 +201,7 @@ void linger_for_render() noexcept { std::this_thread::sleep_for(250ms); }
 [[nodiscard]] auto run_order(const char* const gate, const std::string_view user_input) noexcept
     -> int {
   if (user_input.empty() || user_input.size() > 1'024U || !enter_raw_input() ||
-      !write_all("\x1B[5n") || !write_all("\r\n__LEMMA_ORDER_READY__\r\n") ||
+      !write_all("\x1B[5n") || !write_all("\r\n__FRAME_ORDER_READY__\r\n") ||
       !wait_for_gate(gate)) {
     return 1;
   }
@@ -231,7 +231,7 @@ void linger_for_render() noexcept { std::this_thread::sleep_for(250ms); }
                        std::ranges::equal(std::span(actual).first(response.size()), response) &&
                        std::ranges::equal(std::span(actual).subspan(response.size()), user_input);
   if (!matches) {
-    static_cast<void>(write_all("\r\n__LEMMA_ORDER_FAILED__ bytes="));
+    static_cast<void>(write_all("\r\n__FRAME_ORDER_FAILED__ bytes="));
     for (const char character : actual) {
       const auto byte = static_cast<unsigned char>(character);
       std::array<char, 2> encoded{};
@@ -244,7 +244,7 @@ void linger_for_render() noexcept { std::this_thread::sleep_for(250ms); }
     linger_for_render();
     return 1;
   }
-  const bool written = write_all("\r\n__LEMMA_ORDER_OK__\r\n");
+  const bool written = write_all("\r\n__FRAME_ORDER_OK__\r\n");
   linger_for_render();
   return written ? 0 : 1;
 }
@@ -328,7 +328,7 @@ struct TuiFrameGeometry final {
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   const auto* generic = reinterpret_cast<const sockaddr*>(&address);
   constexpr std::string_view ready = "\x1B[?1049h\x1B[?1000h\x1B[?1006h\x1B[?2026h\x1B[2J\x1B[H"
-                                     "__LEMMA_TUI_WHEEL_READY__\x1B[?2026l";
+                                     "__FRAME_TUI_WHEEL_READY__\x1B[?2026l";
   const auto frame_geometry = tui_frame_geometry();
   if (!frame_geometry.has_value() || ::connect(receipt, generic, sizeof(address)) != 0 ||
       !enter_raw_input() || !write_all(ready)) {
@@ -336,7 +336,7 @@ struct TuiFrameGeometry final {
     return 1;
   }
 
-  constexpr std::string_view armed_receipt = "__LEMMA_TUI_WHEEL_ARMED__";
+  constexpr std::string_view armed_receipt = "__FRAME_TUI_WHEEL_ARMED__";
   std::array<char, 128> marker{};
   std::size_t marker_size = 0;
   std::size_t wheel_events = 0;
@@ -543,7 +543,7 @@ struct GeometryResponse final {
 // Ghostty CSI 18 t response, the response must describe that same child-owned geometry.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] auto run_geometry_sync() noexcept -> int {
-  if (!enter_raw_input() || !write_all("\x1B[?1049h\x1B[2J\x1B[H__LEMMA_GEOMETRY_SYNC_READY__")) {
+  if (!enter_raw_input() || !write_all("\x1B[?1049h\x1B[2J\x1B[H__FRAME_GEOMETRY_SYNC_READY__")) {
     return 1;
   }
   std::this_thread::sleep_for(50ms);
@@ -594,7 +594,7 @@ struct GeometryResponse final {
       encoded_mismatches.ec != std::errc{} || encoded_missing.ec != std::errc{} ||
       !write_all(clean ? "\x1B[?1049l\r\n__GEOMETRY_SYNC_OK__\r\n"
                        : "\x1B[?1049l\r\n__GEOMETRY_SYNC_FAILED__\r\n") ||
-      !write_all("__LEMMA_GEOMETRY_SYNC__ mismatches=") ||
+      !write_all("__FRAME_GEOMETRY_SYNC__ mismatches=") ||
       !write_all({mismatch_text.data(),
                   static_cast<std::size_t>(encoded_mismatches.ptr - mismatch_text.data())}) ||
       !write_all(" missing=") ||
@@ -628,7 +628,7 @@ struct GeometryResponse final {
     output_nonblocking = ::fcntl(STDOUT_FILENO, F_SETFL, output_flags | O_NONBLOCK) == 0;
   }
   if (output_flags < 0 || ::tcsetattr(STDIN_FILENO, TCSANOW, &raw_terminal) != 0 ||
-      !write_all("\r\n__LEMMA_RESIZE_FLOOD__\r\n") || !output_nonblocking) {
+      !write_all("\r\n__FRAME_RESIZE_FLOOD__\r\n") || !output_nonblocking) {
     return 1;
   }
 
@@ -676,7 +676,7 @@ struct GeometryResponse final {
   const auto encoded_columns =
       std::to_chars(columns.data(), std::to_address(columns.end()), size.ws_col);
   if (encoded_rows.ec != std::errc{} || encoded_columns.ec != std::errc{} ||
-      !write_all("\r\n__LEMMA_RESIZE_FINAL__ ") ||
+      !write_all("\r\n__FRAME_RESIZE_FINAL__ ") ||
       !write_all({rows.data(), static_cast<std::size_t>(encoded_rows.ptr - rows.data())}) ||
       !write_all(" ") ||
       !write_all(
@@ -698,18 +698,18 @@ enum class LatencyMode : std::uint8_t {
     -> std::string_view {
   switch (mode) {
   case LatencyMode::idle:
-    return "\r\n__LEMMA_LATENCY_READY__\r\n";
+    return "\r\n__FRAME_LATENCY_READY__\r\n";
   case LatencyMode::autonomous_output:
-    return "\r\n__LEMMA_LATENCY_OUTPUT_READY__\r\n";
+    return "\r\n__FRAME_LATENCY_OUTPUT_READY__\r\n";
   case LatencyMode::tui_redraw:
     return "\x1B[?1049h\x1B[?2026h\x1B[2J\x1B[H"
-           "__LEMMA_TUI_REDRAW_READY__\x1B[?2026l";
+           "__FRAME_TUI_REDRAW_READY__\x1B[?2026l";
   }
   return {};
 }
 
-constexpr std::string_view latency_visible_ack = "__LEMMA_LATENCY_VISIBLE__";
-constexpr std::string_view latency_next_ready = "__LEMMA_LATENCY_NEXT__";
+constexpr std::string_view latency_visible_ack = "__FRAME_LATENCY_VISIBLE__";
+constexpr std::string_view latency_next_ready = "__FRAME_LATENCY_NEXT__";
 constexpr std::string_view latency_peer_suffix = ".peer";
 
 [[nodiscard]] auto bind_latency_peer(const int receipt,
@@ -912,7 +912,7 @@ extern "C" void observe_winch([[maybe_unused]] const int signal_number) noexcept
   struct sigaction action{};
   action.sa_handler = &observe_winch;
   if (sigemptyset(&action.sa_mask) != 0 || ::sigaction(SIGWINCH, &action, nullptr) != 0 ||
-      !enter_raw_input() || !write_all("__LEMMA_WINCH_READY__\r\n")) {
+      !enter_raw_input() || !write_all("__FRAME_WINCH_READY__\r\n")) {
     return 1;
   }
   const auto deadline = std::chrono::steady_clock::now() + 15s;
@@ -932,7 +932,7 @@ extern "C" void observe_winch([[maybe_unused]] const int signal_number) noexcept
       const auto encoded_columns =
           std::to_chars(columns.data(), std::to_address(columns.end()), size.ws_col);
       if (encoded_rows.ec != std::errc{} || encoded_columns.ec != std::errc{} ||
-          !write_all("__LEMMA_WINCH_") ||
+          !write_all("__FRAME_WINCH_") ||
           !write_all({rows.data(), static_cast<std::size_t>(encoded_rows.ptr - rows.data())}) ||
           !write_all("_") ||
           !write_all(
@@ -1071,10 +1071,10 @@ struct PaintSockets final {
     -> int {
   PaintSockets sockets;
   constexpr std::string_view paint_ready = "\x1B[?1049h\x1B[?2026h\x1B[2J\x1B[H"
-                                           "__LEMMA_PAINT_READY__\x1B[?2026l";
+                                           "__FRAME_PAINT_READY__\x1B[?2026l";
   constexpr std::string_view resize_ready = "\x1B[?1049h\x1B[?2026h\x1B[2J\x1B[H"
-                                            "__LEMMA_RESIZE_READY__\x1B[?2026l";
-  constexpr std::string_view armed_receipt = "__LEMMA_RESIZE_ARMED__";
+                                            "__FRAME_RESIZE_READY__\x1B[?2026l";
+  constexpr std::string_view armed_receipt = "__FRAME_RESIZE_ARMED__";
   if (!open_paint_control(receipt_path, control_path, sockets) ||
       (resize && !install_winch_pipe(sockets)) || !enter_raw_input() ||
       !write_all(resize ? resize_ready : paint_ready)) {
@@ -1164,7 +1164,7 @@ struct PaintSockets final {
 }
 
 [[nodiscard]] auto run_attach_visible(const std::string_view ready_path = {}) noexcept -> int {
-  if (!write_all("__LEMMA_ATTACH_VISIBLE__\r\n")) {
+  if (!write_all("__FRAME_ATTACH_VISIBLE__\r\n")) {
     return 1;
   }
   if (!ready_path.empty()) {
@@ -1235,7 +1235,7 @@ struct PaintSockets final {
 // The branches are the explicit bounded states of the quiescent peer.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] auto run_idle() noexcept -> int {
-  if (!enter_raw_input() || !write_all("__LEMMA_IDLE_READY__\r\n")) {
+  if (!enter_raw_input() || !write_all("__FRAME_IDLE_READY__\r\n")) {
     return 1;
   }
   while (true) {
@@ -1262,7 +1262,7 @@ struct PaintSockets final {
 }
 
 [[nodiscard]] auto
-run_warm_scroll(const std::string_view marker = "__LEMMA_WARM_SCROLL_DONE__") noexcept -> int {
+run_warm_scroll(const std::string_view marker = "__FRAME_WARM_SCROLL_DONE__") noexcept -> int {
   std::array<char, 81> line{};
   line.fill('x');
   std::span(line).subspan(79, 1).front() = '\r';
@@ -1301,7 +1301,7 @@ run_warm_scroll(const std::string_view marker = "__LEMMA_WARM_SCROLL_DONE__") no
 
 // NOLINTBEGIN(readability-function-cognitive-complexity)
 [[nodiscard]] auto run_warm_scroll_loop() noexcept -> int {
-  if (!write_all("__LEMMA_WARM_SCROLL_READY__\r\n")) {
+  if (!write_all("__FRAME_WARM_SCROLL_READY__\r\n")) {
     return 1;
   }
   std::size_t iteration = 0;
@@ -1310,7 +1310,7 @@ run_warm_scroll(const std::string_view marker = "__LEMMA_WARM_SCROLL_DONE__") no
     const auto count = ::read(STDIN_FILENO, trigger.data(), trigger.size());
     if (count > 0) {
       std::array<char, 64> marker{};
-      constexpr std::string_view prefix = "__LEMMA_WARM_SCROLL_DONE__";
+      constexpr std::string_view prefix = "__FRAME_WARM_SCROLL_DONE__";
       std::ranges::copy(prefix, marker.begin());
       // std::to_chars expresses its bounded output range as a pointer pair.
       // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic)

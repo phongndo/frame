@@ -1,8 +1,8 @@
-local lemma = require("lemma")
-local keymap = lemma.keymap
-local ctx = lemma.context
+local frame = require("frame")
+local keymap = frame.keymap
+local ctx = frame.context
 
-lemma.setup({
+frame.setup({
   input = { preset = "default", prefix = "C-b" },
   terminal = { scrollback_lines = 100000 },
   ui = { status_line = true },

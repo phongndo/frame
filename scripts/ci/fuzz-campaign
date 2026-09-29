@@ -6,21 +6,21 @@ if [[ "$(uname -s)" != Linux ]]; then
   exit 2
 fi
 
-readonly seconds_per_target="${LEMMA_FUZZ_CAMPAIGN_SECONDS_PER_TARGET:-300}"
+readonly seconds_per_target="${FRAME_FUZZ_CAMPAIGN_SECONDS_PER_TARGET:-300}"
 if [[ ! "${seconds_per_target}" =~ ^[1-9][0-9]*$ ]] || ((seconds_per_target > 3600)); then
-  printf 'LEMMA_FUZZ_CAMPAIGN_SECONDS_PER_TARGET must be in [1, 3600]\n' >&2
+  printf 'FRAME_FUZZ_CAMPAIGN_SECONDS_PER_TARGET must be in [1, 3600]\n' >&2
   exit 2
 fi
 
 rm -rf third_party/ghostty/zig-out build/sanitizers/fuzz-campaign
 scripts/ci/validate-fuzz-corpus.py
 scripts/ci/configure sanitizers \
-  -DLEMMA_BUILD_TESTS=OFF \
-  -DLEMMA_BUILD_BENCHMARKS=OFF \
-  -DLEMMA_BUILD_FUZZERS=ON
+  -DFRAME_BUILD_TESTS=OFF \
+  -DFRAME_BUILD_BENCHMARKS=OFF \
+  -DFRAME_BUILD_FUZZERS=ON
 cmake --build --preset sanitizers --target \
-  lemma_attachment_decoder_fuzz lemma_host_input_parser_fuzz lemma_api_json_fuzz \
-  lemma_extension_framing_fuzz
+  frame_attachment_decoder_fuzz frame_host_input_parser_fuzz frame_api_json_fuzz \
+  frame_extension_framing_fuzz
 
 readonly root="build/sanitizers/fuzz-campaign"
 mkdir -p "${root}"/{work,artifacts}/{attachment,host-input,api,extension}
@@ -42,11 +42,11 @@ run_target() {
     "${root}/work/${domain}"
 }
 
-run_target ./build/sanitizers/lemma_attachment_decoder_fuzz attachment \
+run_target ./build/sanitizers/frame_attachment_decoder_fuzz attachment \
   fuzz/dictionaries/attachment.dict
-run_target ./build/sanitizers/lemma_host_input_parser_fuzz host-input \
+run_target ./build/sanitizers/frame_host_input_parser_fuzz host-input \
   fuzz/dictionaries/host-input.dict
-run_target ./build/sanitizers/lemma_api_json_fuzz api fuzz/dictionaries/api-json.dict
-run_target ./build/sanitizers/lemma_extension_framing_fuzz extension fuzz/dictionaries/extension.dict
+run_target ./build/sanitizers/frame_api_json_fuzz api fuzz/dictionaries/api-json.dict
+run_target ./build/sanitizers/frame_extension_framing_fuzz extension fuzz/dictionaries/extension.dict
 
 printf 'scheduled fuzz campaign completed; evidence: %s\n' "${root}"

@@ -1,8 +1,8 @@
-#ifndef LEMMA_RENDER_GRID_HPP
-#define LEMMA_RENDER_GRID_HPP
+#ifndef FRAME_RENDER_GRID_HPP
+#define FRAME_RENDER_GRID_HPP
 
-#include "lemma/geometry.hpp"
-#include "lemma/limits.hpp"
+#include "frame/geometry.hpp"
+#include "frame/limits.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace lemma::render {
+namespace frame::render {
 
 struct GridColor final {
   std::uint8_t red{0};
@@ -156,6 +156,6 @@ private:
   std::uint16_t rows_count_{0};
 };
 
-} // namespace lemma::render
+} // namespace frame::render
 
-#endif // LEMMA_RENDER_GRID_HPP
+#endif // FRAME_RENDER_GRID_HPP

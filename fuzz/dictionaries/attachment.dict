@@ -1,4 +1,4 @@
-lemma_magic="LEMMA"
+frame_magic="FRAME"
 client_hello="\x4c\x45\x4d\x4d\x41\x01"
 server_frame="\x4c\x45\x4d\x4d\x41\x02"
 zero_length="\x00\x00\x00\x00"

@@ -1,10 +1,10 @@
 #include "client/host_input_parser.hpp"
 #include "clipboard/transaction.hpp"
-#include "lemma/base64.hpp"
+#include "frame/base64.hpp"
 
 #include <gtest/gtest.h>
 
-namespace lemma::clipboard {
+namespace frame::clipboard {
 namespace {
 // GoogleTest assertions check optionals before use; clang-tidy cannot follow their macro control
 // flow. NOLINTBEGIN(bugprone-unchecked-optional-access)
@@ -306,4 +306,4 @@ TEST(ClipboardTest, IncompleteReplyFailsClosedInsteadOfBecomingKeyboardInput) {
 }
 // NOLINTEND(bugprone-unchecked-optional-access)
 } // namespace
-} // namespace lemma::clipboard
+} // namespace frame::clipboard

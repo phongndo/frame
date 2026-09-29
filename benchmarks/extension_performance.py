@@ -332,16 +332,16 @@ def main() -> int:
         "--benchmark", type=Path, default=ROOT / "benchmarks/mux_benchmark.py"
     )
     parser.add_argument(
-        "--server", type=Path, default=ROOT / "build/release/lemma_test_server"
+        "--server", type=Path, default=ROOT / "build/release/frame_test_server"
     )
     parser.add_argument(
-        "--cli", type=Path, default=ROOT / "build/release/lemma_test_cli"
+        "--cli", type=Path, default=ROOT / "build/release/frame_test_cli"
     )
     parser.add_argument(
-        "--peer", type=Path, default=ROOT / "build/release/lemma_test_pty_peer"
+        "--peer", type=Path, default=ROOT / "build/release/frame_test_pty_peer"
     )
     parser.add_argument(
-        "--probe", type=Path, default=ROOT / "build/release/lemma_benchmark_probe"
+        "--probe", type=Path, default=ROOT / "build/release/frame_benchmark_probe"
     )
     parser.add_argument(
         "--fixture", type=Path, default=ROOT / "benchmarks/extension_fixture.py"
@@ -390,7 +390,7 @@ def main() -> int:
             "--mode",
             mode,
             "--multiplexer",
-            "lemma",
+            "frame",
             "--intent",
             "gate",
             "--repetitions",
@@ -448,7 +448,7 @@ def main() -> int:
             f"extension captures used different commits: {sorted(commits)}"
         )
     summary = {
-        "schema": "lemma.extension-performance/v1",
+        "schema": "frame.extension-performance/v1",
         "generated_at": datetime.now(UTC).isoformat(),
         "host": host,
         "commit": commits.pop(),

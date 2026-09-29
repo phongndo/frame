@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly mode="${1:-extended}"
 readonly output_directory="build/release"
-readonly lemma_profiles="${output_directory}/f3-memory-lemma-profiles.json"
+readonly frame_profiles="${output_directory}/f3-memory-frame-profiles.json"
 readonly tmux_profiles="${output_directory}/f3-memory-tmux-profiles.json"
 readonly zellij_profiles="${output_directory}/f3-memory-zellij-profiles.json"
 readonly herdr_profiles="${output_directory}/f3-memory-herdr-profiles.json"
@@ -43,28 +43,28 @@ esac
 
 rm -rf third_party/ghostty/zig-out
 scripts/ci/configure release \
-  -DLEMMA_BUILD_TESTS=ON \
-  -DLEMMA_BUILD_BENCHMARKS=ON \
-  -DLEMMA_ENABLE_LATENCY_TRACE=OFF
+  -DFRAME_BUILD_TESTS=ON \
+  -DFRAME_BUILD_BENCHMARKS=ON \
+  -DFRAME_ENABLE_LATENCY_TRACE=OFF
 cmake --build --preset release --target \
-  lemma lemma_benchmarks lemma_memory_census lemma_test_server lemma_test_cli \
-  lemma_test_pty_peer lemma_benchmark_probe
+  frame frame_benchmarks frame_memory_census frame_test_server frame_test_cli \
+  frame_test_pty_peer frame_benchmark_probe
 
 python3 benchmarks/ownership_census.py \
   --raw-output "${layouts}" \
   --output "${ownership}" >/dev/null
-"${output_directory}/lemma_memory_census" >"${terminal_ownership}"
+"${output_directory}/frame_memory_census" >"${terminal_ownership}"
 python3 -m json.tool "${terminal_ownership}" >/dev/null
 python3 benchmarks/binary_size.py --output "${binaries}" >/dev/null
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  xcrun size -m "${output_directory}/lemma" "${output_directory}/lemma_test_server" \
-    "${output_directory}/lemma_test_cli" >"${segments}"
+  xcrun size -m "${output_directory}/frame" "${output_directory}/frame_test_server" \
+    "${output_directory}/frame_test_cli" >"${segments}"
 else
-  size -A "${output_directory}/lemma" "${output_directory}/lemma_test_server" \
-    "${output_directory}/lemma_test_cli" >"${segments}"
+  size -A "${output_directory}/frame" "${output_directory}/frame_test_server" \
+    "${output_directory}/frame_test_cli" >"${segments}"
 fi
 
-./build/release/lemma_benchmarks \
+./build/release/frame_benchmarks \
   --benchmark_min_time="${micro_time}" \
   --benchmark_repetitions="${micro_repetitions}" \
   --benchmark_display_aggregates_only=true \
@@ -72,14 +72,14 @@ fi
   --benchmark_out_format=json >/dev/null
 python3 benchmarks/annotate_micro_report.py \
   --report "${micro}" \
-  --executable build/release/lemma_benchmarks
+  --executable build/release/frame_benchmarks
 python3 benchmarks/mux_benchmark.py \
   --mode profiles \
   --intent "${mode}" \
-  --multiplexer lemma \
+  --multiplexer frame \
   --repetitions "${repetitions}" \
-  --output "${lemma_profiles}" >/dev/null
-python3 benchmarks/validate_report.py --process "${lemma_profiles}"
+  --output "${frame_profiles}" >/dev/null
+python3 benchmarks/validate_report.py --process "${frame_profiles}"
 # Zellij's pane listing slows to seconds per call at high pane counts, so Zellij and Herdr use the
 # bounded smoke profile set (still through PMAX) in both modes rather than every scaling knee.
 for subject in tmux zellij herdr; do
@@ -99,27 +99,27 @@ done
 python3 benchmarks/mux_benchmark.py \
   --mode session-profiles \
   --intent "${mode}" \
-  --multiplexer lemma \
+  --multiplexer frame \
   --repetitions "${repetitions}" \
   --output "${session_profiles}" >/dev/null
 python3 benchmarks/validate_report.py --process "${session_profiles}"
 python3 benchmarks/mux_benchmark.py \
   --mode workspace-profiles \
   --intent "${mode}" \
-  --multiplexer lemma \
+  --multiplexer frame \
   --repetitions "${repetitions}" \
   --output "${workspace_profiles}" >/dev/null
 python3 benchmarks/validate_report.py --process "${workspace_profiles}"
 python3 benchmarks/mux_benchmark.py \
   --mode component-resources \
   --intent "${mode}" \
-  --multiplexer lemma \
+  --multiplexer frame \
   --repetitions "${repetitions}" \
   --output "${components}" >/dev/null
 python3 benchmarks/mux_benchmark.py \
   --mode history-resources \
   --intent "${mode}" \
-  --multiplexer lemma \
+  --multiplexer frame \
   --repetitions "${repetitions}" \
   --output "${history}" >/dev/null
 for churn_cycles in "${lifecycle_cycles[@]}"; do
@@ -130,13 +130,13 @@ for churn_cycles in "${lifecycle_cycles[@]}"; do
   python3 benchmarks/mux_benchmark.py \
     --mode lifecycle-churn \
     --intent "${mode}" \
-    --multiplexer lemma \
+    --multiplexer frame \
     --repetitions "${churn_cycles}" \
     --output "${lifecycle_output}" >/dev/null
   python3 benchmarks/validate_report.py --process "${lifecycle_output}"
 done
 python3 benchmarks/summarize_memory.py \
-  --lemma-profiles "${lemma_profiles}" \
+  --frame-profiles "${frame_profiles}" \
   --tmux-profiles "${tmux_profiles}" \
   --zellij-profiles "${zellij_profiles}" \
   --herdr-profiles "${herdr_profiles}" \

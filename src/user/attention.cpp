@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::user {
+namespace frame::user {
 namespace {
 
 using api::JsonKind;
@@ -212,4 +212,4 @@ auto TabAttention::marker(const std::string_view tab) const noexcept -> Marker {
   return writer.marker();
 }
 
-} // namespace lemma::user
+} // namespace frame::user

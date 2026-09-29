@@ -2,13 +2,13 @@
 
 #include <string_view>
 
-namespace lemma::api {
+namespace frame::api {
 namespace {
 
-constexpr std::string_view document = R"LEMMA_API_SCHEMA(@LEMMA_API_SCHEMA@)LEMMA_API_SCHEMA";
+constexpr std::string_view document = R"FRAME_API_SCHEMA(@FRAME_API_SCHEMA@)FRAME_API_SCHEMA";
 
 } // namespace
 
 auto schema_document() noexcept -> std::string_view { return document; }
 
-} // namespace lemma::api
+} // namespace frame::api

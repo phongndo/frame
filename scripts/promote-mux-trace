@@ -27,22 +27,22 @@ fi
 source_revision="$(git rev-parse HEAD)"
 readonly source_revision
 
-readonly profile="${LEMMA_TEST_PROFILE:-debug}"
-readonly binary="./build/${profile}/lemma_core_sim_tests"
+readonly profile="${FRAME_TEST_PROFILE:-debug}"
+readonly binary="./build/${profile}/frame_core_sim_tests"
 readonly destination="tests/sim/corpus/mux/${name}.trace"
 
 scripts/ci/configure "${profile}" \
-  -DLEMMA_BUILD_TESTS=ON \
-  -DLEMMA_BUILD_BENCHMARKS=OFF
-cmake --build "build/${profile}" --target lemma_core_sim_tests
+  -DFRAME_BUILD_TESTS=ON \
+  -DFRAME_BUILD_BENCHMARKS=OFF
+cmake --build "build/${profile}" --target frame_core_sim_tests
 mkdir -p "build/${profile}" "$(dirname "${destination}")"
 temporary="$(mktemp "build/${profile}/mux-promote.XXXXXX")"
 readonly temporary
 trap 'rm -f "${temporary}"' EXIT
 
-LEMMA_MUX_SIM_TRACE="${source_trace}" \
-  LEMMA_MUX_SIM_TRACE_OUT="${temporary}" \
-  LEMMA_MUX_SIM_REFRESH_TRACE=1 \
+FRAME_MUX_SIM_TRACE="${source_trace}" \
+  FRAME_MUX_SIM_TRACE_OUT="${temporary}" \
+  FRAME_MUX_SIM_REFRESH_TRACE=1 \
   "${binary}" \
   --gtest_filter=MuxSimulationTest.GeneratedCommandsAndRuntimeFaultsPreserveAllInvariants \
   --gtest_brief=1
@@ -55,7 +55,7 @@ source = sys.argv[2]
 revision = sys.argv[3]
 regression = sys.argv[4]
 lines = path.read_text(encoding="utf-8").splitlines()
-if not lines or lines[0] != "lemma-mux-trace-v1":
+if not lines or lines[0] != "frame-mux-trace-v1":
     raise SystemExit("refreshed trace has no supported header")
 metadata = [
     lines[0],

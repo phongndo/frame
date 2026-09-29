@@ -45,16 +45,16 @@ python3 benchmarks/benchmark_tools_test.py >/dev/null
 
 rm -rf third_party/ghostty/zig-out
 scripts/ci/configure release \
-  -DLEMMA_BUILD_TESTS=OFF \
-  -DLEMMA_BUILD_BENCHMARKS=ON \
-  -DLEMMA_ENABLE_LATENCY_TRACE=OFF
+  -DFRAME_BUILD_TESTS=OFF \
+  -DFRAME_BUILD_BENCHMARKS=ON \
+  -DFRAME_ENABLE_LATENCY_TRACE=OFF
 cmake --build --preset release --target \
-  lemma_benchmarks lemma_test_server lemma_test_cli lemma_test_pty_peer \
-  lemma_benchmark_probe
-./build/release/lemma_benchmark_probe --self-test
+  frame_benchmarks frame_test_server frame_test_cli frame_test_pty_peer \
+  frame_benchmark_probe
+./build/release/frame_benchmark_probe --self-test
 
 micro_command=(
-  ./build/release/lemma_benchmarks
+  ./build/release/frame_benchmarks
   "--benchmark_min_time=${micro_time}"
   "--benchmark_min_warmup_time=${warmup_time}"
   "--benchmark_repetitions=${micro_repetitions}"
@@ -67,7 +67,7 @@ rm -f "${output}"
 "${micro_command[@]}"
 python3 benchmarks/annotate_micro_report.py \
   --report "${output}" \
-  --executable build/release/lemma_benchmarks \
+  --executable build/release/frame_benchmarks \
   --manifest "${manifest}" \
   --command "${micro_command[@]}"
 python3 benchmarks/validate_report.py --manifest "${manifest}" --micro "${output}"
@@ -77,7 +77,7 @@ python3 benchmarks/mux_benchmark.py \
   --manifest "${manifest}" \
   --mode comparison \
   --intent "${mode}" \
-  --multiplexer lemma \
+  --multiplexer frame \
   --repetitions "${process_repetitions}" \
   --output "${mux_output}" >/dev/null
 python3 benchmarks/validate_report.py --manifest "${manifest}" --process "${mux_output}"
@@ -87,7 +87,7 @@ python3 benchmarks/mux_benchmark.py \
   --manifest "${manifest}" \
   --mode profiles \
   --intent "${mode}" \
-  --multiplexer lemma \
+  --multiplexer frame \
   --repetitions "${profile_repetitions}" \
   --output "${profile_output}" >/dev/null
 python3 benchmarks/validate_report.py --manifest "${manifest}" --process "${profile_output}"

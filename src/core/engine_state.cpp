@@ -1,10 +1,10 @@
 #include "core/engine_state.hpp"
 
 #include "core/session.hpp"
-#include "lemma/assert.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/assert.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "platform/io.hpp"
 #include "protocol/attachment.hpp"
 
@@ -20,7 +20,7 @@
 
 #include <unistd.h>
 
-namespace lemma::core::engine_detail {
+namespace frame::core::engine_detail {
 
 using platform::close_descriptor;
 
@@ -132,7 +132,7 @@ void PaneRuntimeStore::erase_session(const SessionId session_id) noexcept {
       release_scrollback(pane.runtime->scrollback_bytes_reserved);
     }
   }
-  LEMMA_ASSERT(size_ >= session->size);
+  FRAME_ASSERT(size_ >= session->size);
   size_ -= session->size;
   session.reset();
 }
@@ -177,7 +177,7 @@ void AttachmentRuntime::reset_connection() noexcept {
   pending_routed_input_size = 0;
   status_message_deadline.reset();
   frame_scheduler.cancel();
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   decoded_input_trace_matcher.reset();
   frame_trace_correlation = 0;
 #endif
@@ -192,4 +192,4 @@ SessionRecord::SessionRecord(const std::string_view session_name,
       input_router(reactor_input_map()), interaction_router(reactor_input_map()),
       theme(vt::default_theme()) {}
 
-} // namespace lemma::core::engine_detail
+} // namespace frame::core::engine_detail

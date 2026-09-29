@@ -30,13 +30,13 @@
 #include "core/session_machine.hpp"
 #include "core/terminal_resize.hpp"
 #include "diagnostic/latency_trace.hpp"
+#include "frame/assert.hpp"
+#include "frame/command.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "input/input_router.hpp"
-#include "lemma/assert.hpp"
-#include "lemma/command.hpp"
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
 #include "platform/io.hpp"
 #include "platform/pty.hpp"
 #include "platform/readiness.hpp"
@@ -77,7 +77,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-namespace lemma::core {
+namespace frame::core {
 namespace engine_detail {
 
 constexpr auto command_create = protocol::wire_byte(protocol::ControlCommand::create);
@@ -171,7 +171,7 @@ public:
                                    ReloadState& reload) noexcept
       : previous_(active_reactor_environment), previous_reload_(active_reload) {
     active_reload = &reload;
-    LEMMA_ASSERT(environment.valid());
+    FRAME_ASSERT(environment.valid());
     active_reactor_environment = &environment;
   }
 
@@ -194,7 +194,7 @@ class CommandHistoryGuard final {
 public:
   explicit CommandHistoryGuard(const std::string_view path) noexcept
       : previous_(active_command_history), path_size_(path.size()) {
-    LEMMA_ASSERT(path.size() <= path_.size());
+    FRAME_ASSERT(path.size() <= path_.size());
     std::ranges::copy(path, path_.begin());
     const auto loaded = load_command_line_history(path);
     history_ = loaded.history;
@@ -224,69 +224,69 @@ private:
 };
 
 [[nodiscard]] auto reactor_now() noexcept -> ReactorClock::time_point {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->now(active_reactor_environment->context);
 }
 
 [[nodiscard]] auto reactor_input_map() noexcept -> const input::CompiledInputMap& {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->input_map == nullptr ? input::default_input_map()
                                                           : *active_reactor_environment->input_map;
 }
 
 [[nodiscard]] auto reactor_scrollback_lines() noexcept -> std::optional<std::size_t> {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->scrollback_lines;
 }
 
 [[nodiscard]] auto reactor_default_program() noexcept -> std::span<const std::byte> {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->default_program;
 }
 
 [[nodiscard]] auto reactor_default_cwd() noexcept -> std::string_view {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->default_cwd;
 }
 
 [[nodiscard]] auto reactor_status_line() noexcept -> bool {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->status_line;
 }
 
 [[nodiscard]] auto reactor_outer_title() noexcept -> bool {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->outer_title;
 }
 
 [[nodiscard]] auto reactor_outer_bell() noexcept -> bool {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->outer_bell;
 }
 
 [[nodiscard]] auto reactor_outer_notifications() noexcept -> bool {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->outer_notifications;
 }
 
 [[nodiscard]] auto reactor_outer_progress() noexcept -> bool {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->outer_progress;
 }
 
 [[nodiscard]] auto reactor_outer_cwd() noexcept -> bool {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->outer_cwd;
 }
 
 [[nodiscard]] auto reactor_outer_hyperlinks() noexcept -> bool {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->outer_hyperlinks;
 }
 
 [[nodiscard]] auto reactor_poll(const std::span<pollfd> descriptors,
                                 const int timeout_milliseconds) noexcept -> int {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->poll(active_reactor_environment->context, descriptors,
                                           timeout_milliseconds);
 }
@@ -294,7 +294,7 @@ private:
 [[nodiscard]] auto reactor_send(const int descriptor, const std::span<const std::byte> head,
                                 const std::span<const std::byte> tail, const int flags) noexcept
     -> ReactorIoResult {
-  LEMMA_ASSERT(active_reactor_environment != nullptr);
+  FRAME_ASSERT(active_reactor_environment != nullptr);
   return active_reactor_environment->send(active_reactor_environment->context, descriptor, head,
                                           tail, flags);
 }
@@ -399,7 +399,7 @@ struct PtyDrainResult final {
   bool notification{false};
   bool title_changed{false};
   bool signal{false};
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   std::uint64_t correlation{0};
 #endif
 };
@@ -409,8 +409,8 @@ trace_pty_output([[maybe_unused]] PtyDrainResult& drain,
                  [[maybe_unused]] diagnostic::LatencyTraceMarkerMatcher* const trace_matcher,
                  [[maybe_unused]] const std::span<const std::byte> bytes) noexcept
     -> std::uint64_t {
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
-  LEMMA_ASSERT(trace_matcher != nullptr);
+#ifdef FRAME_ENABLE_LATENCY_TRACE
+  FRAME_ASSERT(trace_matcher != nullptr);
   const auto correlation = trace_matcher->observe(bytes);
   if (correlation != 0) {
     drain.correlation = correlation;
@@ -639,7 +639,7 @@ auto apply_cell_size(SessionRecord& session, PaneRuntimeStore& runtimes,
       continue;
     }
     auto* runtime = find_pane_runtime(runtimes, session, *slot.pane);
-    LEMMA_ASSERT(runtime != nullptr);
+    FRAME_ASSERT(runtime != nullptr);
     auto requested = runtime->terminal.size();
     if (requested.cell_width_px == size.width && requested.cell_height_px == size.height) {
       continue;
@@ -796,7 +796,7 @@ void detach_attachment(SessionRecord& session, PaneRuntimeStore& runtimes) noexc
       continue;
     }
     auto* const runtime = runtimes.get({.session = session.id, .pane = pane_slot.pane->id});
-    LEMMA_ASSERT(runtime != nullptr);
+    FRAME_ASSERT(runtime != nullptr);
     runtime->terminal.set_clipboard_access(false, false);
     if (!queue_terminal_responses(runtime->pending_writes, runtime->terminal)) {
       runtime->fail(PaneRuntimeFailure::terminal_integrity_error);
@@ -862,7 +862,7 @@ void detach_attachment(SessionRecord& session, PaneRuntimeStore& runtimes) noexc
   bool restored = true;
   for (std::size_t remaining = changed.size(); remaining > 0; --remaining) {
     auto* const runtime = changed.subspan(remaining - 1U, 1).front();
-    LEMMA_ASSERT(runtime != nullptr);
+    FRAME_ASSERT(runtime != nullptr);
     if (!runtime->terminal.set_theme(previous).has_value()) {
       runtime->fail(PaneRuntimeFailure::terminal_integrity_error);
       restored = false;
@@ -882,7 +882,7 @@ void detach_attachment(SessionRecord& session, PaneRuntimeStore& runtimes) noexc
       continue;
     }
     auto* const runtime = runtimes.get({.session = session.id, .pane = pane_slot.pane->id});
-    LEMMA_ASSERT(runtime != nullptr && changed_count < changed.size());
+    FRAME_ASSERT(runtime != nullptr && changed_count < changed.size());
     if (!runtime->terminal.set_theme(theme).has_value()) {
       const bool restored =
           rollback_session_theme(std::span(changed).first(changed_count), session.theme);
@@ -979,10 +979,10 @@ struct EncodedContextId final {
     return nullptr;
   }
   const std::array overlay{
-      platform::EnvironmentVariable{.name = "LEMMA_SESSION_ID", .value = encoded_session.view()},
-      platform::EnvironmentVariable{.name = "LEMMA_SESSION_NAME", .value = session_name},
-      platform::EnvironmentVariable{.name = "LEMMA_TAB_ID", .value = encoded_tab.view()},
-      platform::EnvironmentVariable{.name = "LEMMA_PANE_ID", .value = encoded_pane.view()},
+      platform::EnvironmentVariable{.name = "FRAME_SESSION_ID", .value = encoded_session.view()},
+      platform::EnvironmentVariable{.name = "FRAME_SESSION_NAME", .value = session_name},
+      platform::EnvironmentVariable{.name = "FRAME_TAB_ID", .value = encoded_tab.view()},
+      platform::EnvironmentVariable{.name = "FRAME_PANE_ID", .value = encoded_pane.view()},
   };
   runtime->child = platform::spawn_process(runtime->pty, working_directory, environment,
                                            platform_environment_mode(environment_mode),
@@ -1026,7 +1026,7 @@ refresh_process_name_if_due(PaneRuntime& runtime,
 
 [[nodiscard]] constexpr auto next_generation(const std::uint32_t generation) noexcept
     -> std::uint32_t {
-  LEMMA_ASSERT(generation < std::numeric_limits<std::uint32_t>::max());
+  FRAME_ASSERT(generation < std::numeric_limits<std::uint32_t>::max());
   return generation + 1U;
 }
 
@@ -1109,7 +1109,7 @@ void finish_resize_mutation(PaneResizePlanEntry& entry) noexcept {
   if (!entry.runtime_touched) {
     return;
   }
-  LEMMA_ASSERT(entry.runtime != nullptr);
+  FRAME_ASSERT(entry.runtime != nullptr);
   record_terminal_mutation(*entry.runtime);
   note_compression_activity(*entry.runtime);
 }
@@ -1123,7 +1123,7 @@ void finish_resize_mutation(PaneResizePlanEntry& entry) noexcept {
       finish_resize_mutation(entry);
       continue;
     }
-    LEMMA_ASSERT(entry.runtime != nullptr);
+    FRAME_ASSERT(entry.runtime != nullptr);
     const auto status = resize_runtime_for_layout(*entry.runtime, entry.previous);
     entry.runtime_touched = true;
     if (status != TerminalResizeStatus::applied && status != TerminalResizeStatus::unchanged) {
@@ -1139,7 +1139,7 @@ void finish_resize_mutation(PaneResizePlanEntry& entry) noexcept {
     -> RuntimeEffectStatus {
   for (std::size_t index = 0; index < count; ++index) {
     auto& entry = std::span(plan).subspan(index, 1).front();
-    LEMMA_ASSERT(entry.runtime != nullptr);
+    FRAME_ASSERT(entry.runtime != nullptr);
     if (entry.previous.columns == entry.target.columns &&
         entry.previous.rows == entry.target.rows) {
       continue;
@@ -1185,7 +1185,7 @@ struct ProductionSessionRuntimeContext final {
                                          const SpawnPaneEffect& effect) noexcept
     -> RuntimeEffectStatus {
   auto& owner = *static_cast<ProductionSessionRuntimeContext*>(context);
-  LEMMA_ASSERT(owner.session != nullptr && owner.runtimes != nullptr);
+  FRAME_ASSERT(owner.session != nullptr && owner.runtimes != nullptr);
   auto& session = *owner.session;
   if (effect.session != session.id ||
       !owner.runtimes->can_reserve_scrollback(limits::terminal_scrollback_bytes_default)) {
@@ -1226,7 +1226,7 @@ void note_copy_target_reflow(ProductionSessionRuntimeContext& owner,
                                            const std::span<const ResizePaneEffect> effects) noexcept
     -> RuntimeEffectStatus {
   auto& owner = *static_cast<ProductionSessionRuntimeContext*>(context);
-  LEMMA_ASSERT(owner.session != nullptr && owner.runtimes != nullptr);
+  FRAME_ASSERT(owner.session != nullptr && owner.runtimes != nullptr);
   if (effects.size() > panes_per_session_max) {
     return RuntimeEffectStatus::consistency_lost;
   }
@@ -1260,19 +1260,19 @@ void note_copy_target_reflow(ProductionSessionRuntimeContext& owner,
 void production_retire_pane(void* const context, const SessionId session,
                             const PaneId pane) noexcept {
   auto& owner = *static_cast<ProductionSessionRuntimeContext*>(context);
-  LEMMA_ASSERT(owner.session != nullptr && owner.runtimes != nullptr &&
+  FRAME_ASSERT(owner.session != nullptr && owner.runtimes != nullptr &&
                owner.session->id == session);
   const bool erased = owner.runtimes->erase({.session = session, .pane = pane});
-  LEMMA_ASSERT(erased);
+  FRAME_ASSERT(erased);
 }
 
 void production_hold_pane(void* const context, const SessionId session, const PaneId pane,
                           [[maybe_unused]] const ProcessExit process) noexcept {
   auto& owner = *static_cast<ProductionSessionRuntimeContext*>(context);
-  LEMMA_ASSERT(owner.session != nullptr && owner.runtimes != nullptr &&
+  FRAME_ASSERT(owner.session != nullptr && owner.runtimes != nullptr &&
                owner.session->id == session);
   auto* const runtime = owner.runtimes->get({.session = session, .pane = pane});
-  LEMMA_ASSERT(runtime != nullptr);
+  FRAME_ASSERT(runtime != nullptr);
   close_descriptor(runtime->pty);
   runtime->pending_writes.clear();
   runtime->failure.reset();
@@ -1304,7 +1304,7 @@ void reconcile_copy_target(SessionRecord& session, PaneRuntimeStore& runtimes) n
 
 void apply_session_change(ProductionSessionRuntimeContext& context,
                           const SessionChange change) noexcept {
-  LEMMA_ASSERT(context.session != nullptr && context.runtimes != nullptr);
+  FRAME_ASSERT(context.session != nullptr && context.runtimes != nullptr);
   auto& session = *context.session;
   auto& runtimes = *context.runtimes;
   reconcile_copy_target(session, runtimes);
@@ -1593,7 +1593,7 @@ void clear_command_line_requests(CommandLineState& state) noexcept {
 }
 
 void assign_command_line_text(CommandLineState& state, const std::string_view text) noexcept {
-  LEMMA_ASSERT(text.size() <= state.text.size());
+  FRAME_ASSERT(text.size() <= state.text.size());
   state.text = {};
   std::ranges::copy(text, state.text.begin());
   state.size = text.size();
@@ -1957,7 +1957,7 @@ struct CopyEscapeDecode final {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] auto decode_copy_escape(const std::span<const std::byte> sequence) noexcept
     -> CopyEscapeDecode {
-  LEMMA_ASSERT(!sequence.empty() && sequence.front() == std::byte{0x1B});
+  FRAME_ASSERT(!sequence.empty() && sequence.front() == std::byte{0x1B});
   if (sequence.size() == 1U) {
     return {.status = CopyEscapeStatus::pending, .key = {}};
   }
@@ -2641,7 +2641,7 @@ template <typename Effect>
     const auto byte = input.subspan(index, 1).front();
     auto key = CopyKey{.byte = std::to_integer<std::uint8_t>(byte)};
     if (session.attachment_runtime.copy_mode.pending_escape_size > 0) {
-      LEMMA_ASSERT(session.attachment_runtime.copy_mode.pending_escape_size <
+      FRAME_ASSERT(session.attachment_runtime.copy_mode.pending_escape_size <
                    session.attachment_runtime.copy_mode.pending_escape.size());
       std::span(session.attachment_runtime.copy_mode.pending_escape)
           .subspan(session.attachment_runtime.copy_mode.pending_escape_size, 1)
@@ -2840,7 +2840,7 @@ struct LaunchDirectory final {
 template <typename Value>
 [[nodiscard]] auto command_payload_value(const CommandPayload& payload) noexcept -> const Value& {
   const auto* const value = std::get_if<Value>(&payload);
-  LEMMA_ASSERT(value != nullptr);
+  FRAME_ASSERT(value != nullptr);
   return *value;
 }
 
@@ -3199,7 +3199,7 @@ struct SessionCommandContext final {
 [[nodiscard]] auto execute_session_command(void* const context, const Command& command) noexcept
     -> CommandResult {
   auto& command_context = *static_cast<SessionCommandContext*>(context);
-  LEMMA_ASSERT(command_context.session != nullptr && command_context.runtimes != nullptr);
+  FRAME_ASSERT(command_context.session != nullptr && command_context.runtimes != nullptr);
   auto& session = *command_context.session;
   auto& runtimes = *command_context.runtimes;
   if (command.target.session.is_valid() && command.target.session != session.id) {
@@ -3225,7 +3225,7 @@ struct SessionCommandContext final {
         session, production_session_options(runtime_context, command_context.name_conflict,
                                             command_context.name_conflict_context));
     const auto transition = machine.dispatch(command);
-    LEMMA_ASSERT(transition.handled);
+    FRAME_ASSERT(transition.handled);
     apply_session_change(runtime_context, transition.change);
     command_context.reason = transition.reason;
     return transition.result;
@@ -4304,7 +4304,7 @@ static_assert(input::key_modifier_num_lock == protocol::key_input_modifier_num_l
     return queued;
   }
   std::uint64_t trace_correlation = 0;
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   trace_correlation = session.attachment_runtime.decoded_input_trace_matcher.observe(bytes);
 #endif
   diagnostic::record_latency_trace(diagnostic::LatencyTraceStage::daemon_input_message_received,
@@ -4411,7 +4411,7 @@ static_assert(input::key_modifier_num_lock == protocol::key_input_modifier_num_l
   }
   const auto queued_bytes_before = runtime.pending_writes.size();
   const bool appended = runtime.pending_writes.append(staged.readable_span());
-  LEMMA_ASSERT(appended);
+  FRAME_ASSERT(appended);
   clear_mouse_selection(session, runtimes);
   runtime.interactive_damage.await_write(queued_bytes_before, runtime.pending_writes.size());
   return InputQueueResult::queued;
@@ -4469,7 +4469,7 @@ void accept_input_route(SessionRecord& session, PaneRuntimeStore& runtimes,
                    .attachment = session.attachment.id},
     };
     const auto result = dispatch_session_command(session, runtimes, cancel);
-    LEMMA_ASSERT(result.succeeded());
+    FRAME_ASSERT(result.succeeded());
   }
   if (presentation_changed) {
     schedule_frame(session, FrameUrgency::state_change, false);
@@ -4532,8 +4532,8 @@ void accept_input_route(SessionRecord& session, PaneRuntimeStore& runtimes,
   if (forwarded.prefix_size == 0U) {
     return forwarded.current;
   }
-  LEMMA_ASSERT(forwarded.prefix_size <= forwarded.prefix.size());
-  LEMMA_ASSERT(forwarded.current.size() <= storage.size() - forwarded.prefix_size);
+  FRAME_ASSERT(forwarded.prefix_size <= forwarded.prefix.size());
+  FRAME_ASSERT(forwarded.current.size() <= storage.size() - forwarded.prefix_size);
   std::ranges::copy(std::span(forwarded.prefix).first(forwarded.prefix_size), storage.begin());
   std::ranges::copy(
       forwarded.current,
@@ -4671,7 +4671,7 @@ void accept_input_route(SessionRecord& session, PaneRuntimeStore& runtimes,
       if (!remaining.empty()) {
         const auto queued = queue_application_bytes(session, runtimes, remaining);
         if (queued == InputQueueResult::full) {
-          LEMMA_ASSERT(remaining.size() <= session.attachment_runtime.pending_routed_input.size());
+          FRAME_ASSERT(remaining.size() <= session.attachment_runtime.pending_routed_input.size());
           std::ranges::copy(remaining, session.attachment_runtime.pending_routed_input.begin());
           session.attachment_runtime.pending_routed_input_size =
               static_cast<std::uint8_t>(remaining.size());
@@ -4938,7 +4938,7 @@ process_routed_key_input(SessionRecord& session, PaneRuntimeStore& runtimes,
   }
   const auto owner = extensions.surface_owner(surface);
   try {
-    std::string event = R"({"schema":"lemma.event/v1","sequence":)" +
+    std::string event = R"({"schema":"frame.event/v1","sequence":)" +
                         std::to_string(extensions.event_sequence(owner)) +
                         R"(,"event":"surface.key","surface":")" + std::to_string(surface.slot()) +
                         ":" + std::to_string(surface.generation()) + R"(","action":)" +
@@ -5007,7 +5007,7 @@ process_routed_key_input(SessionRecord& session, PaneRuntimeStore& runtimes,
   const auto chunk = text.subspan(progress->offset)
                          .first(std::min(text.size() - progress->offset, chunk_bytes_max));
   try {
-    std::string event = R"({"schema":"lemma.event/v1","sequence":)" +
+    std::string event = R"({"schema":"frame.event/v1","sequence":)" +
                         std::to_string(extensions.event_sequence(owner)) +
                         R"(,"event":"surface.paste","surface":")" + std::to_string(surface.slot()) +
                         ":" + std::to_string(surface.generation()) + '"';
@@ -5059,7 +5059,7 @@ process_routed_key_input(SessionRecord& session, PaneRuntimeStore& runtimes,
     }
   }
   try {
-    std::string event = R"({"schema":"lemma.event/v1","sequence":)" +
+    std::string event = R"({"schema":"frame.event/v1","sequence":)" +
                         std::to_string(extensions.event_sequence(owner)) +
                         R"(,"event":"surface.mouse","surface":")" + std::to_string(target.slot()) +
                         ":" + std::to_string(target.generation()) + R"(","action":)" +
@@ -5175,7 +5175,7 @@ geometry_client_message(const protocol::ClientMessage& message) noexcept -> bool
     case protocol::ClientMessageKind::cell_size:
     case protocol::ClientMessageKind::resize:
       // Recorded as pending geometry before dispatch.
-      LEMMA_ASSERT(false);
+      FRAME_ASSERT(false);
       break;
     case protocol::ClientMessageKind::input: {
       const auto result =
@@ -5878,7 +5878,7 @@ void record_reaped_child(Sessions& sessions, PaneRuntimeStore& runtimes,
         continue;
       }
       auto* const runtime = find_pane_runtime(runtimes, *session, *pane_slot.pane);
-      LEMMA_ASSERT(runtime != nullptr);
+      FRAME_ASSERT(runtime != nullptr);
       if (runtime->child == child_exit.process) {
         runtime->observed_exit = process_exit_from_wait_status(child_exit.status);
         runtime->child = -1;
@@ -5891,7 +5891,7 @@ void record_reaped_child(Sessions& sessions, PaneRuntimeStore& runtimes,
 
 [[nodiscard]] auto reap_exited_children(Sessions& sessions, PaneRuntimeStore& runtimes,
                                         const ChildReaper child_reaper) noexcept -> bool {
-  LEMMA_ASSERT(child_reaper.valid());
+  FRAME_ASSERT(child_reaper.valid());
   bool reaped = false;
   while (const auto exited = child_reaper.reap(child_reaper.context)) {
     record_reaped_child(sessions, runtimes, *exited);
@@ -5935,7 +5935,7 @@ void reclaim_inactive_sessions(Sessions& sessions, PaneRuntimeStore& runtimes,
       extensions.revoke_session(id);
       runtimes.erase_session(id);
       const bool erased = sessions.erase(id);
-      LEMMA_ASSERT(erased);
+      FRAME_ASSERT(erased);
     }
   }
 }
@@ -5951,7 +5951,7 @@ void reclaim_inactive_sessions(Sessions& sessions, PaneRuntimeStore& runtimes,
       ++listed;
     }
   }
-  return listed > 0 || output.append_text("no lemma sessions\n");
+  return listed > 0 || output.append_text("no frame sessions\n");
 }
 
 [[nodiscard]] auto acquire_public_scratch(PublicScratch& owner) noexcept -> std::span<std::byte> {
@@ -6126,7 +6126,7 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
       return result;
     }
     auto* const inserted = sessions.get(*id);
-    LEMMA_ASSERT(inserted != nullptr);
+    FRAME_ASSERT(inserted != nullptr);
     inserted->id = *id;
     inserted->attachment.id = AttachmentId::from_parts(id->slot(), id->generation());
     inserted->attachment.session = *id;
@@ -6135,7 +6135,7 @@ auto PublicCommandExecutor::execute(const api::Command& request, Sessions& sessi
     auto* const tab = create_tab(*inserted, runtimes, command, working_directory, policy);
     if (tab == nullptr) {
       const bool erased = sessions.erase(*id);
-      LEMMA_ASSERT(erased);
+      FRAME_ASSERT(erased);
       result.status = CommandStatus::failed;
       return result;
     }
@@ -7131,7 +7131,7 @@ void compile_proc_references(const api::JsonValue& source,
       continue;
     }
     const auto* const binding = proc_binding(shapes, *reference);
-    LEMMA_ASSERT(binding != nullptr && step.reference_count < step.references.size());
+    FRAME_ASSERT(binding != nullptr && step.reference_count < step.references.size());
     const auto binding_index = static_cast<std::size_t>(binding - shapes.data());
     std::span(step.references).subspan(step.reference_count, 1).front() = {
         .step = binding_index, .field = proc_reference_field(key)};
@@ -7195,7 +7195,7 @@ void compile_proc_references(const api::JsonValue& source,
 [[nodiscard]] auto proc_error(const std::string_view reason,
                               const std::optional<std::size_t> index = std::nullopt)
     -> std::string {
-  std::string output = R"({"schema":"lemma.proc-result/v1","ok":false,"error":{"reason":)";
+  std::string output = R"({"schema":"frame.proc-result/v1","ok":false,"error":{"reason":)";
   if (!api::append_json_string(output, reason)) {
     return {};
   }
@@ -7279,8 +7279,8 @@ encode_proc_result(const ProcExecutionState& state,
                    const std::optional<std::string_view> error = std::nullopt,
                    const std::optional<std::size_t> error_index = std::nullopt,
                    const bool command_completed = false) -> std::string {
-  std::string output = state.ok ? R"({"schema":"lemma.proc-result/v1","ok":true)"
-                                : R"({"schema":"lemma.proc-result/v1","ok":false)";
+  std::string output = state.ok ? R"({"schema":"frame.proc-result/v1","ok":true)"
+                                : R"({"schema":"frame.proc-result/v1","ok":false)";
   if (error.has_value()) {
     if (!append_public(output, R"(,"partial":true,"error":{"reason":)") ||
         !api::append_json_string(output, *error)) {
@@ -7864,7 +7864,7 @@ void service_hosted_commands(extension::CommandRuntime& extensions, Sessions& se
       extensions.consume(slot);
       extensions.complete_proc(
           owner, record->sequence,
-          R"({"schema":"lemma.proc-result/v1","ok":false,"error":{"reason":"resource_failure"},"results":[]})");
+          R"({"schema":"frame.proc-result/v1","ok":false,"error":{"reason":"resource_failure"},"results":[]})");
     }
     return true;
   }
@@ -7987,7 +7987,7 @@ void record_pending_progress(PendingConnection& pending) noexcept {
 
 void begin_pending_field(PendingConnection& pending, const PendingState state,
                          const std::size_t size) noexcept {
-  LEMMA_ASSERT(size > 0 && size <= pending.field.size());
+  FRAME_ASSERT(size > 0 && size <= pending.field.size());
   pending.state = state;
   pending.field_size = 0;
   pending.field_target = size;
@@ -8045,13 +8045,13 @@ void finish_pending_byte(
     const PendingDisposition disposition = PendingDisposition::close) noexcept {
   pending.output.reset();
   const bool appended = pending.output.append(std::span(&response, 1));
-  LEMMA_ASSERT(appended);
+  FRAME_ASSERT(appended);
   finish_pending_output(pending, disposition);
 }
 
 void finish_pending_create(PendingConnection& pending, const SessionRecord& session) noexcept {
   const auto* const tab = active_tab(session);
-  LEMMA_ASSERT(tab != nullptr);
+  FRAME_ASSERT(tab != nullptr);
   const auto tab_id = protocol::encode_control_id(tab->id);
   const auto pane_id = protocol::encode_control_id(tab->focused_pane());
   pending.output.reset();
@@ -8061,7 +8061,7 @@ void finish_pending_create(PendingConnection& pending, const SessionRecord& sess
                         pending.output.append(std::span(&name_size, 1)) &&
                         pending.output.append(std::as_bytes(std::span(name.data(), name.size()))) &&
                         pending.output.append(tab_id) && pending.output.append(pane_id);
-  LEMMA_ASSERT(appended);
+  FRAME_ASSERT(appended);
   finish_pending_output(pending);
 }
 
@@ -8072,7 +8072,7 @@ void finish_pending_surface(PendingConnection& pending, const TabId tab,
   pending.output.reset();
   const bool appended = pending.output.append(std::span(&response_ready, 1)) &&
                         pending.output.append(tab_id) && pending.output.append(pane_id);
-  LEMMA_ASSERT(appended);
+  FRAME_ASSERT(appended);
   finish_pending_output(pending);
 }
 
@@ -8085,7 +8085,7 @@ void finish_pending_disconnect(PendingConnection& pending, const protocol::Disco
   pending.output.reset();
   const auto encoded = protocol::encode_disconnect(reason, diagnostic);
   const bool appended = pending.output.append(encoded.bytes());
-  LEMMA_ASSERT(appended);
+  FRAME_ASSERT(appended);
   finish_pending_output(pending);
 }
 
@@ -8106,7 +8106,7 @@ void prepare_unnamed_command(PendingConnection& pending, Sessions& sessions,
     }
     prepared = pending.output.append_text(pending.command == command_shutdown
                                               ? protocol::shutdown_response
-                                              : "all lemma sessions stopped\n");
+                                              : "all frame sessions stopped\n");
   } else {
     pending.state = PendingState::unused;
     return;
@@ -8246,7 +8246,7 @@ void finish_command_result(PendingConnection& pending, const CommandResult resul
   std::size_t count = 0;
   for (std::size_t position = 0; position < session.tab_order.size(); ++position) {
     const auto id = session.tab_order.at(position);
-    LEMMA_ASSERT(id.has_value());
+    FRAME_ASSERT(id.has_value());
     if (*id != moving) {
       std::span(remaining).subspan(count, 1).front() = *id;
       ++count;
@@ -8331,7 +8331,7 @@ void prepare_semantic_action(PendingConnection& pending, Sessions& sessions,
   case protocol::ControlAction::pane_kill:
     break;
   case protocol::ControlAction::session_kill:
-    LEMMA_ASSERT(false);
+    FRAME_ASSERT(false);
     return;
   }
   auto* const pane = find_pane(*session, *pane_id);
@@ -8453,7 +8453,7 @@ void prepare_surface_create(PendingConnection& pending, Sessions& sessions,
       return;
     }
     const bool titled = tab->set_title_override(title);
-    LEMMA_ASSERT(titled);
+    FRAME_ASSERT(titled);
     finish_pending_surface(pending, tab->id, tab->focused_pane());
     return;
   }
@@ -8565,7 +8565,7 @@ void prepare_pane_status(PendingConnection& pending, Sessions& sessions, PaneRun
   std::span(response).subspan(6, 1).front() = static_cast<std::byte>(exit.value & 0xffU);
   pending.output.reset();
   const bool appended = pending.output.append(response);
-  LEMMA_ASSERT(appended);
+  FRAME_ASSERT(appended);
   finish_pending_output(pending);
 }
 
@@ -8629,13 +8629,13 @@ void prepare_named_command(PendingConnection& pending, Sessions& sessions,
       return;
     }
     auto* const inserted = sessions.get(*id);
-    LEMMA_ASSERT(inserted != nullptr);
+    FRAME_ASSERT(inserted != nullptr);
     inserted->id = *id;
     inserted->attachment.id = AttachmentId::from_parts(id->slot(), id->generation());
     inserted->attachment.session = *id;
     if (activity_order == std::numeric_limits<std::uint64_t>::max()) {
       const bool erased = sessions.erase(*id);
-      LEMMA_ASSERT(erased);
+      FRAME_ASSERT(erased);
       finish_pending_byte(pending, response_capacity);
       return;
     }
@@ -8643,7 +8643,7 @@ void prepare_named_command(PendingConnection& pending, Sessions& sessions,
     const std::span<const std::byte> launch_command(pending.launch_command);
     if (create_tab(*inserted, runtimes, launch_command, {}, pending.exit_policy) == nullptr) {
       const bool erased = sessions.erase(*id);
-      LEMMA_ASSERT(erased);
+      FRAME_ASSERT(erased);
       finish_pending_byte(pending, response_failed);
       return;
     }
@@ -8693,7 +8693,7 @@ void prepare_named_command(PendingConnection& pending, Sessions& sessions,
     return;
   }
 
-  if (!pending.output.append_text("lemma session \"") ||
+  if (!pending.output.append_text("frame session \"") ||
       !pending.output.append_title(session->session_name()) ||
       !pending.output.append_text("\" stopped\n")) {
     fail_pending_output(pending);
@@ -8711,14 +8711,14 @@ void prepare_attach(PendingConnection& pending, Sessions& sessions, PaneRuntimeS
                                      : find_session(sessions, pending.session.view());
   if (session == nullptr) {
     finish_pending_disconnect(pending, protocol::DisconnectReason::session_missing,
-                              pending.session.size == 0 ? "no detached lemma session"
-                                                        : "no lemma session");
+                              pending.session.size == 0 ? "no detached frame session"
+                                                        : "no frame session");
     return;
   }
   if (session->attachment_runtime.client >= 0 || session->attachment_runtime.pending_attach_slot !=
                                                      std::numeric_limits<std::uint32_t>::max()) {
     finish_pending_disconnect(pending, protocol::DisconnectReason::session_busy,
-                              "lemma session is already attached");
+                              "frame session is already attached");
     return;
   }
   if (!sessions.connection_available(session->id)) {
@@ -8755,7 +8755,7 @@ void prepare_attach(PendingConnection& pending, Sessions& sessions, PaneRuntimeS
   pending.output.reset();
   const auto hello = protocol::encode_daemon_hello(pending.attach_dimensions);
   const bool appended = pending.output.append(hello.bytes());
-  LEMMA_ASSERT(appended);
+  FRAME_ASSERT(appended);
   finish_pending_output(pending, PendingDisposition::attach);
 }
 
@@ -8791,7 +8791,7 @@ void complete_pending_field(PendingConnection& pending, Sessions& sessions,
       pending.attach_decoder.reset();
       pending.attach_decoder.writable_bytes().front() = pending.command;
       const auto committed = pending.attach_decoder.commit(1);
-      LEMMA_ASSERT(committed.has_value());
+      FRAME_ASSERT(committed.has_value());
       pending.state = PendingState::read_attach;
     } else if (pending.command == command_list || pending.command == command_query_sessions ||
                pending.command == command_kill_all || pending.command == command_shutdown) {
@@ -8814,7 +8814,7 @@ void complete_pending_field(PendingConnection& pending, Sessions& sessions,
     }
     break;
   case PendingState::read_attach:
-    LEMMA_ASSERT(false);
+    FRAME_ASSERT(false);
     break;
   case PendingState::read_name_size: {
     const auto size = protocol::decode_session_name_size(pending.field.front());
@@ -8998,7 +8998,7 @@ void complete_pending_field(PendingConnection& pending, Sessions& sessions,
   case PendingState::observe:
   case PendingState::unused:
   case PendingState::flush_response:
-    LEMMA_ASSERT(false);
+    FRAME_ASSERT(false);
     break;
   }
 }
@@ -9065,7 +9065,7 @@ void process_extension_read(PendingConnections& connections, Sessions& sessions,
                             ExtensionObservations& observations, PublicScratch& scratch_owner,
                             const std::size_t slot) noexcept {
   auto* const pending = std::span(connections).subspan(slot, 1).front().get();
-  LEMMA_ASSERT(pending != nullptr && pending->extension_peer != nullptr);
+  FRAME_ASSERT(pending != nullptr && pending->extension_peer != nullptr);
   static_cast<void>(pending->extension_peer->read_ready());
   const auto record = pending->extension_peer->receive();
   if (!record.has_value()) {
@@ -9141,7 +9141,7 @@ void process_pending_fields(PendingConnections& connections, Sessions& sessions,
                             ExtensionObservations& observations, PublicScratch& scratch_owner,
                             const std::size_t slot) noexcept {
   auto* const pending = std::span(connections).subspan(slot, 1).front().get();
-  LEMMA_ASSERT(pending != nullptr);
+  FRAME_ASSERT(pending != nullptr);
   constexpr std::size_t operations_per_turn_max = 8;
   for (std::size_t operation = 0; operation < operations_per_turn_max && pending->active() &&
                                   pending->state != PendingState::flush_response;
@@ -9175,7 +9175,7 @@ void process_pending_fields(PendingConnections& connections, Sessions& sessions,
       }
       if (decoded->has_value()) {
         const auto& message = **decoded;
-        LEMMA_ASSERT(message.kind == protocol::ClientMessageKind::hello);
+        FRAME_ASSERT(message.kind == protocol::ClientMessageKind::hello);
         pending->session = {};
         pending->session.size = message.session.size();
         std::ranges::copy(message.session, pending->session.bytes.begin());
@@ -9247,7 +9247,7 @@ void process_pending_read(PendingConnections& connections, Sessions& sessions,
                           ExtensionObservations& observations, PublicScratch& scratch_owner,
                           const std::size_t slot) noexcept {
   auto* const pending = std::span(connections).subspan(slot, 1).front().get();
-  LEMMA_ASSERT(pending != nullptr);
+  FRAME_ASSERT(pending != nullptr);
   if (!pending->public_connection && reactor_now() >= pending->setup_deadline) {
     close_pending(connections, slot, sessions);
     return;
@@ -9282,7 +9282,7 @@ void handoff_attached_connection(PendingConnections& connections, const std::siz
                                  extension::Runtime& extensions,
                                  std::uint64_t& activity_order) noexcept {
   auto& owner = std::span(connections).subspan(slot, 1).front();
-  LEMMA_ASSERT(owner != nullptr);
+  FRAME_ASSERT(owner != nullptr);
   auto& pending = *owner;
   SessionRecord* const session = sessions.get(pending.attach_session);
   if (session == nullptr || !session->active ||
@@ -9313,7 +9313,7 @@ void handoff_attached_connection(PendingConnections& connections, const std::siz
   session->attachment_runtime.client_close_state = ConnectionCloseState::none;
   session->attachment_runtime.client_close_reason = protocol::DisconnectReason::protocol_error;
   session->attachment_runtime.frame_scheduler.cancel();
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   session->attachment_runtime.frame_trace_correlation = 0;
 #endif
   start_outer_attention(*session, runtimes);
@@ -9348,7 +9348,7 @@ void handoff_attached_connection(PendingConnections& connections, const std::siz
                                         PaneRuntimeStore& runtimes, extension::Runtime& extensions,
                                         std::uint64_t& activity_order) noexcept -> bool {
   auto* const pending = std::span(connections).subspan(slot, 1).front().get();
-  LEMMA_ASSERT(pending != nullptr);
+  FRAME_ASSERT(pending != nullptr);
   const auto disposition = pending->disposition;
   if (pending->public_connection) {
     while (pending->public_output_offset < pending->public_output.size() && global_budget > 0) {
@@ -9416,7 +9416,7 @@ void handoff_attached_connection(PendingConnections& connections, const std::siz
 void process_capacity_rejection_read(CapacityRejectionConnections& connections,
                                      const std::size_t slot) noexcept {
   auto& connection = std::span(connections).subspan(slot, 1).front();
-  LEMMA_ASSERT(connection.active() && !connection.flush_response);
+  FRAME_ASSERT(connection.active() && !connection.flush_response);
   std::byte discriminator{};
   const auto received = ::recv(connection.descriptor, &discriminator, 1, 0);
   if (received > 0) {
@@ -9425,16 +9425,16 @@ void process_capacity_rejection_read(CapacityRejectionConnections& connections,
       const auto rejection = protocol::encode_disconnect(
           protocol::DisconnectReason::capacity, "daemon pending connection capacity exhausted");
       const bool appended = connection.output.append(rejection.bytes());
-      LEMMA_ASSERT(appended);
+      FRAME_ASSERT(appended);
     } else if (discriminator == std::byte{'{'}) {
       constexpr std::string_view rejection =
-          R"({"schema":"lemma.proc-result/v1","ok":false,"error":{"reason":"capacity"},"results":[]}
+          R"({"schema":"frame.proc-result/v1","ok":false,"error":{"reason":"capacity"},"results":[]}
 )";
       const bool appended = connection.output.append(std::as_bytes(std::span(rejection)));
-      LEMMA_ASSERT(appended);
+      FRAME_ASSERT(appended);
     } else {
       const bool appended = connection.output.append(std::span(&response_capacity, 1));
-      LEMMA_ASSERT(appended);
+      FRAME_ASSERT(appended);
     }
     connection.flush_response = true;
     connection.deadline = reactor_now() + setup_progress_timeout;
@@ -9460,7 +9460,7 @@ void process_capacity_rejection_read(CapacityRejectionConnections& connections,
 void flush_capacity_rejection_output(CapacityRejectionConnections& connections,
                                      const std::size_t slot, std::size_t& global_budget) noexcept {
   auto& connection = std::span(connections).subspan(slot, 1).front();
-  LEMMA_ASSERT(connection.active() && connection.flush_response);
+  FRAME_ASSERT(connection.active() && connection.flush_response);
   const auto status = flush_connection_output(connection.output, global_budget,
                                               &write_capacity_rejection_output, &connection);
   if (status == ConnectionFlushStatus::drained || status == ConnectionFlushStatus::hard_error) {
@@ -9530,7 +9530,7 @@ void flush_capacity_rejection_output(CapacityRejectionConnections& connections,
         continue;
       }
       const auto* const runtime = find_pane_runtime(runtimes, *session, *pane_slot.pane);
-      LEMMA_ASSERT(runtime != nullptr);
+      FRAME_ASSERT(runtime != nullptr);
       if (tighten(runtime->presentation_gate.deadline()) ||
           (runtime->compression_scheduled && tighten(runtime->compression_deadline))) {
         return 0;
@@ -9674,7 +9674,7 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
   if ((events.revents & (POLLIN | POLLHUP | POLLERR)) == 0) {
     return;
   }
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   auto* const trace_matcher = &runtime.output_trace_matcher;
 #else
   diagnostic::LatencyTraceMarkerMatcher* const trace_matcher = nullptr;
@@ -9747,7 +9747,7 @@ void process_pane_events(SessionRecord& session, Tab& tab, Pane& pane, PaneRunti
   const auto damage =
       assess_pane_damage(session, runtimes, runtime, drained, track_interactive_damage,
                          bytes_drained, interactive_status_before);
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   if (drained.correlation != 0 && tab.id == session.active_tab && pane.id == tab.focused_pane()) {
     session.attachment_runtime.frame_trace_correlation = drained.correlation;
   }
@@ -10293,7 +10293,7 @@ void service_attachment_command_lines(Sessions& sessions, PaneRuntimeStore& runt
     const auto size = static_cast<std::size_t>(written);
     runtime.interactive_damage.record_write(size);
     std::uint64_t trace_correlation = 0;
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
     trace_correlation = runtime.input_trace_matcher.observe(bytes.first(size));
 #endif
     diagnostic::record_latency_trace(diagnostic::LatencyTraceStage::daemon_pty_write_progress,
@@ -10317,7 +10317,7 @@ struct PaneRuntimeOutcome final {
 
 void apply_pane_runtime_outcome(SessionRecord& session, Tab& tab, PaneRuntimeStore& runtimes,
                                 const PaneRuntimeOutcome& outcome) noexcept {
-  LEMMA_ASSERT(outcome.pane.session == session.id);
+  FRAME_ASSERT(outcome.pane.session == session.id);
   if (session.attachment.mouse_capture.has_value() &&
       session.attachment.mouse_capture->owner == MouseCaptureOwner::divider &&
       session.attachment.mouse_capture->target.tab == tab.id) {
@@ -10326,7 +10326,7 @@ void apply_pane_runtime_outcome(SessionRecord& session, Tab& tab, PaneRuntimeSto
   }
   auto* const pane = find_pane(session, tab, outcome.pane.pane);
   auto* const runtime = runtimes.get(outcome.pane);
-  LEMMA_ASSERT(pane != nullptr && runtime != nullptr);
+  FRAME_ASSERT(pane != nullptr && runtime != nullptr);
   if (session.attachment.selection_target ==
       std::optional{AttachmentPaneTarget{.tab = tab.id, .pane = pane->id}}) {
     leave_copy_mode(session, runtimes);
@@ -10351,11 +10351,11 @@ void reclaim_dead_panes(SessionRecord& session, PaneRuntimeStore& runtimes,
       continue;
     }
     auto* const tab = find_tab(session, pane_owner->tab);
-    LEMMA_ASSERT(tab != nullptr);
+    FRAME_ASSERT(tab != nullptr);
     auto* const runtime = find_pane_runtime(runtimes, session, *pane_owner);
-    LEMMA_ASSERT(runtime != nullptr);
+    FRAME_ASSERT(runtime != nullptr);
     if (!runtime->live()) {
-      LEMMA_ASSERT(runtime->failure.has_value());
+      FRAME_ASSERT(runtime->failure.has_value());
       const auto failure = *runtime->failure;
       if (failure == PaneRuntimeFailure::child_exit && !runtime->observed_exit.has_value() &&
           runtime->child > 0) {
@@ -10412,7 +10412,7 @@ void run_due_scrollback_compression(Sessions& sessions, PaneRuntimeStore& runtim
         continue;
       }
       auto* const runtime = find_pane_runtime(runtimes, *session, *pane_slot.pane);
-      LEMMA_ASSERT(runtime != nullptr);
+      FRAME_ASSERT(runtime != nullptr);
       if (runtime->live() && runtime->compression_scheduled &&
           now >= runtime->compression_deadline) {
         std::span(due).subspan(count, 1).front() = runtime;
@@ -10455,7 +10455,7 @@ void release_expired_presentation_gates(Sessions& sessions, PaneRuntimeStore& ru
         continue;
       }
       auto* const runtime = find_pane_runtime(runtimes, *session, *pane_slot.pane);
-      LEMMA_ASSERT(runtime != nullptr);
+      FRAME_ASSERT(runtime != nullptr);
       const auto released = runtime->presentation_gate.release_if_expired(now);
       if (released.urgent_render && pane_slot.pane->tab == session->active_tab) {
         schedule_frame(*session, FrameUrgency::state_change, released.force_full);
@@ -10481,7 +10481,7 @@ void reconcile_extension_geometry(
     if (session == nullptr || !session->active) {
       continue;
     }
-    LEMMA_ASSERT(session->id.slot() < observations.size());
+    FRAME_ASSERT(session->id.slot() < observations.size());
     auto& observed = std::span(observations).subspan(session->id.slot(), 1).front();
     const auto generation = extensions.geometry_generation(session->attachment.id);
     if (observed.attachment == session->attachment.id &&
@@ -10588,7 +10588,7 @@ void flush_attached_client_frames(Sessions& sessions, PaneRuntimeStore& runtimes
     if (session == nullptr || !session->active || session->attachment_runtime.client < 0) {
       continue;
     }
-    LEMMA_ASSERT(count < storage.size());
+    FRAME_ASSERT(count < storage.size());
     storage.subspan(count, 1).front() = {
         .descriptor = session->attachment_runtime.client,
         .frame = &session->attachment_runtime.frame,
@@ -11025,7 +11025,7 @@ run_server_impl(const int listener, const EndpointRelease release_endpoint,
         }
         const auto address = pane_address(*session, *pane);
         const auto* const runtime = runtimes.get(address);
-        LEMMA_ASSERT(runtime != nullptr);
+        FRAME_ASSERT(runtime != nullptr);
         if (!runtime->pollable()) {
           continue;
         }
@@ -11214,7 +11214,7 @@ run_server_impl(const int listener, const EndpointRelease release_endpoint,
           auto* const tab = session == nullptr ? nullptr : find_tab(*session, owner.tab);
           auto* const pane = tab == nullptr ? nullptr : find_pane(*session, *tab, owner.pane);
           auto* const runtime = runtimes.get({.session = owner.session, .pane = owner.pane});
-          LEMMA_ASSERT(session != nullptr && tab != nullptr && pane != nullptr &&
+          FRAME_ASSERT(session != nullptr && tab != nullptr && pane != nullptr &&
                        runtime != nullptr);
           const auto& events = std::span(descriptors).subspan(index, 1).front();
           auto& blocked_session_budget =
@@ -11403,7 +11403,7 @@ run_server_impl(const int listener, const EndpointRelease release_endpoint,
           continue;
         }
         auto* const runtime = find_pane_runtime(runtimes, *session, *pane_slot.pane);
-        LEMMA_ASSERT(runtime != nullptr);
+        FRAME_ASSERT(runtime != nullptr);
         if (runtime->pollable() && !runtime->pending_writes.empty()) {
           std::span(writable_panes).subspan(writable_pane_count, 1).front() = runtime;
           ++writable_pane_count;
@@ -11548,4 +11548,4 @@ run_server_with_environment(const int listener, const EndpointRelease release_en
                                      child_reaper, production_reactor_environment());
 }
 
-} // namespace lemma::core
+} // namespace frame::core

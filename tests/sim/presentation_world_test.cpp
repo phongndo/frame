@@ -7,7 +7,7 @@
 #include "core/input.hpp"
 #include "core/presentation_gate.hpp"
 #include "core/pty_writer.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "protocol/attachment.hpp"
 #include "render/frame_buffer.hpp"
 
@@ -30,7 +30,7 @@
 #include <string>
 #include <string_view>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 namespace {
 
 using namespace std::chrono_literals;
@@ -637,15 +637,15 @@ private:
     if (error.has_value()) {
       return testing::AssertionFailure()
              << *error << "\n"
-             << history << "replay: LEMMA_PRESENTATION_SIM_SEED=" << seed
-             << " LEMMA_PRESENTATION_SIM_OPERATIONS=" << operations << " ./test sim";
+             << history << "replay: FRAME_PRESENTATION_SIM_SEED=" << seed
+             << " FRAME_PRESENTATION_SIM_OPERATIONS=" << operations << " ./test sim";
     }
   }
   if (const auto error = world->heal(); error.has_value()) {
     return testing::AssertionFailure()
            << *error << "\n"
-           << history << "replay: LEMMA_PRESENTATION_SIM_SEED=" << seed
-           << " LEMMA_PRESENTATION_SIM_OPERATIONS=" << operations << " ./test sim";
+           << history << "replay: FRAME_PRESENTATION_SIM_SEED=" << seed
+           << " FRAME_PRESENTATION_SIM_OPERATIONS=" << operations << " ./test sim";
   }
   if (final_hash != nullptr) {
     *final_hash = world->state_hash();
@@ -674,9 +674,9 @@ TEST(RuntimeSimulationTest, FaultedBoundaryHistoriesHealToCurrentCanonicalTermin
   };
   std::uint64_t selected_seed = 0;
   std::uint64_t selected_operations = presentation_operations_default;
-  const bool configured = std::getenv("LEMMA_PRESENTATION_SIM_SEED") != nullptr;
-  ASSERT_TRUE(environment_u64("LEMMA_PRESENTATION_SIM_SEED", selected_seed));
-  ASSERT_TRUE(environment_u64("LEMMA_PRESENTATION_SIM_OPERATIONS", selected_operations));
+  const bool configured = std::getenv("FRAME_PRESENTATION_SIM_SEED") != nullptr;
+  ASSERT_TRUE(environment_u64("FRAME_PRESENTATION_SIM_SEED", selected_seed));
+  ASSERT_TRUE(environment_u64("FRAME_PRESENTATION_SIM_OPERATIONS", selected_operations));
   ASSERT_GT(selected_operations, 0U);
   ASSERT_LE(selected_operations, trace_operations_max);
   if (configured) {
@@ -689,4 +689,4 @@ TEST(RuntimeSimulationTest, FaultedBoundaryHistoriesHealToCurrentCanonicalTermin
 }
 
 } // namespace
-} // namespace lemma::test::sim
+} // namespace frame::test::sim

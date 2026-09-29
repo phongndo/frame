@@ -1,9 +1,9 @@
-#ifndef LEMMA_TESTS_SIM_MUX_TRACE_HPP
-#define LEMMA_TESTS_SIM_MUX_TRACE_HPP
+#ifndef FRAME_TESTS_SIM_MUX_TRACE_HPP
+#define FRAME_TESTS_SIM_MUX_TRACE_HPP
 
 #include "core/session_machine.hpp"
-#include "lemma/command.hpp"
-#include "lemma/id.hpp"
+#include "frame/command.hpp"
+#include "frame/id.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -15,10 +15,10 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 
 inline constexpr std::size_t mux_trace_operations_max = 16'384;
-inline constexpr std::string_view mux_trace_header = "lemma-mux-trace-v1";
+inline constexpr std::string_view mux_trace_header = "frame-mux-trace-v1";
 
 enum class MuxOperationKind : std::uint8_t {
   split,
@@ -95,6 +95,6 @@ void write_mux_checkpoint(std::ostream& stream, const MuxCheckpoint& checkpoint)
                                         std::span<const MuxTraceEntry> entries, std::string& error)
     -> bool;
 
-} // namespace lemma::test::sim
+} // namespace frame::test::sim
 
-#endif // LEMMA_TESTS_SIM_MUX_TRACE_HPP
+#endif // FRAME_TESTS_SIM_MUX_TRACE_HPP

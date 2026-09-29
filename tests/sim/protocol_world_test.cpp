@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 namespace {
 
 struct ServerObservation final {
@@ -282,8 +282,8 @@ private:
     if (const auto error = world.apply(random); error.has_value()) {
       return testing::AssertionFailure()
              << "operation " << index << ": " << *error
-             << "\nreplay: LEMMA_PROTOCOL_SIM_SEED=" << seed
-             << " LEMMA_PROTOCOL_SIM_OPERATIONS=" << operations << " ./test sim";
+             << "\nreplay: FRAME_PROTOCOL_SIM_SEED=" << seed
+             << " FRAME_PROTOCOL_SIM_OPERATIONS=" << operations << " ./test sim";
     }
   }
   if (hash != nullptr) {
@@ -298,9 +298,9 @@ TEST(ProtocolSimulationTest, GeneratedMessagesIgnoreTransportFragmentation) {
   constexpr std::array seeds{0ULL, 1ULL, 0xC0FFEEULL, 0xDEADBEEFULL};
   std::uint64_t selected_seed = 0;
   std::uint64_t selected_operations = 512;
-  const bool configured = std::getenv("LEMMA_PROTOCOL_SIM_SEED") != nullptr;
-  ASSERT_TRUE(environment_u64("LEMMA_PROTOCOL_SIM_SEED", selected_seed));
-  ASSERT_TRUE(environment_u64("LEMMA_PROTOCOL_SIM_OPERATIONS", selected_operations));
+  const bool configured = std::getenv("FRAME_PROTOCOL_SIM_SEED") != nullptr;
+  ASSERT_TRUE(environment_u64("FRAME_PROTOCOL_SIM_SEED", selected_seed));
+  ASSERT_TRUE(environment_u64("FRAME_PROTOCOL_SIM_OPERATIONS", selected_operations));
   ASSERT_GT(selected_operations, 0U);
   ASSERT_LE(selected_operations, trace_operations_max);
   if (configured) {
@@ -438,11 +438,11 @@ TEST(AgentSchemaSimulationTest, ConcreteCommandsRoundTripThroughThePublicJsonBou
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(AgentSchemaSimulationTest, ProcShapeRemainsBoundedAndItsCommandsDecode) {
   constexpr std::string_view proc =
-      R"({"schema":"lemma.proc/v1","commands":[{"command":"session.inspect","session":{"name":"world"}},{"command":"pane.wait","session":{"name":"world"},"pane":{"id":"0:1"},"contains":"ready","timeout_ms":2000}]})";
+      R"({"schema":"frame.proc/v1","commands":[{"command":"session.inspect","session":{"name":"world"}},{"command":"pane.wait","session":{"name":"world"},"pane":{"id":"0:1"},"contains":"ready","timeout_ms":2000}]})";
   const auto parsed = api::parse_json(proc);
   ASSERT_TRUE(parsed.value.has_value());
   EXPECT_EQ(api::json_string(*parsed.value, "schema"),
-            std::optional<std::string_view>{"lemma.proc/v1"});
+            std::optional<std::string_view>{"frame.proc/v1"});
   const auto* const commands = api::json_member(*parsed.value, "commands");
   ASSERT_NE(commands, nullptr);
   ASSERT_EQ(commands->kind, api::JsonKind::array);
@@ -456,4 +456,4 @@ TEST(AgentSchemaSimulationTest, ProcShapeRemainsBoundedAndItsCommandsDecode) {
 // NOLINTEND(bugprone-unchecked-optional-access)
 
 } // namespace
-} // namespace lemma::test::sim
+} // namespace frame::test::sim

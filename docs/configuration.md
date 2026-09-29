@@ -1,6 +1,6 @@
 # Configuration and commands
 
-Lemma loads user configuration from Lua in a separate bounded host process. The daemon never
+Frame loads user configuration from Lua in a separate bounded host process. The daemon never
 executes Lua while routing input, processing PTY bytes, or composing frames. A successful load is
 validated and compiled into one immutable native configuration generation before any Session can
 use it.
@@ -15,22 +15,22 @@ use a separate [framed protocol](extensions.md).
 The default file is:
 
 ```text
-$XDG_CONFIG_HOME/lemma/init.lua
+$XDG_CONFIG_HOME/frame/init.lua
 ```
 
-If `XDG_CONFIG_HOME` is unset or not absolute, Lemma uses:
+If `XDG_CONFIG_HOME` is unset or not absolute, Frame uses:
 
 ```text
-$HOME/.config/lemma/init.lua
+$HOME/.config/frame/init.lua
 ```
 
-`LEMMA_CONFIG` selects another file. The host loads the shipped declarations even when the user file
+`FRAME_CONFIG` selects another file. The host loads the shipped declarations even when the user file
 is absent.
 Validate a file without starting or changing the daemon:
 
 ```sh
-lemma config check
-lemma config check ./init.lua
+frame config check
+frame config check ./init.lua
 ```
 
 The host has a 64 MiB Lua allocation bound. Startup must produce a complete configuration within two
@@ -44,9 +44,9 @@ trust. `require()` searches beside `init.lua` before the ordinary Lua module pat
 
 ## Reload
 
-Run `lemma config reload` or `reload` in the native `:` prompt. There is no configuration-file
+Run `frame config reload` or `reload` in the native `:` prompt. There is no configuration-file
 watcher. The command uses `config.reload`, an ordinary Proc Command, and waits for publication or
-rejection. An independent `lemma-config-host` evaluates Lua while panes continue processing input
+rejection. An independent `frame-config-host` evaluates Lua while panes continue processing input
 and output. The native loader admits one bounded read quantum per reactor turn and validates the
 complete bounded registration before replacing the generation.
 
@@ -64,7 +64,7 @@ only part of the new configuration. Lua errors, malformed output, and the two-se
 also retain the old generation. Unlike invalid startup configuration, a failed reload never falls
 back to defaults. Unreadable files, existing non-regular paths, dangling symlinks, and other
 filesystem errors reject reload. Removing the optional discovered file intentionally loads built-ins;
-a missing explicitly selected `LEMMA_CONFIG` file is an error. Use `lemma config check` first to
+a missing explicitly selected `FRAME_CONFIG` file is an error. Use `frame config check` first to
 validate syntax and declarations; it does not check whether a running daemon can apply a setting live.
 
 Only one candidate loads at a time. Another request reports a conflict while loading or retiring
@@ -78,11 +78,11 @@ This [complete configuration](../examples/configuration.lua) starts from the def
 adds Meta-d to split a Pane and Meta-r to enter resize mode. Save it as `init.lua`:
 
 ```lua example=../examples/configuration.lua
-local lemma = require("lemma")
-local keymap = lemma.keymap
-local ctx = lemma.context
+local frame = require("frame")
+local keymap = frame.keymap
+local ctx = frame.context
 
-lemma.setup({
+frame.setup({
   input = { preset = "default", prefix = "C-b" },
   terminal = { scrollback_lines = 100000 },
   ui = { status_line = true },
@@ -101,7 +101,7 @@ keymap.set("resize", "q", ctx.pop())
 keymap.del("normal", "Cmd-c")
 ```
 
-All `lemma.setup()` groups and fields are optional:
+All `frame.setup()` groups and fields are optional:
 
 - `input.preset` is `"default"` or `"none"`. The default preset seeds ordinary context and binding
   declarations; `none` retains the routing-context slots but starts with no bindings. Both are
@@ -116,7 +116,7 @@ All `lemma.setup()` groups and fields are optional:
   clipboard access through the outer terminal's [native protocol](usage.md#application-clipboard).
   They do not bypass its consent policy. A live reload revokes incompatible pending requests;
   detach or focus loss also cancels
-  them. Lemma stores no clipboard cache or remembered grants. Explicit selection copy and
+  them. Frame stores no clipboard cache or remembered grants. Explicit selection copy and
   [`paste-image`](usage.md#clipboard-images) are separate user-authorized operations.
 - `ui.status_line` enables or disables the shipped statusline extension. Disabling it releases its
   docked row and makes command-line and copy-search bindings inert. Replace the statusline through
@@ -147,27 +147,27 @@ native lookup tables. [Default extension declarations](../src/user/defaults.lua)
 `init.lua`; `C-b s` invokes `session.manager`. Your keymap overrides and `input.preset = "none"`
 apply afterward. Ordinary input never evaluates Lua.
 
-`lemma.keymap.set(CONTEXT, KEY, ACTION[, DISPOSITION])` replaces or adds one binding. `ACTION`
+`frame.keymap.set(CONTEXT, KEY, ACTION[, DISPOSITION])` replaces or adds one binding. `ACTION`
 may be a command string or one of these native-policy descriptors:
 
 ```lua
-lemma.context.push("resize")                   -- push another routing context
-lemma.context.push("prefix", { defer = true })  -- retain trigger bytes for replay
-lemma.context.pop()                             -- pop the current transient context
-lemma.keymap.replay()                           -- replay a deferred trigger
-lemma.keymap.send("Home")                       -- encode a physical key for the pane
+frame.context.push("resize")                   -- push another routing context
+frame.context.push("prefix", { defer = true })  -- retain trigger bytes for replay
+frame.context.pop()                             -- pop the current transient context
+frame.keymap.replay()                           -- replay a deferred trigger
+frame.keymap.send("Home")                       -- encode a physical key for the pane
 ```
 
 `DISPOSITION` applies to command strings: `"retain"` is the default and `"base"` returns from
-transient contexts before invocation. `lemma.keymap.del(CONTEXT, KEY)` removes one seeded or
+transient contexts before invocation. `frame.keymap.del(CONTEXT, KEY)` removes one seeded or
 previously configured binding. Repeated declarations use the last declaration.
 
-`lemma.context.push()` and `lemma.context.pop()` change routing state only. Semantic interactions
+`frame.context.push()` and `frame.context.pop()` change routing state only. Semantic interactions
 still use commands such as `enter_copy_mode`, `copy_leave`, `begin_rename_tab`,
 `begin_command_line`, and `command_line_cancel` so Core remains authoritative for their state and
 invariants.
 
-`lemma.context.set(CONTEXT, OPTIONS)` configures `label`, `lifetime` (`"persistent"` or
+`frame.context.set(CONTEXT, OPTIONS)` configures `label`, `lifetime` (`"persistent"` or
 `"one_shot"`), unbound behavior (`"forward"`, `"consume"`, `"replay"`, or `"retry"`), and whether
 the context `preempts` another Attachment interaction. A nonempty active label replaces the normal
 Session/Tab status row as flat text; callers need not add badge padding. `retry` leaves a one-shot
@@ -238,9 +238,9 @@ Register commands during configuration loading, directly in `init.lua` or a requ
 This [complete example](../examples/command.lua) opens a shell Tab:
 
 ```lua example=../examples/command.lua
-local lemma = require("lemma")
+local frame = require("frame")
 
-lemma.command.register("work.shell", {
+frame.command.register("work.shell", {
   description = "Open a shell tab",
   timeout_ms = 30000,
   handler = function(ctx, args)
@@ -262,12 +262,12 @@ lemma.command.register("work.shell", {
 Open `C-b :`, type `work.sh`, press Tab to complete `work.shell`, then Enter. Arguments use the same
 literal quoting grammar as native commands: `work.shell 'my shell'` passes one string. A registered
 command name is also a keymap action: after registering it, use
-`lemma.keymap.set("prefix", "s", "work.shell")`. Keybindings invoke with no arguments and capture
+`frame.keymap.set("prefix", "s", "work.shell")`. Keybindings invoke with no arguments and capture
 context when the key is routed, not when the host later runs it. They work with the status line
 disabled; only the interactive command line requires that line. Registered commands are not public
 Proc commands. Register a command before referring to it in a keymap.
 
-`lemma.command.register(NAME, OPTIONS)` requires `description` and exactly one of a function
+`frame.command.register(NAME, OPTIONS)` requires `description` and exactly one of a function
 `handler(ctx, args)` or an `argv` array for an external program. `timeout_ms` is optional. Unknown options, duplicate names, or invalid declarations reject the
 entire startup transaction, including configuration. Registration is not allowed from callbacks.
 Names must be qualified, such as `work.shell`: dot-separated segments begin with a lowercase ASCII
@@ -280,7 +280,7 @@ in `{ id = ctx.pane }` selectors as in the public API. They do not follow later 
 normal stale-target checks apply. `args` is a one-based array of literal strings.
 
 `ctx:proc(DOCUMENT)` yields the callback until the daemon returns the complete
-`lemma.proc-result/v1` table. `schema = "lemma.proc/v1"` is supplied when omitted; all other fields,
+`frame.proc-result/v1` table. `schema = "frame.proc/v1"` is supplied when omitted; all other fields,
 validation, backward references, ordering, partial completion, and `on_error` behavior are those of
 the [Automation API](api.md). Rejections are returned as results rather than thrown. A callback can
 inspect the result and submit another Proc. Returning completes the command; throwing publishes an
@@ -300,7 +300,7 @@ working directory; executable lookup uses its `PATH`. The combined argument vect
 share a diagnostic pipe: more than 4 KiB terminates the child, and failures publish at most 180
 printable diagnostic bytes. UI belongs on Surfaces, not stdout.
 
-`LEMMA_COMMAND_CONTEXT` contains a `lemma.command-context/v1` JSON object with `command`, `args`,
+`FRAME_COMMAND_CONTEXT` contains a `frame.command-context/v1` JSON object with `command`, `args`,
 `endpoint`, `session`, `tab`, `pane`, and `connection`. The IDs and endpoint are the captured values
 above. Connect to that endpoint using the [runtime extension protocol](extensions.md), not a guessed
 production socket path. Program exit completes the invocation; a nonzero exit reports an error.

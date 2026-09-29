@@ -17,7 +17,7 @@
 #include <mach-o/dyld.h>
 #endif
 
-namespace lemma::platform {
+namespace frame::platform {
 
 [[nodiscard]] auto executable_path(const std::span<char> output) noexcept -> std::size_t {
   if (output.empty()) {
@@ -52,12 +52,12 @@ namespace lemma::platform {
   }
   try {
     // Build trees and relocatable installations both carry their compiled entry. Do not advertise
-    // TERM=lemma when a bare copied executable cannot make its terminfo available to children.
+    // TERM=frame when a bare copied executable cannot make its terminfo available to children.
     for (const auto* const suffix : {"/terminfo", "/../share/terminfo"}) {
       const auto directory = std::string(path.substr(0, separator)) + suffix;
       if (directory.size() < output.size() &&
-          (::access((directory + "/l/lemma").c_str(), R_OK) == 0 ||
-           ::access((directory + "/6c/lemma").c_str(), R_OK) == 0)) {
+          (::access((directory + "/f/frame").c_str(), R_OK) == 0 ||
+           ::access((directory + "/66/frame").c_str(), R_OK) == 0)) {
         std::ranges::copy(directory, output.begin());
         output.subspan(directory.size(), 1).front() = '\0';
         return directory.size();
@@ -147,4 +147,4 @@ void close_descriptor(int& descriptor) noexcept {
   return ::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
-} // namespace lemma::platform
+} // namespace frame::platform

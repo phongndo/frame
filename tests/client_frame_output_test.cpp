@@ -17,7 +17,7 @@
 
 #include <gtest/gtest.h>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 using namespace std::chrono_literals;
@@ -495,4 +495,4 @@ TEST(ClientFrameOutputTest, ProgressAndTotalFrameDeadlinesAreBothBounded) {
 }
 
 } // namespace
-} // namespace lemma::core
+} // namespace frame::core

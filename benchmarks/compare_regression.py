@@ -377,7 +377,7 @@ def main() -> int:
     ]
     report = {
         "schema": 1,
-        "suite": "lemma-paired-regression",
+        "suite": "frame-paired-regression",
         "status": "failed" if failed else "passed",
         "target_status": "failed" if target_failed else "passed",
         "comparisons": results,

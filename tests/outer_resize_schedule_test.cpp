@@ -6,7 +6,7 @@
 
 #include <gtest/gtest.h>
 
-namespace lemma::client {
+namespace frame::client {
 namespace {
 
 using namespace std::chrono_literals;
@@ -109,4 +109,4 @@ TEST(OuterResizeScheduleTest, DragSendsBoundedCommitsAndSettlesPromptly) {
 }
 
 } // namespace
-} // namespace lemma::client
+} // namespace frame::client

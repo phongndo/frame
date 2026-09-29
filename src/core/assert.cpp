@@ -1,4 +1,4 @@
-#include "lemma/assert.hpp"
+#include "frame/assert.hpp"
 
 #include <array>
 #include <charconv>
@@ -9,7 +9,7 @@
 
 #include <unistd.h>
 
-namespace lemma {
+namespace frame {
 namespace {
 
 void write_stderr(const std::string_view fragment) noexcept {
@@ -25,7 +25,7 @@ void write_stderr(const std::string_view fragment) noexcept {
   const auto line_size =
       static_cast<std::size_t>(std::distance(line_buffer.begin(), line_result.ptr));
 
-  write_stderr("lemma invariant failed: ");
+  write_stderr("frame invariant failed: ");
   write_stderr(expression);
   write_stderr(" (");
   write_stderr(location.file_name());
@@ -37,4 +37,4 @@ void write_stderr(const std::string_view fragment) noexcept {
   std::abort();
 }
 
-} // namespace lemma
+} // namespace frame

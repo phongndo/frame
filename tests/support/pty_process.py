@@ -164,7 +164,7 @@ class AnsiScreenTracker:
                 elif 0x20 <= value <= 0x7E:
                     self.cells[self.row][self.column] = value
                     current_row = self.cells[self.row]
-                    if value == ord("_") and b"__LEMMA_" in current_row:
+                    if value == ord("_") and b"__FRAME_" in current_row:
                         self.observed_fixture_rows.append(bytes(current_row))
                     if observe_marker is not None and observe_marker in current_row:
                         observed = True

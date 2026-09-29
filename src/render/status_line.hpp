@@ -1,7 +1,7 @@
-#ifndef LEMMA_RENDER_STATUS_LINE_HPP
-#define LEMMA_RENDER_STATUS_LINE_HPP
+#ifndef FRAME_RENDER_STATUS_LINE_HPP
+#define FRAME_RENDER_STATUS_LINE_HPP
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 #include "render/scene.hpp"
 #include "render/ui.hpp"
 
@@ -11,7 +11,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::render {
+namespace frame::render {
 
 inline constexpr std::size_t status_tabs_max = 16;
 inline constexpr std::size_t status_context_bytes_max = limits::search_query_bytes_max + 64U;
@@ -86,6 +86,6 @@ struct StatusTarget final {
 [[nodiscard]] auto status_cursor_column(StatusLine status, Viewport viewport) noexcept
     -> std::uint16_t;
 
-} // namespace lemma::render
+} // namespace frame::render
 
-#endif // LEMMA_RENDER_STATUS_LINE_HPP
+#endif // FRAME_RENDER_STATUS_LINE_HPP

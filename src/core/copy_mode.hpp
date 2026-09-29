@@ -1,9 +1,9 @@
-#ifndef LEMMA_CORE_COPY_MODE_HPP
-#define LEMMA_CORE_COPY_MODE_HPP
+#ifndef FRAME_CORE_COPY_MODE_HPP
+#define FRAME_CORE_COPY_MODE_HPP
 
 #include <cstdint>
 
-namespace lemma::core {
+namespace frame::core {
 
 enum class CopyActionKind : std::uint8_t {
   none,
@@ -76,6 +76,6 @@ struct CopyKey final {
                                                std::uint64_t visible_rows,
                                                std::uint64_t total_rows) noexcept -> std::uint64_t;
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_COPY_MODE_HPP
+#endif // FRAME_CORE_COPY_MODE_HPP

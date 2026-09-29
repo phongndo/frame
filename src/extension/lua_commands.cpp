@@ -3,7 +3,7 @@
 #include "api/json.hpp"
 #include "extension/commands.hpp"
 #include "extension/external_command.hpp"
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -23,7 +23,7 @@ extern "C" {
 #include <lua.h>
 }
 
-namespace lemma::extension {
+namespace frame::extension {
 namespace {
 
 [[nodiscard]] auto from_lua(lua_State* state, int index, std::size_t depth, std::size_t& nodes,
@@ -37,7 +37,7 @@ namespace {
     return "command registration is startup-only and bounded to 64 commands";
   }
   if (lua_type(state, 1) != LUA_TSTRING || lua_type(state, 2) != LUA_TTABLE) {
-    return "expected lemma.command.register(name, { description, timeout_ms, handler })";
+    return "expected frame.command.register(name, { description, timeout_ms, handler })";
   }
   std::size_t size = 0;
   const auto* const text = lua_tolstring(state, 1, &size);
@@ -408,7 +408,7 @@ return function(handler, payload)
                 connection = payload.connection, endpoint = payload.endpoint }
   function ctx:proc(document)
     if type(document) ~= "table" then error("ctx:proc requires a Proc table") end
-    if document.schema == nil then document.schema = "lemma.proc/v1" end
+    if document.schema == nil then document.schema = "frame.proc/v1" end
     return yield(document)
   end
   handler(ctx, payload.args)
@@ -480,4 +480,4 @@ auto run_commands(lua_State* const state, LuaCommands& commands, const int descr
   return 0;
 }
 
-} // namespace lemma::extension
+} // namespace frame::extension

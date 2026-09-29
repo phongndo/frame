@@ -1,8 +1,8 @@
 #include "core/terminal_resize.hpp"
 
-#include "lemma/terminal/terminal.hpp"
+#include "frame/terminal/terminal.hpp"
 
-namespace lemma::core {
+namespace frame::core {
 
 [[nodiscard]] auto
 resize_terminal_transaction(vt::Terminal& terminal, const vt::TerminalSize& requested,
@@ -25,4 +25,4 @@ resize_terminal_transaction(vt::Terminal& terminal, const vt::TerminalSize& requ
                                        : TerminalResizeStatus::consistency_lost;
 }
 
-} // namespace lemma::core
+} // namespace frame::core

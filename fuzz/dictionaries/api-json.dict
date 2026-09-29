@@ -1,6 +1,6 @@
 schema="\"schema\""
-proc_schema="\"lemma.proc/v1\""
-events_schema="\"lemma.events/v1\""
+proc_schema="\"frame.proc/v1\""
+events_schema="\"frame.events/v1\""
 command="\"command\""
 commands="\"commands\""
 phase="\"phase\""

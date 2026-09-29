@@ -5,8 +5,8 @@
 #include "core/float_layer.hpp"
 #include "core/layout.hpp"
 #include "core/session.hpp"
-#include "lemma/command.hpp"
-#include "lemma/generational_store.hpp"
+#include "frame/command.hpp"
+#include "frame/generational_store.hpp"
 
 #include <gtest/gtest.h>
 
@@ -24,7 +24,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 namespace {
 
 struct PaneToken final {
@@ -944,14 +944,14 @@ TEST(CoreSimulationTest, GeneratedOperationsPreserveModelAndProductionInvariants
 
   std::uint64_t configured_seed = 0;
   std::uint64_t configured_operations = default_operations;
-  const bool has_seed = std::getenv("LEMMA_SIM_SEED") != nullptr;
+  const bool has_seed = std::getenv("FRAME_SIM_SEED") != nullptr;
   if (has_seed) {
-    ASSERT_TRUE(parse_environment_integer("LEMMA_SIM_SEED", configured_seed))
-        << "LEMMA_SIM_SEED must be an integer accepted by strtoull";
+    ASSERT_TRUE(parse_environment_integer("FRAME_SIM_SEED", configured_seed))
+        << "FRAME_SIM_SEED must be an integer accepted by strtoull";
   }
-  if (std::getenv("LEMMA_SIM_OPERATIONS") != nullptr) {
-    ASSERT_TRUE(parse_environment_integer("LEMMA_SIM_OPERATIONS", configured_operations))
-        << "LEMMA_SIM_OPERATIONS must be an integer accepted by strtoull";
+  if (std::getenv("FRAME_SIM_OPERATIONS") != nullptr) {
+    ASSERT_TRUE(parse_environment_integer("FRAME_SIM_OPERATIONS", configured_operations))
+        << "FRAME_SIM_OPERATIONS must be an integer accepted by strtoull";
   }
   ASSERT_GT(configured_operations, 0U);
   ASSERT_LE(configured_operations, trace_operations_max);
@@ -967,4 +967,4 @@ TEST(CoreSimulationTest, GeneratedOperationsPreserveModelAndProductionInvariants
 }
 
 } // namespace
-} // namespace lemma::test::sim
+} // namespace frame::test::sim

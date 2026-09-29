@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tests.support.mux_harness import (
-    LemmaServer,
+    FrameServer,
     process_exists,
     wait_for_process_exit,
 )
@@ -60,7 +60,7 @@ def read_trace(path: Path) -> list[TraceOperation]:
     for line_number, line in enumerate(
         path.read_text(encoding="utf-8").splitlines(), start=1
     ):
-        if not line or line.startswith("#") or line == "lemma-mux-trace-v1":
+        if not line or line.startswith("#") or line == "frame-mux-trace-v1":
             continue
         fields = line.split()
         if fields[0] == "check":
@@ -93,7 +93,7 @@ class RealMuxTraceReplayTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "faulted.trace"
             path.write_text(
-                "lemma-mux-trace-v1\nop idle - - - - 0 0 rejected applied\n",
+                "frame-mux-trace-v1\nop idle - - - - 0 0 rejected applied\n",
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(AssertionError, "injected Runtime faults"):
@@ -109,7 +109,7 @@ class RealMuxTraceReplayTest(unittest.TestCase):
                 self.replay(path)
 
     def replay(self, path: Path) -> None:
-        server = LemmaServer.from_environment()
+        server = FrameServer.from_environment()
         self.addCleanup(server.close)
         session = server.create_session("trace-replay")
         initial = session.state()

@@ -1,15 +1,15 @@
-#ifndef LEMMA_API_PROC_HPP
-#define LEMMA_API_PROC_HPP
+#ifndef FRAME_API_PROC_HPP
+#define FRAME_API_PROC_HPP
 
 #include <cstddef>
 #include <string_view>
 
-namespace lemma::api {
+namespace frame::api {
 
-inline constexpr std::string_view proc_schema = "lemma.proc/v1";
-inline constexpr std::string_view proc_result_schema = "lemma.proc-result/v1";
+inline constexpr std::string_view proc_schema = "frame.proc/v1";
+inline constexpr std::string_view proc_result_schema = "frame.proc-result/v1";
 inline constexpr std::size_t proc_commands_max = 64;
 
-} // namespace lemma::api
+} // namespace frame::api
 
-#endif // LEMMA_API_PROC_HPP
+#endif // FRAME_API_PROC_HPP

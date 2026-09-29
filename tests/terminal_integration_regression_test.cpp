@@ -1,7 +1,7 @@
 #include "core/presentation_gate.hpp"
 #include "core/terminal_resize.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "render/pane_composition.hpp"
 
 #include <gmock/gmock.h>
@@ -15,7 +15,7 @@
 #include <string_view>
 #include <utility>
 
-namespace lemma {
+namespace frame {
 namespace {
 
 [[nodiscard]] auto make_terminal(const vt::TerminalOptions& options = {}) -> vt::Terminal {
@@ -595,4 +595,4 @@ TEST(TerminalResizeTransactionTest, FailsClosedWhenPtyRollbackFails) {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 
 } // namespace
-} // namespace lemma
+} // namespace frame

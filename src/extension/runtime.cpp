@@ -3,10 +3,10 @@
 #include "api/command.hpp"
 #include "api/json.hpp"
 #include "extension/protocol.hpp"
-#include "lemma/assert.hpp"
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/assert.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 #include "render/grid.hpp"
 #include "render/scene.hpp"
 
@@ -28,7 +28,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::extension {
+namespace frame::extension {
 
 // Bounds and optional engagement are validated before fixed-capacity access; allocating operations
 // catch locally.
@@ -399,7 +399,7 @@ auto Runtime::admit(FramedPeer transport, Hello hello, const SessionId session_i
                             .session = session_id,
                             .attachment = attachment_id});
     auto welcome =
-        std::string{R"({"schema":"lemma.extension-welcome/v1","owner":")"} + id_text(owner) + '"';
+        std::string{R"({"schema":"frame.extension-welcome/v1","owner":")"} + id_text(owner) + '"';
     if (attachment_id.is_valid()) {
       welcome += R"(,"attachment":")" + id_text(attachment_id) + '"';
     }
@@ -592,13 +592,13 @@ auto Runtime::accounting() const noexcept -> RuntimeAccounting {
     result.output.event_bytes += output.event_bytes;
     result.output.event_records += output.event_records;
   }
-  LEMMA_ASSERT(result.peers <= limits::extension_sessions_hard_max);
-  LEMMA_ASSERT(result.input_bytes <= limits::extension_input_bytes_aggregate_max);
-  LEMMA_ASSERT(result.output_bytes + result.output.reserved_bytes <=
+  FRAME_ASSERT(result.peers <= limits::extension_sessions_hard_max);
+  FRAME_ASSERT(result.input_bytes <= limits::extension_input_bytes_aggregate_max);
+  FRAME_ASSERT(result.output_bytes + result.output.reserved_bytes <=
                limits::extension_output_bytes_aggregate_max);
-  LEMMA_ASSERT(result.buffered_records <= result.peers);
-  LEMMA_ASSERT(result.surfaces <= limits::extension_surfaces_hard_max);
-  LEMMA_ASSERT(result.retained_surface_bytes <= limits::surface_retained_bytes_aggregate_max);
+  FRAME_ASSERT(result.buffered_records <= result.peers);
+  FRAME_ASSERT(result.surfaces <= limits::extension_surfaces_hard_max);
+  FRAME_ASSERT(result.retained_surface_bytes <= limits::surface_retained_bytes_aggregate_max);
   return result;
 }
 
@@ -752,7 +752,7 @@ auto Runtime::send_error(const ExtensionGenerationId owner, const std::uint32_t 
     return false;
   }
   try {
-    std::string payload = R"({"schema":"lemma.extension-error/v1","reason":)";
+    std::string payload = R"({"schema":"frame.extension-error/v1","reason":)";
     if (!api::append_json_string(payload, reason)) {
       return false;
     }
@@ -816,7 +816,7 @@ void Runtime::flush_surface_events(Peer& found) noexcept {
         name = "surface.closed";
         break;
       }
-      std::string event = R"({"schema":"lemma.event/v1","sequence":)" +
+      std::string event = R"({"schema":"frame.event/v1","sequence":)" +
                           std::to_string(found.next_event_sequence) + R"(,"event":")" + name +
                           R"(","surface":")" + id_text(pending.surface) + '"';
       if (pending.kind == PendingSurfaceEventKind::resized) {
@@ -1470,4 +1470,4 @@ auto surface_operation_status_name(const SurfaceOperationStatus status) noexcept
 
 // NOLINTEND(bugprone-exception-escape,bugprone-unchecked-optional-access)
 
-} // namespace lemma::extension
+} // namespace frame::extension

@@ -1,4 +1,4 @@
-#include "lemma/terminal/terminal.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <ghostty/vt.h>
 
@@ -12,7 +12,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace {
 
 // The direct exclusions mirror Unicode scalar/control/noncharacter categories.
@@ -115,4 +115,4 @@ namespace {
   }
 }
 
-} // namespace lemma::vt
+} // namespace frame::vt

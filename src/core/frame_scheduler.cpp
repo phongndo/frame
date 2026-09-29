@@ -1,11 +1,11 @@
 #include "core/frame_scheduler.hpp"
-#include "lemma/id.hpp"
+#include "frame/id.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <optional>
 
-namespace lemma::core {
+namespace frame::core {
 
 [[nodiscard]] auto latency_sensitive_input(const std::size_t bytes) noexcept -> bool {
   return bytes > 0 && bytes <= interactive_input_bytes_max;
@@ -152,4 +152,4 @@ void FrameScheduler::reset() noexcept {
   tracking_burst_ = false;
 }
 
-} // namespace lemma::core
+} // namespace frame::core

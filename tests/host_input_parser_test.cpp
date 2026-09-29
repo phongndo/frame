@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::client {
+namespace frame::client {
 namespace {
 
 struct ObservedEvent final {
@@ -470,4 +470,4 @@ TEST(HostInputParserTest, LeavesUnknownEscapeSequenceAsOrdinaryInput) {
 }
 
 } // namespace
-} // namespace lemma::client
+} // namespace frame::client

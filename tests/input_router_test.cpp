@@ -7,7 +7,7 @@
 #include <span>
 #include <variant>
 
-namespace lemma::input {
+namespace frame::input {
 namespace {
 
 TEST(InputMapTest, RejectsDuplicateBindingsBeforePublication) {
@@ -701,4 +701,4 @@ TEST(InputRouterTest, ACompiledMapCanUseDirectBindingsWithoutAnyTransientContext
 }
 
 } // namespace
-} // namespace lemma::input
+} // namespace frame::input

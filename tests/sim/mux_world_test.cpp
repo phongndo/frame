@@ -6,10 +6,10 @@
 #include "core/layout.hpp"
 #include "core/session.hpp"
 #include "core/session_machine.hpp"
-#include "lemma/command.hpp"
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/command.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <gtest/gtest.h>
 
@@ -32,7 +32,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 
 // Generated commands intentionally use default values for irrelevant target and launch fields.
 #ifdef __clang__
@@ -1566,9 +1566,9 @@ execute_generated(const std::uint64_t seed, const std::size_t operation_count,
 
 [[nodiscard]] auto reduction_evaluations(std::string& error) -> std::size_t {
   std::uint64_t evaluations = mux_reduction_evaluations_default;
-  if (!environment_u64("LEMMA_MUX_SIM_REDUCTION_EVALUATIONS", evaluations) ||
+  if (!environment_u64("FRAME_MUX_SIM_REDUCTION_EVALUATIONS", evaluations) ||
       evaluations > trace_reduction_evaluations_max) {
-    error = "LEMMA_MUX_SIM_REDUCTION_EVALUATIONS must be an integer no greater than " +
+    error = "FRAME_MUX_SIM_REDUCTION_EVALUATIONS must be an integer no greater than " +
             std::to_string(trace_reduction_evaluations_max);
     return 0;
   }
@@ -1672,7 +1672,7 @@ struct FailureArtifacts final {
 }
 
 [[nodiscard]] auto configured_trace_output() -> std::optional<std::filesystem::path> {
-  const auto* const path = std::getenv("LEMMA_MUX_SIM_TRACE_OUT");
+  const auto* const path = std::getenv("FRAME_MUX_SIM_TRACE_OUT");
   return path == nullptr || *path == '\0' ? std::nullopt
                                           : std::optional<std::filesystem::path>{path};
 }
@@ -1684,7 +1684,7 @@ struct FailureArtifacts final {
                                          const WorldCoverage& world,
                                          const SimRuntimeCoverage& runtime, std::string& error)
     -> bool {
-  const auto* const configured = std::getenv("LEMMA_MUX_SIM_COVERAGE_OUT");
+  const auto* const configured = std::getenv("FRAME_MUX_SIM_COVERAGE_OUT");
   if (configured == nullptr || *configured == '\0') {
     return true;
   }
@@ -1803,8 +1803,8 @@ run_mux_world(const std::uint64_t seed, const std::size_t operation_count,
     *runtime_coverage = result.runtime_coverage;
   }
   std::ostringstream replay;
-  replay << "LEMMA_MUX_SIM_SEED=0x" << std::hex << seed << std::dec
-         << " LEMMA_MUX_SIM_OPERATIONS=" << operation_count << " ./test sim";
+  replay << "FRAME_MUX_SIM_SEED=0x" << std::hex << seed << std::dec
+         << " FRAME_MUX_SIM_OPERATIONS=" << operation_count << " ./test sim";
   return assertion_for_run(result, trace_output.value_or(default_failure_path(seed)), replay.str());
 }
 
@@ -1866,7 +1866,7 @@ run_mux_trace(const std::filesystem::path& path, const std::span<const MuxTraceE
   const auto failure_path =
       trace_output.value_or(std::filesystem::path{"build/mux-sim-failures"} / path.filename());
   return assertion_for_run(result, failure_path,
-                           "LEMMA_MUX_SIM_TRACE=" + path.string() + " ./test sim");
+                           "FRAME_MUX_SIM_TRACE=" + path.string() + " ./test sim");
 }
 
 TEST(MuxTraceTest, ConcreteTraceRoundTripsWithoutGeneratorState) {
@@ -2208,24 +2208,24 @@ TEST(MuxSimulationTest, GeneratedCommandsAndRuntimeFaultsPreserveAllInvariants) 
                                                0x51A7E123ULL,
                                                0xDEADBEEFCAFEBABEULL,
                                                std::numeric_limits<std::uint64_t>::max()};
-  if (const auto* const trace_path = std::getenv("LEMMA_MUX_SIM_TRACE"); trace_path != nullptr) {
+  if (const auto* const trace_path = std::getenv("FRAME_MUX_SIM_TRACE"); trace_path != nullptr) {
     std::vector<MuxTraceEntry> entries;
     std::string error;
     ASSERT_TRUE(read_mux_trace_file(trace_path, entries, error)) << error;
     ASSERT_FALSE(entries.empty());
-    const bool refresh = std::getenv("LEMMA_MUX_SIM_REFRESH_TRACE") != nullptr;
+    const bool refresh = std::getenv("FRAME_MUX_SIM_REFRESH_TRACE") != nullptr;
     const auto trace_output = configured_trace_output();
     ASSERT_FALSE(refresh && !trace_output.has_value())
-        << "LEMMA_MUX_SIM_REFRESH_TRACE requires LEMMA_MUX_SIM_TRACE_OUT";
+        << "FRAME_MUX_SIM_REFRESH_TRACE requires FRAME_MUX_SIM_TRACE_OUT";
     ASSERT_TRUE(run_mux_trace(trace_path, entries, trace_output, !refresh));
     return;
   }
 
   std::uint64_t selected_seed = 0;
   std::uint64_t selected_operations = 1'024;
-  const bool configured = std::getenv("LEMMA_MUX_SIM_SEED") != nullptr;
-  ASSERT_TRUE(environment_u64("LEMMA_MUX_SIM_SEED", selected_seed));
-  ASSERT_TRUE(environment_u64("LEMMA_MUX_SIM_OPERATIONS", selected_operations));
+  const bool configured = std::getenv("FRAME_MUX_SIM_SEED") != nullptr;
+  ASSERT_TRUE(environment_u64("FRAME_MUX_SIM_SEED", selected_seed));
+  ASSERT_TRUE(environment_u64("FRAME_MUX_SIM_OPERATIONS", selected_operations));
   ASSERT_GT(selected_operations, 0U);
   ASSERT_LE(selected_operations, mux_trace_operations_max);
   if (configured) {
@@ -2382,4 +2382,4 @@ TEST(MuxSimulationTest, GeneratedCommandsAndRuntimeFaultsPreserveAllInvariants) 
 #pragma clang diagnostic pop
 #endif
 #endif
-} // namespace lemma::test::sim
+} // namespace frame::test::sim

@@ -2,9 +2,9 @@
 #include "api/json.hpp"
 #include "extension/protocol.hpp"
 #include "extension/runtime.hpp"
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 #include "render/scene.hpp"
 
 #include <gtest/gtest.h>
@@ -23,7 +23,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-namespace lemma::extension {
+namespace frame::extension {
 namespace {
 
 class SocketPair final {
@@ -196,7 +196,7 @@ TEST(ExtensionRuntimeTest, RollsBackStructuralSurfaceTransactions) {
       runtime.admit(FramedPeer(sockets.take_reader()),
                     Hello{.name = "test", .subscription = {}, .capabilities = capability_surface},
                     SessionId::from_parts(0, 1), AttachmentId::from_parts(0, 1),
-                    R"({"schema":"lemma.event/v1"})");
+                    R"({"schema":"frame.event/v1"})");
   ASSERT_TRUE(owner.has_value());
   const auto owner_id = owner.value_or(ExtensionGenerationId{});
   constexpr render::Viewport viewport{.columns = 10, .rows = 4};
@@ -316,23 +316,23 @@ TEST(ExtensionRuntimeTest, AccountsAggregateTransportProjectionAndCleanupState) 
 
 TEST(ExtensionRuntimeTest, ValidatesHelloCapabilitiesAndObservationScope) {
   const auto valid = decode_hello_text(
-      R"({"schema":"lemma.extension/v1","name":"worker","capabilities":["proc"]})");
+      R"({"schema":"frame.extension/v1","name":"worker","capabilities":["proc"]})");
   ASSERT_TRUE(valid.has_value());
   const auto hello = valid.value_or(Hello{});
   EXPECT_EQ(hello.name, "worker");
   EXPECT_EQ(hello.capabilities, capability_proc);
   EXPECT_FALSE(
       decode_hello_text(
-          R"({"schema":"lemma.extension/v1","name":"worker","capabilities":["proc","proc"]})")
+          R"({"schema":"frame.extension/v1","name":"worker","capabilities":["proc","proc"]})")
           .has_value());
   EXPECT_FALSE(decode_hello_text(
-                   R"({"schema":"lemma.extension/v1","name":"worker","capabilities":["unknown"]})")
+                   R"({"schema":"frame.extension/v1","name":"worker","capabilities":["unknown"]})")
                    .has_value());
   EXPECT_FALSE(decode_hello_text(
-                   R"({"schema":"lemma.extension/v1","name":"worker","capabilities":["observe"]})")
+                   R"({"schema":"frame.extension/v1","name":"worker","capabilities":["observe"]})")
                    .has_value());
   EXPECT_FALSE(decode_hello_text(
-                   R"({"schema":"lemma.extension/v1","name":"worker","capabilities":["surface"]})")
+                   R"({"schema":"frame.extension/v1","name":"worker","capabilities":["surface"]})")
                    .has_value());
 }
 
@@ -371,7 +371,7 @@ TEST(ExtensionRuntimeTest, ProcReservationSurvivesMixedOutputPressure) {
   const auto owner = admitted.value_or(ExtensionGenerationId{});
   const auto result = [](const std::size_t size) {
     std::string json =
-        R"({"schema":"lemma.proc-result/v1","ok":false,"results":[],"error":{"reason":")";
+        R"({"schema":"frame.proc-result/v1","ok":false,"results":[],"error":{"reason":")";
     json.append(size - json.size() - 3U, 'x');
     json += "\"}}";
     return json;
@@ -385,7 +385,7 @@ TEST(ExtensionRuntimeTest, ProcReservationSurvivesMixedOutputPressure) {
   EXPECT_EQ(runtime.output_accounting(owner).reserved_records, 1U);
   ASSERT_TRUE(runtime.send_event(
       owner,
-      R"({"schema":"lemma.event/v1","sequence":2,"event":"surface.key","surface":"0:1","text":"x"})"));
+      R"({"schema":"frame.event/v1","sequence":2,"event":"surface.key","surface":"0:1","text":"x"})"));
   ASSERT_TRUE(runtime.send_error(owner, 3, "invalid"));
   // This error is valid, but its queue admission must not consume the result's reservation.
   EXPECT_FALSE(runtime.send_error(owner, 4, std::string(512, 'x')));
@@ -560,7 +560,7 @@ TEST(ExtensionProtocolTest, InputEncodingPreservesTextBytesAndBounds) {
           std::string_view{"\xff\0x", 3}}) {
       std::string event = "{";
       // The encoder appends a member to an existing Event object.
-      event += R"("schema":"lemma.event/v1")";
+      event += R"("schema":"frame.event/v1")";
       ASSERT_TRUE(append_input_payload(event, std::as_bytes(std::span(text)), opaque));
       event += '}';
       const auto parsed = api::parse_json(event);
@@ -814,4 +814,4 @@ TEST(ExtensionRuntimeTest, EnforcesSurfaceOwnershipCapacityAndGenerationCleanup)
 // NOLINTEND(readability-function-cognitive-complexity)
 
 } // namespace
-} // namespace lemma::extension
+} // namespace frame::extension

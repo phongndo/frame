@@ -52,10 +52,10 @@ jobs:
             ${{ env.CCACHE_DIR }}
             .zig-cache
             build/*/_deps/ghostty/*/zig-cache
-          key: lemma-v1-${{ runner.os }}-${{ runner.arch }}-debug-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: frame-v1-${{ runner.os }}-${{ runner.arch }}-debug-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            lemma-v1-${{ runner.os }}-${{ runner.arch }}-debug-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-
-            lemma-v1-${{ runner.os }}-${{ runner.arch }}-debug-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-
+            frame-v1-${{ runner.os }}-${{ runner.arch }}-debug-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-
+            frame-v1-${{ runner.os }}-${{ runner.arch }}-debug-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-
 
       - name: Build and test platform
         run: nix develop .#platform --command scripts/ci/platform
@@ -84,7 +84,7 @@ jobs:
             ${{ env.CCACHE_DIR }}
             .zig-cache
             build/*/_deps/ghostty/*/zig-cache
-          key: lemma-v1-${{ runner.os }}-${{ runner.arch }}-debug-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: frame-v1-${{ runner.os }}-${{ runner.arch }}-debug-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   benchmark-sweep:
     name: Scheduled benchmark and memory parameter sweep
@@ -113,10 +113,10 @@ jobs:
             ${{ env.CCACHE_DIR }}
             .zig-cache
             build/*/_deps/ghostty/*/zig-cache
-          key: lemma-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: frame-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            lemma-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-
-            lemma-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-
+            frame-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-
+            frame-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-
 
       - name: Run release benchmark sweep
         run: nix develop .#benchmarks --command scripts/ci/benchmarks extended
@@ -149,7 +149,7 @@ jobs:
             ${{ env.CCACHE_DIR }}
             .zig-cache
             build/*/_deps/ghostty/*/zig-cache
-          key: lemma-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: frame-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   fuzz-campaign:
     name: Scheduled structured fuzz campaign
@@ -178,10 +178,10 @@ jobs:
             ${{ env.CCACHE_DIR }}
             .zig-cache
             build/*/_deps/ghostty/*/zig-cache
-          key: lemma-v1-${{ runner.os }}-${{ runner.arch }}-fuzz-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: frame-v1-${{ runner.os }}-${{ runner.arch }}-fuzz-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            lemma-v1-${{ runner.os }}-${{ runner.arch }}-fuzz-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-
-            lemma-v1-${{ runner.os }}-${{ runner.arch }}-fuzz-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-
+            frame-v1-${{ runner.os }}-${{ runner.arch }}-fuzz-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-
+            frame-v1-${{ runner.os }}-${{ runner.arch }}-fuzz-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-
 
       - name: Run structured mutation campaign
         run: nix develop .#ci --command scripts/ci/fuzz-campaign
@@ -204,4 +204,4 @@ jobs:
             ${{ env.CCACHE_DIR }}
             .zig-cache
             build/*/_deps/ghostty/*/zig-cache
-          key: lemma-v1-${{ runner.os }}-${{ runner.arch }}-fuzz-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: frame-v1-${{ runner.os }}-${{ runner.arch }}-fuzz-${{ hashFiles('conan.lock', 'conanfile.py', 'conan/profiles/llvm', 'flake.lock', 'CMakeLists.txt', '.gitmodules', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}

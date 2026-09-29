@@ -1,6 +1,6 @@
 #include "core/command_history.hpp"
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,10 +19,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
-constexpr std::string_view history_header = "lemma-command-history-v1\n";
+constexpr std::string_view history_header = "frame-command-history-v1\n";
 constexpr std::size_t history_file_bytes_max =
     history_header.size() +
     ((limits::command_line_bytes_max + 1U) * limits::command_line_history_max);
@@ -213,4 +213,4 @@ void remember_command_line(CommandLineHistory& history, const std::string_view c
   return written;
 }
 
-} // namespace lemma::core
+} // namespace frame::core

@@ -15,7 +15,7 @@
 
 #include <gtest/gtest.h>
 
-namespace lemma::platform {
+namespace frame::platform {
 namespace {
 
 struct ReadinessTest : ::testing::Test {
@@ -185,4 +185,4 @@ TEST_F(ReadinessTest, EmptyAndOversizedSetsUsePollSemantics) {
 }
 
 } // namespace
-} // namespace lemma::platform
+} // namespace frame::platform

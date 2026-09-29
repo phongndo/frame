@@ -2,9 +2,9 @@
 #include "core/float_layer.hpp"
 #include "core/session.hpp"
 #include "core/session_machine.hpp"
-#include "lemma/command.hpp"
-#include "lemma/generational_store.hpp"
-#include "lemma/id.hpp"
+#include "frame/command.hpp"
+#include "frame/generational_store.hpp"
+#include "frame/id.hpp"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -21,7 +21,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace lemma {
+namespace frame {
 namespace {
 
 [[nodiscard]] auto checked_placement(const std::optional<core::FloatPlacement> placement)
@@ -985,4 +985,4 @@ TEST_F(FloatSessionTest, CyclingAndDirectionalFocusStayWithinTheFocusedLayer) {
 #endif
 
 } // namespace
-} // namespace lemma
+} // namespace frame

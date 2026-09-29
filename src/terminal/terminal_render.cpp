@@ -1,9 +1,9 @@
 #include "terminal/terminal_impl.hpp"
 
 #include "diagnostic/latency_trace.hpp"
-#include "lemma/assert.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/assert.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "terminal/fingerprint.hpp"
 
 #include <algorithm>
@@ -23,7 +23,7 @@
 #include <system_error>
 #include <utility>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace detail {
 
 class AnsiWriter final {
@@ -68,7 +68,7 @@ public:
 
   [[nodiscard]] auto size() const noexcept -> std::size_t { return used_; }
   void rewind(const std::size_t size) noexcept {
-    LEMMA_ASSERT(size <= used_);
+    FRAME_ASSERT(size <= used_);
     used_ = size;
   }
 
@@ -275,7 +275,7 @@ public:
   [[nodiscard]] auto at(const std::size_t column) noexcept
       -> std::expected<GhosttyRenderStateRowCells, Error> {
     if (column != column_) {
-      LEMMA_ASSERT(column <= std::numeric_limits<std::uint16_t>::max());
+      FRAME_ASSERT(column <= std::numeric_limits<std::uint16_t>::max());
       const auto result =
           ghostty_render_state_row_cells_select(cells_, static_cast<std::uint16_t>(column));
       if (result != GHOSTTY_SUCCESS) {
@@ -439,7 +439,7 @@ constexpr std::uint8_t decscusr_steady_block = 2;
          append_color(writer, style.underline_color, "58") && writer.append("m");
 }
 
-constexpr std::string_view hyperlink_open_prefix = "\x1B]8;id=lemma-";
+constexpr std::string_view hyperlink_open_prefix = "\x1B]8;id=frame-";
 constexpr std::string_view hyperlink_close = "\x1B]8;;\x1B\\";
 // Every byte of an open and its close except the URI: the prefix, a 64-bit decimal scope, `;`, and
 // the ST terminator.
@@ -613,7 +613,7 @@ public:
   // The nonzero keyed fingerprint of the cell's forwardable URI, or 0 when it has none that may
   // be forwarded. The URI stays readable through uri() until the next resolve.
   [[nodiscard]] auto resolve(const std::size_t column) noexcept -> std::uint64_t {
-    LEMMA_ASSERT(column < columns_);
+    FRAME_ASSERT(column < columns_);
     if (!row_resolved_) {
       // Resolving a point walks the page list, so do it once per row. A grid reference is a page
       // position (node, x, y) and every cell of a row shares its node and y. Resolving the last
@@ -735,7 +735,7 @@ public:
     linked_row_ = flags->linked;
     cell_linked_ = false;
     link_ = 0;
-    LEMMA_ASSERT(row_index <= std::numeric_limits<std::uint16_t>::max());
+    FRAME_ASSERT(row_index <= std::numeric_limits<std::uint16_t>::max());
     links_.reset(static_cast<std::uint16_t>(row_index), raw_.size());
     cursor_.reset(cells);
     // Style IDs are page-local; never carry a projection into another row.
@@ -765,7 +765,7 @@ public:
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] auto decode(const std::size_t column) noexcept
       -> std::expected<const DecodedCell*, Error> {
-    LEMMA_ASSERT(column < raw_.size());
+    FRAME_ASSERT(column < raw_.size());
     const auto raw_cell = raw_.subspan(column, 1).front();
     const bool selected = selection_.contains(column);
     repeated_ = decoded_ && raw_cell == raw_cell_ && selected == cell_.selected &&
@@ -827,7 +827,7 @@ public:
   // raw hyperlink flag with the previous cell, but not necessarily its link.
   [[nodiscard, gnu::noinline]] auto link_cell(const std::size_t column) noexcept
       -> std::expected<void, Error> {
-    LEMMA_ASSERT(linked_row_ && decoded_);
+    FRAME_ASSERT(linked_row_ && decoded_);
     if (!repeated_) {
       const auto result =
           ghostty_cell_get(raw_cell_, GHOSTTY_CELL_DATA_HAS_HYPERLINK, &cell_linked_);
@@ -1060,7 +1060,7 @@ template <bool Links>
       return calculate_linked_row_hash(row_index);
     }
   }
-  LEMMA_ASSERT(decoder.columns() == options.size.columns);
+  FRAME_ASSERT(decoder.columns() == options.size.columns);
   if (decoder.plain()) {
     return RowFingerprint::of(fingerprint_key, fingerprint_key.plain_lanes, decoder.raw(),
                               plain_row_color_epoch);
@@ -1131,7 +1131,7 @@ template <bool Links>
 }
 
 void Terminal::Impl::apply_physical_scroll(const std::int32_t scroll) noexcept {
-  LEMMA_ASSERT(scroll != 0);
+  FRAME_ASSERT(scroll != 0);
   const auto amount = static_cast<std::size_t>(scroll > 0 ? scroll : -scroll);
   const auto columns = static_cast<std::size_t>(options.size.columns);
   const auto shifted_cells = amount * columns;
@@ -1179,8 +1179,8 @@ Terminal::Impl::encode_row_as(AnsiWriter& writer, const std::size_t row_index, c
                               const bool probe_unchanged, const std::uint16_t origin_column,
                               const std::uint16_t origin_row, const bool erase_line_tail) noexcept
     -> std::expected<detail::RowEncoding, Error> {
-  LEMMA_ASSERT(row_index < row_hash_count);
-  LEMMA_ASSERT(physical_cell_hashes != nullptr);
+  FRAME_ASSERT(row_index < row_hash_count);
+  FRAME_ASSERT(physical_cell_hashes != nullptr);
   const auto checkpoint = writer.size();
   RowCellDecoder decoder(render_colors, session_theme, fingerprint_key, terminal, ansi_hyperlinks);
   const auto opened = decoder.open(row_iterator, row_cells, row_index);
@@ -1193,7 +1193,7 @@ Terminal::Impl::encode_row_as(AnsiWriter& writer, const std::size_t row_index, c
                                erase_line_tail);
     }
   }
-  LEMMA_ASSERT(decoder.columns() == options.size.columns);
+  FRAME_ASSERT(decoder.columns() == options.size.columns);
 
   const bool plain = decoder.plain();
   // A redraw marks every row dirty even when most are unchanged, for example when a pane that does
@@ -1244,7 +1244,7 @@ Terminal::Impl::encode_row_as(AnsiWriter& writer, const std::size_t row_index, c
       plain_fingerprint.add(cell_count, decoder.raw().subspan(cell_count, 1).front());
     }
     const auto physical_index = (row_index * options.size.columns) + cell_count;
-    LEMMA_ASSERT(physical_index < physical_cell_count);
+    FRAME_ASSERT(physical_index < physical_cell_count);
     auto physical_cells = std::span(physical_cell_hashes.get(), physical_cell_count);
     auto& physical_hash = physical_cells.subspan(physical_index, 1).front();
     const bool changed = force || !ansi_physical_valid || physical_hash != cell_hash;
@@ -1344,7 +1344,7 @@ Terminal::Impl::encode_row_as(AnsiWriter& writer, const std::size_t row_index, c
   }
   row_hashes().subspan(row_index, 1).front() = row_hash;
   if (!span_started) {
-    LEMMA_ASSERT(writer.size() == checkpoint);
+    FRAME_ASSERT(writer.size() == checkpoint);
     return detail::RowEncoding::unchanged;
   }
   if (erase_line_tail && trailing_blank_start != std::numeric_limits<std::size_t>::max() &&
@@ -1376,8 +1376,8 @@ Terminal::Impl::encode_row_as(AnsiWriter& writer, const std::size_t row_index, c
 }
 
 auto Terminal::update_render_state() noexcept -> std::expected<RenderUpdate, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->render_state != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->render_state != nullptr);
 
   const auto result = ghostty_render_state_update(impl_->render_state, impl_->terminal);
   if (result != GHOSTTY_SUCCESS) {
@@ -1402,14 +1402,14 @@ auto Terminal::update_render_state() noexcept -> std::expected<RenderUpdate, Err
   }
   update.dirty_rows = *dirty_rows;
 
-  LEMMA_ASSERT(update.columns == impl_->options.size.columns);
-  LEMMA_ASSERT(update.rows == impl_->options.size.rows);
+  FRAME_ASSERT(update.columns == impl_->options.size.columns);
+  FRAME_ASSERT(update.rows == impl_->options.size.rows);
   return update;
 }
 
 auto Terminal::mark_rendered() noexcept -> std::expected<void, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->render_state != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->render_state != nullptr);
 
   const auto result = ghostty_render_state_clean(impl_->render_state);
   if (result != GHOSTTY_SUCCESS) {
@@ -1433,7 +1433,7 @@ auto Terminal::render_pane_ansi(const std::span<std::byte> output,
 }
 
 void Terminal::invalidate_ansi_render_state() noexcept {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   impl_->ansi_physical_valid = false;
   impl_->mirrored_modes_valid = false;
   impl_->mirrored_compositor_modes_valid = false;
@@ -1441,8 +1441,8 @@ void Terminal::invalidate_ansi_render_state() noexcept {
 }
 
 void Terminal::release_render_cache() noexcept {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->render_state != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->render_state != nullptr);
   std::uint16_t rows = 0;
   if (ghostty_render_state_get(impl_->render_state, GHOSTTY_RENDER_STATE_DATA_ROWS, &rows) ==
           GHOSTTY_SUCCESS &&
@@ -1461,13 +1461,13 @@ void Terminal::release_render_cache() noexcept {
 }
 
 void Terminal::invalidate_ansi_mode_projection() noexcept {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   impl_->mirrored_modes_valid = false;
   impl_->mirrored_compositor_modes_valid = false;
 }
 
 void Terminal::invalidate_ansi_cursor_projection() noexcept {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   impl_->projected_cursor_valid = false;
 }
 
@@ -1481,12 +1481,12 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
                                 const TerminalScroll terminal_scroll,
                                 const bool hyperlinks) noexcept
     -> std::expected<AnsiRenderResult, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->render_state != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->render_state != nullptr);
   if (impl_->physical_cell_hashes == nullptr) {
     // First presentation, or the first since the render cache was released: nothing is physically
     // valid, so the shadow is rebuilt in full at the current geometry.
-    LEMMA_ASSERT(!impl_->ansi_physical_valid);
+    FRAME_ASSERT(!impl_->ansi_physical_valid);
     try {
       // Runtime-sized cell storage cannot use std::array.
       // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
@@ -1589,7 +1589,7 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
       impl_->current_row_hashes().subspan(hash_index, 1).front() = *hash;
       ++hash_index;
     }
-    LEMMA_ASSERT(hash_index == impl_->row_hash_count);
+    FRAME_ASSERT(hash_index == impl_->row_hash_count);
     rows_hashed = true;
     scrolled_rows = impl_->detect_scroll();
     if (scrolled_rows != 0) {
@@ -1598,7 +1598,7 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
       // later row and the cursor are positioned absolutely. Margins are reset within the same
       // synchronized frame so no other output observes them.
       const bool margins = terminal_scroll == TerminalScroll::margins;
-      LEMMA_ASSERT(!margins || origin_column == 0);
+      FRAME_ASSERT(!margins || origin_column == 0);
       if ((margins &&
            (!writer.append("\x1B[") ||
             !writer.append_integer(static_cast<std::size_t>(origin_row) + 1U) ||
@@ -1695,7 +1695,7 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
     return std::unexpected(Error::out_of_space);
   }
   if (!composed || focused) {
-    // Native copy-mode cursors use Lemma's steady block; child cursors keep their DECSCUSR shape.
+    // Native copy-mode cursors use Frame's steady block; child cursors keep their DECSCUSR shape.
     const auto cursor_code =
         cursor_override ? decscusr_steady_block
                         : decscusr_code(impl_->render_cursor_style, impl_->render_cursor_blinking);
@@ -1743,8 +1743,8 @@ auto Terminal::render_ansi_impl(const std::span<std::byte> output, const bool fo
   if (!composed || focused) {
     std::size_t mode_index = 0;
     for (const auto mode : mirrored_modes) {
-      // A composed frame receives normalized physical mouse input for both Lemma and the child,
-      // and outer focus reports stay enabled so Lemma can derive per-Pane focus changes. The
+      // A composed frame receives normalized physical mouse input for both Frame and the child,
+      // and outer focus reports stay enabled so Frame can derive per-Pane focus changes. The
       // compositor owns those outer modes; only standalone rendering mirrors them directly.
       if (composed && mode.compositor_owned) {
         impl_->mirrored_compositor_modes_valid = false;
@@ -1832,4 +1832,4 @@ auto outer_hyperlink_uri_forwardable(const std::span<const std::uint8_t> uri) no
   return false;
 }
 
-} // namespace lemma::vt
+} // namespace frame::vt

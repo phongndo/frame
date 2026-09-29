@@ -13,7 +13,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::core {
+namespace frame::core {
 
 [[nodiscard]] auto ClientFrameBytes::first(const std::size_t bytes) const noexcept
     -> ClientFrameBytes {
@@ -33,7 +33,7 @@ namespace lemma::core {
   queued_at_ = now;
   last_progress_at_ = now;
   write_ready_ = true;
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   latency_trace_correlation_ = trace_correlation;
 #else
   static_cast<void>(trace_correlation);
@@ -120,7 +120,7 @@ void ClientFrameOutput::prepare_frame_chunk(const bool full_redraw) noexcept {
           .tail = bytes.subspan(frame_offset_, frame_chunk_bytes_ - frame_chunk_offset_)};
 }
 
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
 [[nodiscard]] auto ClientFrameOutput::trace_correlation() const noexcept -> std::uint64_t {
   return latency_trace_correlation_;
 }
@@ -192,7 +192,7 @@ void ClientFrameOutput::reset() noexcept {
   last_progress_at_ = {};
   source_ = Source::none;
   write_ready_ = false;
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   latency_trace_correlation_ = 0;
 #endif
 }
@@ -239,7 +239,7 @@ void ClientFrameOutput::reset() noexcept {
         return target.status;
       }
       std::uint64_t trace_correlation = 0;
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
       trace_correlation = output->trace_correlation();
 #endif
       diagnostic::record_latency_trace(diagnostic::LatencyTraceStage::daemon_socket_write_progress,
@@ -292,4 +292,4 @@ void flush_ready_client_frames(const std::span<ClientFrameFlushTarget> targets, 
   cursor = (cursor + visited) % targets.size();
 }
 
-} // namespace lemma::core
+} // namespace frame::core

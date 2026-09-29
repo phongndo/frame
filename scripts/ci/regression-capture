@@ -8,13 +8,13 @@ fi
 
 output_directory="$(mkdir -p "$1" && cd "$1" && pwd)"
 readonly output_directory
-readonly manifest="${LEMMA_BENCHMARK_MANIFEST:-benchmarks/workloads.json}"
-readonly harness_root="${LEMMA_BENCHMARK_HARNESS_ROOT:-.}"
+readonly manifest="${FRAME_BENCHMARK_MANIFEST:-benchmarks/workloads.json}"
+readonly harness_root="${FRAME_BENCHMARK_HARNESS_ROOT:-.}"
 readonly micro_output="${output_directory}/microbenchmarks.json"
 readonly process_output="${output_directory}/process-workloads.json"
 readonly profile_output="${output_directory}/pane-profiles.json"
-readonly benchmark_peer="${LEMMA_BENCHMARK_PEER:-./build/release/lemma_test_pty_peer}"
-readonly benchmark_probe="${LEMMA_BENCHMARK_PROBE:-./build/release/lemma_benchmark_probe}"
+readonly benchmark_peer="${FRAME_BENCHMARK_PEER:-./build/release/frame_test_pty_peer}"
+readonly benchmark_probe="${FRAME_BENCHMARK_PROBE:-./build/release/frame_benchmark_probe}"
 
 read -r micro_repetitions process_repetitions profile_repetitions micro_time warmup_time micro_filter < <(
   python3 - "${manifest}" <<'PY'
@@ -49,16 +49,16 @@ python3 "${harness_root}/benchmarks/check_regression.py" \
 )
 rm -rf third_party/ghostty/zig-out
 "${harness_root}/scripts/ci/configure" release \
-  -DLEMMA_BUILD_TESTS=OFF \
-  -DLEMMA_BUILD_BENCHMARKS=ON \
-  -DLEMMA_ENABLE_LATENCY_TRACE=OFF
+  -DFRAME_BUILD_TESTS=OFF \
+  -DFRAME_BUILD_BENCHMARKS=ON \
+  -DFRAME_ENABLE_LATENCY_TRACE=OFF
 cmake --build --preset release --target \
-  lemma_benchmarks lemma_test_server lemma_test_cli lemma_test_pty_peer lemma_benchmark_probe
-./build/release/lemma_benchmark_probe --self-test
+  frame_benchmarks frame_test_server frame_test_cli frame_test_pty_peer frame_benchmark_probe
+./build/release/frame_benchmark_probe --self-test
 python3 "${harness_root}/tests/support/process_probe_test.py" "${benchmark_probe}" "${benchmark_peer}"
-sleep "${LEMMA_BENCH_COOLDOWN_SECONDS:-30}"
+sleep "${FRAME_BENCH_COOLDOWN_SECONDS:-30}"
 
-./build/release/lemma_benchmarks \
+./build/release/frame_benchmarks \
   --benchmark_filter="${micro_filter}" \
   --benchmark_min_time="${micro_time}" \
   --benchmark_min_warmup_time="${warmup_time}" \
@@ -69,7 +69,7 @@ sleep "${LEMMA_BENCH_COOLDOWN_SECONDS:-30}"
   --benchmark_out_format=json >/dev/null
 python3 "${harness_root}/benchmarks/annotate_micro_report.py" \
   --report "${micro_output}" \
-  --executable build/release/lemma_benchmarks \
+  --executable build/release/frame_benchmarks \
   --manifest "${manifest}"
 python3 "${harness_root}/benchmarks/validate_report.py" \
   --manifest "${manifest}" --micro "${micro_output}"

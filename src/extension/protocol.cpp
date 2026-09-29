@@ -1,7 +1,7 @@
 #include "extension/protocol.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/limits.hpp"
+#include "frame/assert.hpp"
+#include "frame/limits.hpp"
 #include "platform/io.hpp"
 
 #include <algorithm>
@@ -21,7 +21,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-namespace lemma::extension {
+namespace frame::extension {
 namespace {
 
 void encode_u32(const std::span<std::byte, 4> output, const std::uint32_t value) noexcept {
@@ -327,7 +327,7 @@ auto FramedPeer::reserve_output(const std::size_t framed_bytes) noexcept -> bool
 }
 
 void FramedPeer::release_output(const std::size_t framed_bytes) noexcept {
-  LEMMA_ASSERT(accounting_.reserved_records > 0 && framed_bytes <= accounting_.reserved_bytes);
+  FRAME_ASSERT(accounting_.reserved_records > 0 && framed_bytes <= accounting_.reserved_bytes);
   accounting_.reserved_bytes -= framed_bytes;
   --accounting_.reserved_records;
 }
@@ -385,4 +385,4 @@ void FramedPeer::disconnect() noexcept {
   output_record_remaining_ = 0;
 }
 
-} // namespace lemma::extension
+} // namespace frame::extension

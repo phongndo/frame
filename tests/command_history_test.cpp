@@ -10,12 +10,12 @@
 
 #include <unistd.h>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 class TemporaryHistoryPath final {
 public:
-  TemporaryHistoryPath() : path_("/tmp/lemma-command-history-test-XXXXXX") {
+  TemporaryHistoryPath() : path_("/tmp/frame-command-history-test-XXXXXX") {
     const auto descriptor = ::mkstemp(path_.data());
     if (descriptor >= 0) {
       static_cast<void>(::close(descriptor));
@@ -87,7 +87,7 @@ TEST(CommandHistoryTest, ReplacesMissingOrValidPersistenceButPreservesMalformedF
 
   std::ofstream output(std::string(file.path()), std::ios::binary | std::ios::trunc);
   ASSERT_TRUE(output.is_open());
-  output << "not-lemma-history\ncommand\n";
+  output << "not-frame-history\ncommand\n";
   output.close();
   ASSERT_TRUE(output.good());
   const auto malformed = load_command_line_history(file.path());
@@ -96,4 +96,4 @@ TEST(CommandHistoryTest, ReplacesMissingOrValidPersistenceButPreservesMalformedF
 }
 
 } // namespace
-} // namespace lemma::core
+} // namespace frame::core

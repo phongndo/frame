@@ -194,7 +194,7 @@
       "fixture": "warm-scroll",
       "subjects": [
         "direct",
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -212,7 +212,7 @@
       "cli_mode": "attach-visible",
       "fixture": "attach-visible",
       "subjects": [
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -232,7 +232,7 @@
       "fixture": "latency-output",
       "subjects": [
         "direct",
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -256,7 +256,7 @@
       },
       "subjects": [
         "direct",
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -276,7 +276,7 @@
       "fixture": "latency-tui",
       "subjects": [
         "direct",
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -296,7 +296,7 @@
       "fixture": "latency-tui-wheel",
       "subjects": [
         "direct",
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -314,7 +314,7 @@
       "cli_mode": "session-switch",
       "fixture": "painted-hidden-screens",
       "subjects": [
-        "lemma",
+        "frame",
         "tmux",
         "herdr"
       ],
@@ -334,7 +334,7 @@
       "cli_mode": "tab-switch",
       "fixture": "painted-hidden-screens",
       "subjects": [
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -353,7 +353,7 @@
       "fixture": "shell-startup-marker",
       "subjects": [
         "direct",
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -372,7 +372,7 @@
       "fixture": "shell-startup-marker",
       "subjects": [
         "direct",
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -392,7 +392,7 @@
       "fixture": "resize-painter",
       "subjects": [
         "direct",
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -417,7 +417,7 @@
       "fixture": "idle-peer",
       "subjects": [
         "direct",
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -437,7 +437,7 @@
       "cli_mode": "component-resources",
       "fixture": "component-lifecycle",
       "subjects": [
-        "lemma"
+        "frame"
       ],
       "completion_endpoint": "bounded_resource_interval"
     },
@@ -454,7 +454,7 @@
       "cli_mode": "history-resources",
       "fixture": "warm-scroll-history",
       "subjects": [
-        "lemma"
+        "frame"
       ],
       "completion_endpoint": "outer_bytes_and_resource_interval"
     },
@@ -469,7 +469,7 @@
       "cli_mode": "lifecycle-churn",
       "fixture": "lifecycle-churn",
       "subjects": [
-        "lemma"
+        "frame"
       ],
       "completion_endpoint": "state_reclamation_and_resource_snapshot"
     },
@@ -486,7 +486,7 @@
       "fixture": "blocked-pty",
       "subjects": [
         "direct",
-        "lemma",
+        "frame",
         "tmux",
         "zellij",
         "herdr"
@@ -505,7 +505,7 @@
       "cli_mode": "blocked-client",
       "fixture": "blocked-client",
       "subjects": [
-        "lemma"
+        "frame"
       ],
       "completion_endpoint": "pty_receipt_and_outer_bytes"
     },
@@ -524,14 +524,14 @@
       "cli_mode": "extension-isolation",
       "fixture": "external-extension-isolation",
       "subjects": [
-        "lemma"
+        "frame"
       ],
       "completion_endpoint": "outer_bytes_after_extension_cleanup"
     }
   ],
   "latency_trace": {
-    "build_option": "LEMMA_ENABLE_LATENCY_TRACE",
-    "runtime_variable": "LEMMA_LATENCY_TRACE",
+    "build_option": "FRAME_ENABLE_LATENCY_TRACE",
+    "runtime_variable": "FRAME_LATENCY_TRACE",
     "trace_version": 2,
     "event_capacity_per_process": 524288,
     "event_bytes": 40,
@@ -1181,7 +1181,7 @@
   },
   "comparison_policy": {
     "multiplexers": [
-      "lemma",
+      "frame",
       "tmux",
       "zellij",
       "herdr"
@@ -1202,7 +1202,7 @@
         "subject": "herdr",
         "workload": "blocked_pty",
         "classification": "subject_input_loss_under_backpressure",
-        "error_contains": "__LEMMA_PTY_FAILED__"
+        "error_contains": "__FRAME_PTY_FAILED__"
       },
       {
         "subject": "herdr",
@@ -1299,7 +1299,7 @@
     ],
     "subjects": [
       "direct",
-      "lemma",
+      "frame",
       "tmux",
       "zellij",
       "herdr"

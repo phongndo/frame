@@ -12,7 +12,7 @@
 #include <system_error>
 #include <utility>
 
-namespace lemma::api {
+namespace frame::api {
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 auto valid_utf8(const std::string_view value) noexcept -> bool {
@@ -517,4 +517,4 @@ auto append_json_value(std::string& output, const JsonValue& value, const std::s
   return false;
 }
 
-} // namespace lemma::api
+} // namespace frame::api

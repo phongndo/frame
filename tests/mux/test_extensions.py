@@ -9,16 +9,16 @@ from pathlib import Path
 
 from tests.mux.test_extension_runtime import HELLO, PROC, PROC_RESULT, ExtensionPeer
 from tests.support.mux_harness import (
-    LemmaServer,
+    FrameServer,
     SessionState,
     wait_for_process_exit,
     wait_until,
 )
 
 CONFIG = r"""
-local lemma = require("lemma")
+local frame = require("frame")
 local function register(name, handler, timeout)
-  lemma.command.register("test." .. name, {
+  frame.command.register("test." .. name, {
     description = name, handler = handler, timeout_ms = timeout or 5000,
   })
 end
@@ -29,7 +29,7 @@ end
 register("rename", function(ctx, args)
   assert(#args == 1)
   local result = rename(ctx, args[1])
-  assert(result.schema == "lemma.proc-result/v1" and result.ok)
+  assert(result.schema == "frame.proc-result/v1" and result.ok)
   assert(result.results[1].result.status == "applied")
   local inspected = ctx:proc({commands={{command="pane.inspect", session={id=ctx.session},
                                        pane={id=ctx.pane}}}})
@@ -94,7 +94,7 @@ end, 1500)
 
 class ExtensionMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment(config_text=CONFIG)
+        self.server = FrameServer.from_environment(config_text=CONFIG)
         self.addCleanup(self.server.close)
         self.session = self.server.create_session("extensions")
         self.client = self.session.require_client()
@@ -311,38 +311,38 @@ class PickerMuxTest(unittest.TestCase):
         wrapper = (
             "import json,os,runpy,sys; from pathlib import Path; "
             f"sys.path.insert(0, {str(picker.parent)!r}); "
-            "ctx=json.loads(os.environ['LEMMA_COMMAND_CONTEXT']); "
+            "ctx=json.loads(os.environ['FRAME_COMMAND_CONTEXT']); "
             "ctx['pid']=os.getpid(); "
             "Path(os.environ['HOME'], 'picker-context.json').write_text(json.dumps(ctx)); "
             f"runpy.run_path({str(picker)!r}, run_name='__main__')"
         )
         config = f"""
-local lemma = require("lemma")
-lemma.command.register("nav.pick", {{description="Pick a target", timeout_ms=15000,
+local frame = require("frame")
+frame.command.register("nav.pick", {{description="Pick a target", timeout_ms=15000,
   argv={{{json.dumps(sys.executable)}, "-c", {json.dumps(wrapper)}}}}})
-lemma.command.register("test.exit", {{description="Fail without killing the host",
+frame.command.register("test.exit", {{description="Fail without killing the host",
   argv={{{json.dumps(sys.executable)}, "-c", "raise SystemExit(7)"}}}})
-lemma.command.register("test.bound", {{description="A keybound Lua callback",
+frame.command.register("test.bound", {{description="A keybound Lua callback",
   handler=function(ctx)
     assert(ctx.connection and ctx.endpoint)
     assert(ctx:proc({{commands={{{{command="tab.rename", session={{id=ctx.session}},
       tab={{id=ctx.tab}}, title="keybound"}}}}}}).ok)
   end}})
-lemma.keymap.set("prefix", "p", "nav.pick")
-lemma.keymap.set("prefix", "f", "test.exit")
-lemma.keymap.set("prefix", "b", "test.bound")
-lemma.command.register("test.flood", {{description="Bound child diagnostics",
+frame.keymap.set("prefix", "p", "nav.pick")
+frame.keymap.set("prefix", "f", "test.exit")
+frame.keymap.set("prefix", "b", "test.bound")
+frame.command.register("test.flood", {{description="Bound child diagnostics",
   argv={{{json.dumps(sys.executable)}, "-c", "import os; os.write(1, b'x'*8192)"}}}})
-lemma.keymap.set("prefix", "v", "test.flood")
-lemma.command.register("test.hostcrash", {{description="Exit the shared host",
+frame.keymap.set("prefix", "v", "test.flood")
+frame.command.register("test.hostcrash", {{description="Exit the shared host",
   handler=function() os.exit(0) end}})
-lemma.keymap.set("prefix", "x", "test.hostcrash")
-lemma.command.register("test.hosttimeout", {{description="Block the shared host", timeout_ms=150,
+frame.keymap.set("prefix", "x", "test.hostcrash")
+frame.command.register("test.hosttimeout", {{description="Block the shared host", timeout_ms=150,
   handler=function() os.execute("sleep 10") end}})
-lemma.keymap.set("prefix", "z", "test.hosttimeout")
+frame.keymap.set("prefix", "z", "test.hosttimeout")
 """
         self.config = config
-        self.server = LemmaServer.from_environment(config_text=config)
+        self.server = FrameServer.from_environment(config_text=config)
         self.addCleanup(self.server.close)
         self.session = self.server.create_session("source", command=("cat",))
         self.client = self.session.require_client()
@@ -352,7 +352,7 @@ lemma.keymap.set("prefix", "z", "test.hosttimeout")
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "picker-test",
                 "capabilities": ["proc"],
             },
@@ -365,7 +365,7 @@ lemma.keymap.set("prefix", "z", "test.hosttimeout")
         self.peer.send(
             PROC,
             self.sequence,
-            {"schema": "lemma.proc/v1", "commands": [{"command": command, **fields}]},
+            {"schema": "frame.proc/v1", "commands": [{"command": command, **fields}]},
         )
         result = self.peer.receive_matching(PROC_RESULT, self.sequence)
         self.assertTrue(result["results"], result)
@@ -373,7 +373,7 @@ lemma.keymap.set("prefix", "z", "test.hosttimeout")
 
     def open_picker(self) -> dict:
         self.client.prefix("p")
-        self.client.expect_output("Sessions - Lemma picker")
+        self.client.expect_output("Sessions - Frame picker")
         return json.loads(
             (Path(self.server.environment["HOME"]) / "picker-context.json").read_text()
         )
@@ -421,8 +421,8 @@ lemma.keymap.set("prefix", "z", "test.hosttimeout")
         wait_for_process_exit(context["pid"])
 
     def test_keybinding_works_without_native_status_line(self) -> None:
-        server = LemmaServer.from_environment(
-            config_text=self.config + "\nlemma.setup({ui={status_line=false}})"
+        server = FrameServer.from_environment(
+            config_text=self.config + "\nframe.setup({ui={status_line=false}})"
         )
         self.addCleanup(server.close)
         session = server.create_session("no-status", command=("cat",))
@@ -434,7 +434,7 @@ lemma.keymap.set("prefix", "z", "test.hosttimeout")
             json.loads(panes.output)["results"][0]["result"]["panes"][0]["rows"], 24
         )
         client.prefix("p")
-        client.expect_output("Sessions - Lemma picker")
+        client.expect_output("Sessions - Frame picker")
         context = json.loads(
             (Path(server.environment["HOME"]) / "picker-context.json").read_text()
         )
@@ -466,7 +466,7 @@ lemma.keymap.set("prefix", "z", "test.hosttimeout")
         self.client.send("nav.pi\t")
         self.client.expect_output("nav.pick")
         self.client.send("'$HOME' 'two words'\r")
-        self.client.expect_output("Sessions - Lemma picker")
+        self.client.expect_output("Sessions - Frame picker")
         context = json.loads(
             (Path(self.server.environment["HOME"]) / "picker-context.json").read_text()
         )
@@ -561,9 +561,9 @@ lemma.keymap.set("prefix", "z", "test.hosttimeout")
         )
         context = self.open_picker()
         self.client.send("l")
-        self.client.expect_output("Tabs - Lemma picker")
+        self.client.expect_output("Tabs - Frame picker")
         self.client.send("jl")
-        self.client.expect_output("Panes - Lemma picker")
+        self.client.expect_output("Panes - Frame picker")
         self.client.send("j\r")
         self.server.wait_for_state(
             self.session.name,

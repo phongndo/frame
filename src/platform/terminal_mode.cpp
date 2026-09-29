@@ -17,7 +17,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-namespace lemma::platform {
+namespace frame::platform {
 namespace {
 
 #ifdef TCSASOFT
@@ -586,4 +586,4 @@ RawTerminal::~RawTerminal() {
   }
 }
 
-} // namespace lemma::platform
+} // namespace frame::platform

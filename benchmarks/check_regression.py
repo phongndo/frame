@@ -458,9 +458,9 @@ def evaluate(
     process_minimum = process_budget["minimum_repetitions"]
     if (
         process_report.get("schema") != 5
-        or process_report.get("multiplexer") != "lemma"
+        or process_report.get("multiplexer") != "frame"
     ):
-        raise BudgetError("process workload report must be a schema-5 Lemma report")
+        raise BudgetError("process workload report must be a schema-5 Frame report")
     require_int(
         process_report.get("repetitions"),
         "process report repetitions",
@@ -526,9 +526,9 @@ def evaluate(
     profile_minimum = profile_budget["minimum_repetitions"]
     if (
         profile_report.get("schema") != 5
-        or profile_report.get("multiplexer") != "lemma"
+        or profile_report.get("multiplexer") != "frame"
     ):
-        raise BudgetError("profile report must be a schema-5 Lemma report")
+        raise BudgetError("profile report must be a schema-5 Frame report")
     require_int(
         profile_report.get("repetitions"),
         "profile report repetitions",
@@ -651,7 +651,7 @@ def main() -> int:
     failed = [result for result in results if result["status"] == "failed"]
     report = {
         "schema": 1,
-        "suite": "lemma-regression-budget",
+        "suite": "frame-regression-budget",
         "scope": budgets["scope"],
         "status": "failed" if failed else "passed",
         "checks": results,

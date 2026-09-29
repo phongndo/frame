@@ -1,8 +1,8 @@
 #include "config/config.hpp"
 
 #include "api/json.hpp"
+#include "frame/limits.hpp"
 #include "input/input_router.hpp"
-#include "lemma/limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::config {
+namespace frame::config {
 namespace {
 
 using input::CommandContextDisposition;
@@ -954,4 +954,4 @@ auto compile(const Configuration& configuration) noexcept -> std::expected<Gener
   }
 }
 
-} // namespace lemma::config
+} // namespace frame::config

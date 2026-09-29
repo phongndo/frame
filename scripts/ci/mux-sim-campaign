@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly profile="${LEMMA_TEST_PROFILE:-debug}"
-readonly seed_count="${LEMMA_MUX_CAMPAIGN_SEEDS:-64}"
-readonly operations="${LEMMA_MUX_CAMPAIGN_OPERATIONS:-16384}"
+readonly profile="${FRAME_TEST_PROFILE:-debug}"
+readonly seed_count="${FRAME_MUX_CAMPAIGN_SEEDS:-64}"
+readonly operations="${FRAME_MUX_CAMPAIGN_OPERATIONS:-16384}"
 readonly artifact_dir="build/${profile}/mux-sim-artifacts"
-readonly binary="./build/${profile}/lemma_core_sim_tests"
+readonly binary="./build/${profile}/frame_core_sim_tests"
 
 if [[ ! "${seed_count}" =~ ^[1-9][0-9]*$ ]]; then
-  printf 'LEMMA_MUX_CAMPAIGN_SEEDS must be a positive integer\n' >&2
+  printf 'FRAME_MUX_CAMPAIGN_SEEDS must be a positive integer\n' >&2
   exit 2
 fi
 if [[ ! "${operations}" =~ ^[1-9][0-9]*$ ]] || ((operations > 16384)); then
-  printf 'LEMMA_MUX_CAMPAIGN_OPERATIONS must be in [1, 16384]\n' >&2
+  printf 'FRAME_MUX_CAMPAIGN_OPERATIONS must be in [1, 16384]\n' >&2
   exit 2
 fi
 
 scripts/ci/configure "${profile}" \
-  -DLEMMA_BUILD_TESTS=ON \
-  -DLEMMA_BUILD_BENCHMARKS=OFF
-cmake --build "build/${profile}" --target lemma_core_sim_tests
+  -DFRAME_BUILD_TESTS=ON \
+  -DFRAME_BUILD_BENCHMARKS=OFF
+cmake --build "build/${profile}" --target frame_core_sim_tests
 rm -rf "${artifact_dir}"
 mkdir -p "${artifact_dir}"
 {
@@ -47,17 +47,17 @@ for ((index = 0; index < seed_count; ++index)); do
   printf 'mux simulation campaign %s/%s seed=%s operations=%s\n' \
     "$((index + 1))" "${seed_count}" "${seed}" "${operations}"
   {
-    printf '%q ' env LEMMA_MUX_SIM_SEED="${seed}" \
-      LEMMA_MUX_SIM_OPERATIONS="${operations}" LEMMA_MUX_SIM_TRACE_OUT="${trace}" \
-      LEMMA_MUX_SIM_COVERAGE_OUT="${coverage}" "${binary}" \
+    printf '%q ' env FRAME_MUX_SIM_SEED="${seed}" \
+      FRAME_MUX_SIM_OPERATIONS="${operations}" FRAME_MUX_SIM_TRACE_OUT="${trace}" \
+      FRAME_MUX_SIM_COVERAGE_OUT="${coverage}" "${binary}" \
       --gtest_filter=MuxSimulationTest.GeneratedCommandsAndRuntimeFaultsPreserveAllInvariants \
       --gtest_brief=1
     printf '\n'
   } >>"${artifact_dir}/campaign.commands.txt"
-  if ! LEMMA_MUX_SIM_SEED="${seed}" \
-    LEMMA_MUX_SIM_OPERATIONS="${operations}" \
-    LEMMA_MUX_SIM_TRACE_OUT="${trace}" \
-    LEMMA_MUX_SIM_COVERAGE_OUT="${coverage}" \
+  if ! FRAME_MUX_SIM_SEED="${seed}" \
+    FRAME_MUX_SIM_OPERATIONS="${operations}" \
+    FRAME_MUX_SIM_TRACE_OUT="${trace}" \
+    FRAME_MUX_SIM_COVERAGE_OUT="${coverage}" \
     "${binary}" \
     --gtest_filter=MuxSimulationTest.GeneratedCommandsAndRuntimeFaultsPreserveAllInvariants \
     --gtest_brief=1 2>&1 | tee "${diagnostics}"; then

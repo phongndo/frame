@@ -1,5 +1,5 @@
-#ifndef LEMMA_CORE_ENGINE_CONNECTION_STATE_HPP
-#define LEMMA_CORE_ENGINE_CONNECTION_STATE_HPP
+#ifndef FRAME_CORE_ENGINE_CONNECTION_STATE_HPP
+#define FRAME_CORE_ENGINE_CONNECTION_STATE_HPP
 
 #include "api/command.hpp"
 #include "api/json.hpp"
@@ -7,9 +7,9 @@
 #include "core/engine_state.hpp"
 #include "core/session.hpp"
 #include "extension/protocol.hpp"
-#include "lemma/command.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/command.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 #include "protocol/attachment.hpp"
 
 #include <array>
@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-namespace lemma::core::engine_detail {
+namespace frame::core::engine_detail {
 
 inline constexpr auto setup_progress_timeout = std::chrono::seconds(5);
 inline constexpr auto setup_total_timeout = std::chrono::seconds(10);
@@ -201,6 +201,6 @@ static_assert(sizeof(PendingConnections) ==
 static_assert(sizeof(PendingConnectionGenerations) ==
               limits::pending_connections_hard_max * sizeof(std::uint32_t));
 
-} // namespace lemma::core::engine_detail
+} // namespace frame::core::engine_detail
 
-#endif // LEMMA_CORE_ENGINE_CONNECTION_STATE_HPP
+#endif // FRAME_CORE_ENGINE_CONNECTION_STATE_HPP

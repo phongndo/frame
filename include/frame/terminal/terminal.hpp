@@ -1,7 +1,7 @@
-#ifndef LEMMA_TERMINAL_TERMINAL_HPP
-#define LEMMA_TERMINAL_TERMINAL_HPP
+#ifndef FRAME_TERMINAL_TERMINAL_HPP
+#define FRAME_TERMINAL_TERMINAL_HPP
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <array>
 #include <cstddef>
@@ -12,7 +12,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::vt {
+namespace frame::vt {
 
 // Version of the privately linked terminal engine. The returned view has static lifetime.
 [[nodiscard]] auto library_version() noexcept -> std::span<const std::uint8_t>;
@@ -111,7 +111,7 @@ struct TerminalOptions final {
   std::optional<std::size_t> scrollback_lines_max;
 };
 
-// Covers only allocations routed through Lemma's Ghostty C allocator. Ghostty PagePool storage and
+// Covers only allocations routed through Frame's Ghostty C allocator. Ghostty PagePool storage and
 // adapter-owned buffers such as physical cell hashes are excluded.
 struct AllocationStats final {
   std::size_t bytes_current{0};
@@ -650,7 +650,7 @@ public:
   [[nodiscard]] auto encode_mouse(const MouseEvent& event, std::span<std::byte> output) noexcept
       -> std::expected<std::size_t, Error>;
   // Narrow canonical child policy used to route physical mouse input without exposing Ghostty
-  // mode values. Outer-terminal capture remains a Lemma presentation concern.
+  // mode values. Outer-terminal capture remains a Frame presentation concern.
   [[nodiscard]] auto mouse_tracking() const noexcept -> std::expected<MouseTrackingState, Error>;
   // True only for Ghostty's alternate-screen wheel-to-cursor-key condition: alternate screen,
   // alternate-scroll mode enabled, and no explicit mouse reporting mode.
@@ -679,7 +679,7 @@ public:
       -> std::expected<std::size_t, Error>;
 
   // Ghostty owns gesture interpretation and converts installed snapshots to tracked endpoints.
-  // Lemma supplies presentation-space input and bounded caller-owned formatting storage.
+  // Frame supplies presentation-space input and bounded caller-owned formatting storage.
   [[nodiscard]] auto selection_gesture(const SelectionGestureEvent& event) noexcept
       -> std::expected<SelectionGestureResult, Error>;
   void reset_selection_gesture() noexcept;
@@ -788,6 +788,6 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-} // namespace lemma::vt
+} // namespace frame::vt
 
-#endif // LEMMA_TERMINAL_TERMINAL_HPP
+#endif // FRAME_TERMINAL_TERMINAL_HPP

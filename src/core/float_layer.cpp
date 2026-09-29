@@ -1,8 +1,8 @@
 #include "core/float_layer.hpp"
 
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -10,7 +10,7 @@
 #include <optional>
 #include <span>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 [[nodiscard]] constexpr auto valid_extent(const std::uint32_t extent,
@@ -170,4 +170,4 @@ auto FloatLayer::place(const PaneId pane, const FloatPlacement placement) noexce
   return true;
 }
 
-} // namespace lemma::core
+} // namespace frame::core

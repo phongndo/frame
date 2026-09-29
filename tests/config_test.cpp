@@ -14,13 +14,13 @@
 
 #include <unistd.h>
 
-namespace lemma::config {
+namespace frame::config {
 namespace {
 
 class TemporaryConfig final {
 public:
   explicit TemporaryConfig(const std::string_view contents)
-      : path_("/tmp/lemma-config-test-XXXXXX") {
+      : path_("/tmp/frame-config-test-XXXXXX") {
     const auto descriptor = ::mkstemp(path_.data());
     if (descriptor >= 0) {
       valid_ = platform::write_text(descriptor, contents);
@@ -74,7 +74,7 @@ TEST(ConfigurationTest, RoundTripsAndCompilesOneCompleteGeneration) {
       .title = false, .bell = false, .notifications = false, .progress = true, .cwd = false};
   source.launch.default_cwd = "/tmp";
   source.launch.default_program = {"/bin/sh", "-l"};
-  source.history.file = "/tmp/lemma-history";
+  source.history.file = "/tmp/frame-history";
   ASSERT_TRUE(source.input.set(input::ConfiguredInputContext::prefix,
                                split_chord.value_or(input::InputChord{}),
                                input::InputCommand::split_left_right));
@@ -100,7 +100,7 @@ TEST(ConfigurationTest, RoundTripsAndCompilesOneCompleteGeneration) {
   EXPECT_FALSE(compiled->outer().cwd);
   EXPECT_EQ(compiled->default_cwd(), "/tmp");
   EXPECT_FALSE(compiled->default_program().empty());
-  EXPECT_EQ(compiled->history_file(), "/tmp/lemma-history");
+  EXPECT_EQ(compiled->history_file(), "/tmp/frame-history");
 
   input::InputRouter router(compiled->input_map());
   constexpr std::array prefix{std::byte{0x01}};
@@ -114,7 +114,7 @@ TEST(ConfigurationTest, RoundTripsAndCompilesOneCompleteGeneration) {
 }
 
 TEST(ConfigurationTest, RejectsMalformedOrUnpublishableDocuments) {
-  const auto malformed = decode(R"({"schema":"lemma.config/v1"})");
+  const auto malformed = decode(R"({"schema":"frame.config/v1"})");
   EXPECT_FALSE(malformed.configuration.has_value());
 
   Configuration invalid_prefix;
@@ -133,27 +133,27 @@ TEST(ConfigurationTest, RejectsMalformedOrUnpublishableDocuments) {
 
 TEST(ConfigurationHostTest, LoadsLuaInASeparateResidentProcess) {
   TemporaryConfig file(R"(
-local lemma = require("lemma")
-assert(lemma.mode == nil)
+local frame = require("frame")
+assert(frame.mode == nil)
 for _, key in ipairs({ "Space", "Enter", "Tab", "Backspace", "Escape" }) do
-  assert(lemma.keymap.send(key))
+  assert(frame.keymap.send(key))
 end
-lemma.setup({
+frame.setup({
   input = { prefix = "C-a" },
   terminal = { scrollback_lines = 12345 },
   ui = { status_line = false, outer_title = false, outer_bell = false,
          outer_notifications = false, outer_progress = true, outer_cwd = false,
          outer_hyperlinks = false },
   launch = { default_cwd = "/tmp", default_program = { "/bin/sh", "-l" } },
-  history = { file = "/tmp/lemma-history" },
+  history = { file = "/tmp/frame-history" },
 })
-lemma.context.set("resize", { label = " RESIZE ", lifetime = "persistent", unbound = "consume" })
-lemma.keymap.set("prefix", "m", lemma.context.push("resize"))
-lemma.keymap.set("resize", "q", lemma.context.pop())
-lemma.keymap.set("normal", "Cmd-Left", lemma.keymap.send("Enter"))
-lemma.keymap.set("prefix", "C-a", lemma.keymap.replay())
-lemma.keymap.set("prefix", "s", "split_left_right")
-lemma.keymap.del("prefix", "%")
+frame.context.set("resize", { label = " RESIZE ", lifetime = "persistent", unbound = "consume" })
+frame.keymap.set("prefix", "m", frame.context.push("resize"))
+frame.keymap.set("resize", "q", frame.context.pop())
+frame.keymap.set("normal", "Cmd-Left", frame.keymap.send("Enter"))
+frame.keymap.set("prefix", "C-a", frame.keymap.replay())
+frame.keymap.set("prefix", "s", "split_left_right")
+frame.keymap.del("prefix", "%")
 )");
   ASSERT_TRUE(file.valid());
 
@@ -171,7 +171,7 @@ lemma.keymap.del("prefix", "%")
   EXPECT_FALSE(loaded.generation->outer().cwd);
   EXPECT_FALSE(loaded.generation->outer().hyperlinks);
   EXPECT_EQ(loaded.generation->default_cwd(), "/tmp");
-  EXPECT_EQ(loaded.generation->history_file(), "/tmp/lemma-history");
+  EXPECT_EQ(loaded.generation->history_file(), "/tmp/frame-history");
   input::InputRouter router(loaded.generation->input_map());
   constexpr std::array input_bytes{std::byte{0x01}, std::byte{'s'}};
   EXPECT_TRUE(std::holds_alternative<input::ConsumedInput>(
@@ -194,8 +194,8 @@ lemma.keymap.del("prefix", "%")
 
 TEST(ConfigurationHostTest, PublishesCommandMetadataWithTheConfigurationTransaction) {
   TemporaryConfig file(R"(
-local lemma = require("lemma")
-lemma.command.register("project.open", {
+local frame = require("frame")
+frame.command.register("project.open", {
   description = "Open a project", timeout_ms = 1234,
   handler = function(ctx, args) error("not executed during registration") end,
 })
@@ -211,11 +211,11 @@ lemma.command.register("project.open", {
 
 TEST(ConfigurationHostTest, BindsBothCommandKindsToLegacyAndStructuredInput) {
   TemporaryConfig file(R"(
-local lemma = require('lemma')
-lemma.command.register('test.lua', {description='Lua', handler=function() end})
-lemma.command.register('test.external', {description='External', argv={'cat', 'literal argument'}})
-lemma.keymap.set('normal', 'l', 'test.lua')
-lemma.keymap.set('normal', 'M-Left', 'test.external')
+local frame = require('frame')
+frame.command.register('test.lua', {description='Lua', handler=function() end})
+frame.command.register('test.external', {description='External', argv={'cat', 'literal argument'}})
+frame.keymap.set('normal', 'l', 'test.lua')
+frame.keymap.set('normal', 'M-Left', 'test.external')
 )");
   auto loaded = extension::load_configuration(file.path());
   ASSERT_EQ(loaded.status, extension::ConfigurationStatus::loaded) << loaded.diagnostic;
@@ -240,22 +240,22 @@ lemma.keymap.set('normal', 'M-Left', 'test.external')
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(ConfigurationHostTest, RejectsDuplicateOrInvalidCommandsWithoutPublishingConfiguration) {
   for (const auto* const declaration :
-       {"lemma.command.register('pane', {description='bad', handler=function() end})",
-        "lemma.command.register('test.bad', {description='bad', timeout_ms=0, handler=function() "
+       {"frame.command.register('pane', {description='bad', handler=function() end})",
+        "frame.command.register('test.bad', {description='bad', timeout_ms=0, handler=function() "
         "end})",
-        "lemma.command.register('test.bad', {description='bad', handler=42})",
-        "lemma.command.register('test.bad', {description='bad', argv={}})",
-        "lemma.command.register('test.bad', {description='bad', argv={'cat', 42}})",
-        "lemma.command.register('test.bad', {description='bad', argv={''}})",
-        "lemma.command.register('test.bad', {description='bad', argv={'cat'}, handler=function() "
+        "frame.command.register('test.bad', {description='bad', handler=42})",
+        "frame.command.register('test.bad', {description='bad', argv={}})",
+        "frame.command.register('test.bad', {description='bad', argv={'cat', 42}})",
+        "frame.command.register('test.bad', {description='bad', argv={''}})",
+        "frame.command.register('test.bad', {description='bad', argv={'cat'}, handler=function() "
         "end})",
-        "lemma.keymap.set('normal', 'x', 'test.undeclared')",
-        "lemma.command.register('test.bad', {description='bad', extra=true, handler=function() "
+        "frame.keymap.set('normal', 'x', 'test.undeclared')",
+        "frame.command.register('test.bad', {description='bad', extra=true, handler=function() "
         "end})",
-        "for i=1,2 do lemma.command.register('test.bad', {description='bad', handler=function() "
+        "for i=1,2 do frame.command.register('test.bad', {description='bad', handler=function() "
         "end}) end"}) {
     TemporaryConfig file(
-        std::string("local lemma = require('lemma')\nlemma.setup({input={prefix='C-a'}})\n") +
+        std::string("local frame = require('frame')\nframe.setup({input={prefix='C-a'}})\n") +
         declaration);
     ASSERT_TRUE(file.valid());
     const auto loaded = extension::load_configuration(file.path());
@@ -267,8 +267,8 @@ TEST(ConfigurationHostTest, RejectsDuplicateOrInvalidCommandsWithoutPublishingCo
 
 TEST(ConfigurationHostTest, RejectsTheWholeGenerationAfterALuaError) {
   TemporaryConfig file(R"(
-local lemma = require("lemma")
-lemma.setup({ unknown = {} })
+local frame = require("frame")
+frame.setup({ unknown = {} })
 )");
   ASSERT_TRUE(file.valid());
 
@@ -277,7 +277,7 @@ lemma.setup({ unknown = {} })
   EXPECT_EQ(loaded.status, extension::ConfigurationStatus::invalid);
   EXPECT_EQ(loaded.generation, nullptr);
   EXPECT_FALSE(loaded.host.active());
-  EXPECT_NE(loaded.diagnostic.find("unknown lemma.setup option"), std::string::npos);
+  EXPECT_NE(loaded.diagnostic.find("unknown frame.setup option"), std::string::npos);
 }
 
 // GoogleTest assertions inflate the measured branch count.
@@ -287,7 +287,7 @@ TEST(ConfigurationHostTest, RejectsInvalidUiOptions) {
        {"{ outer_title = 'yes' }", "{ status_line = 1 }", "{ title = true }",
         "{ outer_notifications = 'osc9' }", "{ outer_progress = 1 }", "{ outer_cwd = 0 }",
         "{ outer_bell = 'visual' }", "{ outer_hyperlinks = 'osc8' }"}) {
-    TemporaryConfig file(std::string("require('lemma').setup({ ui = ") + ui + " })\n");
+    TemporaryConfig file(std::string("require('frame').setup({ ui = ") + ui + " })\n");
     ASSERT_TRUE(file.valid());
     const auto loaded = extension::load_configuration(file.path());
     EXPECT_EQ(loaded.status, extension::ConfigurationStatus::invalid) << ui;
@@ -296,4 +296,4 @@ TEST(ConfigurationHostTest, RejectsInvalidUiOptions) {
 }
 
 } // namespace
-} // namespace lemma::config
+} // namespace frame::config

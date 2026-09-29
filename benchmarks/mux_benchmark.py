@@ -39,7 +39,7 @@ from benchmarks.benchmark_manifest import (  # noqa: E402
     unsupported_result,
     workload_for_mode,
 )
-from tests.support.mux_harness import LEMMA_OUTER_TERMINAL_RESTORE  # noqa: E402
+from tests.support.mux_harness import FRAME_OUTER_TERMINAL_RESTORE  # noqa: E402
 from tests.support.pty_process import PtyOutputMonitor, PtyProcess  # noqa: E402
 
 # Repository scans include the Ghostty submodule and can exceed two seconds on
@@ -48,42 +48,42 @@ GIT_METADATA_TIMEOUT_SECONDS = 30.0
 
 ALT_SCREEN = b"\x1b[?1049h"
 # The paired harness also runs pre-2.11 baselines, which never save/enable native geometry reports.
-LEGACY_LEMMA_OUTER_TERMINAL_RESTORE = (
+LEGACY_FRAME_OUTER_TERMINAL_RESTORE = (
     b"\x1b[0m\x1b[?2026l\x1b[?1l\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l"
     b"\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l"
     b"\x1b[?2004l\x1b]112\x1b\\\x1b[0 q\x1b[?25h\x1b[?7h\x1b[<u\x1b[?1049l"
 )
 # Baselines before outer-title support neither push nor restore the outer window title.
-PRE_TITLE_LEMMA_OUTER_TERMINAL_RESTORE = (
+PRE_TITLE_FRAME_OUTER_TERMINAL_RESTORE = (
     b"\x18\x1b_Gq=2,m=0;\x1b\\\x1b_Ga=d,d=A,q=2\x1b\\"
     b"\x1b[0m\x1b[?2026l\x1b[?1l\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l"
     b"\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l"
     b"\x1b[?2004l\x1b]112\x1b\\\x1b[0 q\x1b[?25h\x1b[?7h\x1b[<u\x1b[?2048r\x1b[?1049l"
 )
-WARM_MARKER = b"__LEMMA_WARM_SCROLL_DONE__"
-WARM_READY_MARKER = b"__LEMMA_WARM_SCROLL_READY__"
-BLOCK_READY = b"__LEMMA_PTY_READY__"
-BLOCK_DONE = b"__LEMMA_PTY_DONE__ bytes=2097152 digest=d939b04ca2c22325"
-LATENCY_READY = b"__LEMMA_LATENCY_READY__"
-LATENCY_OUTPUT_READY = b"__LEMMA_LATENCY_OUTPUT_READY__"
-LATENCY_VISIBLE_ACK = b"__LEMMA_LATENCY_VISIBLE__"
-LATENCY_NEXT_READY = b"__LEMMA_LATENCY_NEXT__"
-TUI_REDRAW_READY = b"__LEMMA_TUI_REDRAW_READY__"
-TUI_WHEEL_READY = b"__LEMMA_TUI_WHEEL_READY__"
-IDLE_READY = b"__LEMMA_IDLE_READY__"
-PAINT_READY = b"__LEMMA_PAINT_READY__"
-RESIZE_READY = b"__LEMMA_RESIZE_READY__"
-RESIZE_ARMED = b"__LEMMA_RESIZE_ARMED__"
+WARM_MARKER = b"__FRAME_WARM_SCROLL_DONE__"
+WARM_READY_MARKER = b"__FRAME_WARM_SCROLL_READY__"
+BLOCK_READY = b"__FRAME_PTY_READY__"
+BLOCK_DONE = b"__FRAME_PTY_DONE__ bytes=2097152 digest=d939b04ca2c22325"
+LATENCY_READY = b"__FRAME_LATENCY_READY__"
+LATENCY_OUTPUT_READY = b"__FRAME_LATENCY_OUTPUT_READY__"
+LATENCY_VISIBLE_ACK = b"__FRAME_LATENCY_VISIBLE__"
+LATENCY_NEXT_READY = b"__FRAME_LATENCY_NEXT__"
+TUI_REDRAW_READY = b"__FRAME_TUI_REDRAW_READY__"
+TUI_WHEEL_READY = b"__FRAME_TUI_WHEEL_READY__"
+IDLE_READY = b"__FRAME_IDLE_READY__"
+PAINT_READY = b"__FRAME_PAINT_READY__"
+RESIZE_READY = b"__FRAME_RESIZE_READY__"
+RESIZE_ARMED = b"__FRAME_RESIZE_ARMED__"
 # Alternate across the 80x24 baseline so every sample changes both pane dimensions.
 RESIZE_GEOMETRIES = ((100, 30), (80, 24))
 RESIZE_QUIET_SECONDS = 0.3
 # Each navigation trigger is one terminal write through the attached client. Bindings are the
 # subject defaults except where noted: Zellij's default new-tab path needs a mode round trip, so its
 # benchmark config binds Alt t directly; Herdr leaves workspace cycling unbound by default, so its
-# benchmark config binds prefix+( and prefix+). Lemma switches Sessions through its native command
+# benchmark config binds prefix+( and prefix+). Frame switches Sessions through its native command
 # line (`switch NAME`). Zellij has no in-client Session switch trigger; see the workload manifest.
 NAVIGATION_KEYS: dict[str, dict[str, bytes]] = {
-    "lemma": {
+    "frame": {
         "new_pane": b"\x02%",
         "new_tab": b"\x02c",
         "next_tab": b"\x02n",
@@ -112,10 +112,10 @@ NAVIGATION_KEYS: dict[str, dict[str, bytes]] = {
         "previous_session": b"\x02(",
     },
 }
-ATTACH_VISIBLE_MARKER = b"__LEMMA_ATTACH_VISIBLE__"
+ATTACH_VISIBLE_MARKER = b"__FRAME_ATTACH_VISIBLE__"
 # Keep the first byte distinct from fixture markers. Differential terminal renderers can retain a
 # shared prefix on screen without retransmitting it to an attached outer client.
-SHELL_READY_MARKER = b"LEMMA-SHELL-READY"
+SHELL_READY_MARKER = b"FRAME-SHELL-READY"
 ATTACH_MAGIC = b"\x89LMA"
 ATTACH_PROTOCOL_MAJOR = 2
 ATTACH_PROTOCOL_MINOR = 11
@@ -472,7 +472,7 @@ def interaction_visible_token(label: str, index: int) -> bytes:
 
 def interaction_marker(label: str, index: int) -> bytes:
     visible_token = interaction_visible_token(label, index)
-    return f"__LEMMA_{label}_{index:04d}_".encode() + visible_token + b"__"
+    return f"__FRAME_{label}_{index:04d}_".encode() + visible_token + b"__"
 
 
 def account_login_shell() -> str:
@@ -497,7 +497,7 @@ def install_shell_startup(
     config = Path(environment["XDG_CONFIG_HOME"])
     zdot = Path(environment["ZDOTDIR"])
     if shell in {"sh", "dash", "ksh", "mksh"}:
-        interactive_startup = config / "lemma" / "shell-startup.sh"
+        interactive_startup = config / "frame" / "shell-startup.sh"
         environment["ENV"] = str(interactive_startup)
         paths = (home / ".profile", interactive_startup)
     elif shell == "bash":
@@ -780,7 +780,7 @@ def open_descriptor_snapshot(pid: int) -> dict[str, Any]:
         except OSError as error:
             return {"available": False, "reason": str(error)}
     if platform.system() == "Darwin":
-        # proc_fdinfo is two int32 values. A fixed 4,096-entry buffer is well above Lemma's
+        # proc_fdinfo is two int32 values. A fixed 4,096-entry buffer is well above Frame's
         # reviewed descriptor bounds and avoids a size-probe race.
         try:
             libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
@@ -1368,8 +1368,8 @@ def retain_attach_marker(runtime: MuxRuntime, session: str) -> None:
     runtime.detach(validation_client, session)
 
 
-class LemmaRuntime:
-    multiplexer = "lemma"
+class FrameRuntime:
+    multiplexer = "frame"
     version = "development"
 
     def __init__(
@@ -1383,7 +1383,7 @@ class LemmaRuntime:
         extension_fixture_path: Path | None = None,
         extension_fixture_process_count: int = 0,
     ) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="lemma-benchmark-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="frame-benchmark-")
         root = Path(self.temporary.name)
         self.socket_path = root / "daemon.sock"
         self.gate_path = root / "blocked.gate"
@@ -1404,7 +1404,7 @@ class LemmaRuntime:
         self.extension_fixture_ready: list[dict[str, Any]] = []
         self.environment = benchmark_environment(root)
         if trace_directory is not None:
-            self.environment["LEMMA_LATENCY_TRACE"] = str(trace_directory.resolve())
+            self.environment["FRAME_LATENCY_TRACE"] = str(trace_directory.resolve())
         self.server = subprocess.Popen(
             [str(self.server_path), str(self.socket_path)],
             env=self.environment,
@@ -1419,7 +1419,7 @@ class LemmaRuntime:
             # in these isolated fixtures; do not mislabel the forked Lua host as pane memory.
             baseline = resource_snapshot([self.server.pid])
             if baseline.get("available") is not True:
-                raise RuntimeError("cannot identify Lemma daemon helper processes")
+                raise RuntimeError("cannot identify Frame daemon helper processes")
             self.helper_pids = [
                 pid for pid in baseline["pids"] if pid != self.server.pid
             ]
@@ -1437,7 +1437,7 @@ class LemmaRuntime:
                 return
             except OSError:
                 time.sleep(0.005)
-        raise TimeoutError("Lemma benchmark server did not become ready")
+        raise TimeoutError("Frame benchmark server did not become ready")
 
     def command(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         normalized = list(arguments)
@@ -1455,7 +1455,7 @@ class LemmaRuntime:
             timeout=5.0,
         )
         if requested_session is not None:
-            prefix = f'lemma session "{requested_session}":'
+            prefix = f'frame session "{requested_session}":'
             completed.stdout = "".join(
                 line
                 for line in completed.stdout.splitlines(keepends=True)
@@ -1463,7 +1463,7 @@ class LemmaRuntime:
             )
             if not completed.stdout:
                 raise RuntimeError(
-                    f"Lemma session {requested_session!r} was not listed"
+                    f"Frame session {requested_session!r} was not listed"
                 )
         return completed
 
@@ -1475,9 +1475,9 @@ class LemmaRuntime:
             self.attach_arguments(session),
             self.environment,
             terminal_restore_sequence=(
-                LEMMA_OUTER_TERMINAL_RESTORE,
-                PRE_TITLE_LEMMA_OUTER_TERMINAL_RESTORE,
-                LEGACY_LEMMA_OUTER_TERMINAL_RESTORE,
+                FRAME_OUTER_TERMINAL_RESTORE,
+                PRE_TITLE_FRAME_OUTER_TERMINAL_RESTORE,
+                LEGACY_FRAME_OUTER_TERMINAL_RESTORE,
             ),
         )
         self.clients.append(client)
@@ -1573,7 +1573,7 @@ class LemmaRuntime:
             if ", detached," in self.command("list", session).stdout:
                 return
             time.sleep(0.005)
-        raise TimeoutError("Lemma validation client did not detach")
+        raise TimeoutError("Frame validation client did not detach")
 
     def live_extension_processes(self) -> list[subprocess.Popen[str]]:
         return [
@@ -1670,7 +1670,7 @@ class DirectRuntime:
         self.gate_path = root / "blocked.gate"
         self.receipt_path = root / "receipt.sock"
         self.environment = benchmark_environment(root)
-        self.environment["PS1"] = "__LEMMA_DIRECT_READY__ "
+        self.environment["PS1"] = "__FRAME_DIRECT_READY__ "
         self.clients: list[PtyProcess] = []
 
     def attach_arguments(self, session: str) -> list[str]:
@@ -1680,7 +1680,7 @@ class DirectRuntime:
     def attach(self, session: str) -> PtyProcess:
         client = PtyProcess(self.attach_arguments(session), self.environment)
         self.clients.append(client)
-        client.read_until(b"__LEMMA_DIRECT_READY__", 5.0)
+        client.read_until(b"__FRAME_DIRECT_READY__", 5.0)
         client.drain(0.01)
         return client
 
@@ -1741,7 +1741,7 @@ class TmuxRuntime:
         self.receipt_path = root / "receipt.sock"
         self.environment = benchmark_environment(root)
         if trace_directory is not None:
-            self.environment["LEMMA_LATENCY_TRACE"] = str(trace_directory.resolve())
+            self.environment["FRAME_LATENCY_TRACE"] = str(trace_directory.resolve())
         self.clients: list[PtyProcess] = []
         self.server_pid = -1
         self.version = subprocess.run(
@@ -1882,7 +1882,7 @@ class ZellijRuntime:
         self.receipt_path = root / "receipt.sock"
         self.environment = benchmark_environment(root)
         if trace_directory is not None:
-            self.environment["LEMMA_LATENCY_TRACE"] = str(trace_directory.resolve())
+            self.environment["FRAME_LATENCY_TRACE"] = str(trace_directory.resolve())
         self.socket_directory = Path(tempfile.mkdtemp(prefix="lz-", dir="/tmp"))
         self.environment["ZELLIJ_SOCKET_DIR"] = str(self.socket_directory)
         # Zellij's default_shell takes no arguments and spawns a non-login shell. Match the
@@ -2129,7 +2129,7 @@ class HerdrRuntime:
         self.environment = benchmark_environment(root)
         self.environment["XDG_STATE_HOME"] = str(root / "state")
         if trace_directory is not None:
-            self.environment["LEMMA_LATENCY_TRACE"] = str(trace_directory.resolve())
+            self.environment["FRAME_LATENCY_TRACE"] = str(trace_directory.resolve())
         self.config_directory = Path(self.environment["XDG_CONFIG_HOME"]) / "herdr"
         self.config_path = self.config_directory / "config.toml"
         self.config_directory.mkdir(parents=True, exist_ok=True)
@@ -2757,7 +2757,7 @@ def painted_switch_samples(
 
 
 def session_switch(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
-    if not isinstance(runtime, (LemmaRuntime, TmuxRuntime, HerdrRuntime)):
+    if not isinstance(runtime, (FrameRuntime, TmuxRuntime, HerdrRuntime)):
         raise TypeError("session switch requires an in-client Session switch trigger")
     receipts = PtyReceiptChannel(runtime.receipt_path)
     controls = (
@@ -2777,7 +2777,7 @@ def session_switch(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
         else:
             runtime.start_detached(names[1])
             unit = "session"
-        if isinstance(runtime, LemmaRuntime):
+        if isinstance(runtime, FrameRuntime):
             triggers = tuple(
                 b"\x02:switch " + name.encode("ascii") + b"\r" for name in names
             )
@@ -2841,13 +2841,13 @@ def tab_switch(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
             control.unlink(missing_ok=True)
 
 
-# Every subject starts new panes as login shells: Lemma always forks `$SHELL -l`, tmux uses its
+# Every subject starts new panes as login shells: Frame always forks `$SHELL -l`, tmux uses its
 # default login shell, and the Zellij and Herdr adapters configure login startup. The direct
 # control matches. Login and non-login startup read different files, so mixed modes would compare
 # different shell work.
 SHELL_STARTUP_MODES = {
     "direct": "fork a PTY and exec $SHELL -l",
-    "lemma": "daemon spawns $SHELL -l",
+    "frame": "daemon spawns $SHELL -l",
     "tmux": "default login shell (argv0 -NAME)",
     "zellij": "default_shell wrapper execs $SHELL -l (one extra /bin/sh exec)",
     "herdr": 'terminal.shell_mode = "login"',
@@ -2951,7 +2951,7 @@ def new_shell_latency(
     if isinstance(runtime, DirectRuntime):
         return shell_startup_control(runtime, repetitions, label)
     if not isinstance(
-        runtime, (LemmaRuntime, TmuxRuntime, HerdrRuntime, ZellijRuntime)
+        runtime, (FrameRuntime, TmuxRuntime, HerdrRuntime, ZellijRuntime)
     ):
         raise TypeError("new-shell latency requires a known runtime")
     session = action
@@ -3136,7 +3136,7 @@ def blocked_pty(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
                 blocked,
                 BLOCK_DONE,
                 failure_markers=(
-                    b"__LEMMA_PTY_FAILED__",
+                    b"__FRAME_PTY_FAILED__",
                     b"lost connection",
                     b"server exited unexpectedly",
                     b"Received empty unknown from server",
@@ -3223,8 +3223,8 @@ def workspace_profile(
 
 
 def component_resources(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
-    if not isinstance(runtime, LemmaRuntime):
-        raise TypeError("component resources require Lemma")
+    if not isinstance(runtime, FrameRuntime):
+        raise TypeError("component resources require Frame")
     baseline = sample_resources(runtime, repetitions)
     runtime.command("start", "component_resources")
     detached = sample_resources(runtime, repetitions)
@@ -3243,8 +3243,8 @@ def component_resources(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]
 
 
 def history_resources(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
-    if not isinstance(runtime, LemmaRuntime):
-        raise TypeError("history resources require Lemma")
+    if not isinstance(runtime, FrameRuntime):
+        raise TypeError("history resources require Frame")
     client = runtime.start_and_attach("history_resources")
     client.drain()
     empty = sample_resources(runtime, repetitions, client)
@@ -3262,8 +3262,8 @@ def history_resources(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
 
 
 def blocked_client(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
-    if not isinstance(runtime, LemmaRuntime):
-        raise TypeError("blocked-client workload requires Lemma")
+    if not isinstance(runtime, FrameRuntime):
+        raise TypeError("blocked-client workload requires Frame")
     receipts = PtyReceiptChannel(runtime.receipt_path)
     blocked: socket.socket | None = None
     disconnect_probe: subprocess.Popen[str] | None = None
@@ -3382,8 +3382,8 @@ def blocked_client(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
 
 
 def extension_isolation(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
-    if not isinstance(runtime, LemmaRuntime):
-        raise TypeError("extension-isolation workload requires Lemma")
+    if not isinstance(runtime, FrameRuntime):
+        raise TypeError("extension-isolation workload requires Frame")
     mode = runtime.extension_fixture_mode
     if mode not in {"blocked-reader", "crash-focused", "crash-docked"}:
         raise ValueError("extension-isolation requires a blocked or crash fixture")
@@ -3415,7 +3415,7 @@ def extension_isolation(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]
         time.sleep(0.25)
     activity_after = runtime_resource_snapshot(runtime)
 
-    marker = f"__LEMMA_EXTENSION_CLEANUP_{time.monotonic_ns():016x}__".encode()
+    marker = f"__FRAME_EXTENSION_CLEANUP_{time.monotonic_ns():016x}__".encode()
     cleanup_started = time.perf_counter_ns()
     runtime.stop_extension_fixture(crash=mode.startswith("crash-"))
     client.write_all(marker + b"\r", 2.0)
@@ -3452,7 +3452,7 @@ def extension_isolation(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]
 
 
 def wait_for_profile_panes(
-    runtime: LemmaRuntime | TmuxRuntime | HerdrRuntime | ZellijRuntime,
+    runtime: FrameRuntime | TmuxRuntime | HerdrRuntime | ZellijRuntime,
     client: PtyProcess,
     session: str,
     panes: int,
@@ -3462,7 +3462,7 @@ def wait_for_profile_panes(
     )
     while time.monotonic() < deadline:
         client.drain(0.005)
-        if isinstance(runtime, LemmaRuntime):
+        if isinstance(runtime, FrameRuntime):
             reached = f", {panes} pane(s)," in runtime.command("list", session).stdout
         elif isinstance(runtime, (HerdrRuntime, ZellijRuntime)):
             reached = runtime.pane_count(session) == panes
@@ -3486,7 +3486,7 @@ def send_prefix(client: PtyProcess, command: bytes) -> None:
 
 
 def wait_for_profile_shell(
-    runtime: LemmaRuntime | TmuxRuntime | HerdrRuntime | ZellijRuntime,
+    runtime: FrameRuntime | TmuxRuntime | HerdrRuntime | ZellijRuntime,
     client: PtyProcess,
     pane_index: int,
 ) -> None:
@@ -3509,15 +3509,15 @@ def wait_for_profile_shell(
             client.drain(0.005)
         client.drain(0.005)
         return
-    marker = f"__LEMMA_PROFILE_PANE_{pane_index:04d}_READY__".encode()
+    marker = f"__FRAME_PROFILE_PANE_{pane_index:04d}_READY__".encode()
     # Keep the complete marker out of the echoed command so observation proves the shell executed
     # it.
-    command = f"printf '__LEMMA_PROFILE_PANE_%04d_READY__\\n' {pane_index}\r".encode()
+    command = f"printf '__FRAME_PROFILE_PANE_%04d_READY__\\n' {pane_index}\r".encode()
     wait_for_shell_execution(runtime, client, marker, command)
 
 
 def launch_latency_peer(
-    runtime: LemmaRuntime | TmuxRuntime | HerdrRuntime | ZellijRuntime,
+    runtime: FrameRuntime | TmuxRuntime | HerdrRuntime | ZellijRuntime,
     client: PtyProcess,
     autonomous_output: bool,
     receipts: PtyReceiptChannel | None = None,
@@ -3538,7 +3538,7 @@ def launch_latency_peer(
 
 
 def build_profile(
-    runtime: LemmaRuntime | TmuxRuntime | HerdrRuntime | ZellijRuntime,
+    runtime: FrameRuntime | TmuxRuntime | HerdrRuntime | ZellijRuntime,
     client: PtyProcess,
     panes: int,
     session: str = "profile",
@@ -3619,7 +3619,7 @@ def build_profile(
 
 
 def pane_profile(
-    runtime: LemmaRuntime | TmuxRuntime | HerdrRuntime | ZellijRuntime,
+    runtime: FrameRuntime | TmuxRuntime | HerdrRuntime | ZellijRuntime,
     profile: str,
     panes: int,
     active: bool,
@@ -3662,8 +3662,8 @@ def lifecycle_sentinel_arguments(peer_path: Path) -> tuple[str, ...]:
 
 
 def lifecycle_churn(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
-    if not isinstance(runtime, LemmaRuntime):
-        raise TypeError("lifecycle churn requires Lemma")
+    if not isinstance(runtime, FrameRuntime):
+        raise TypeError("lifecycle churn requires Frame")
     # Keep one ordinary session alive so deleting the churn target does not intentionally stop the
     # daemon whose descriptor and memory plateau this workload audits. Final-session auto-exit has
     # separate process coverage; the runtime process group reclaims this sentinel after sampling.
@@ -3932,24 +3932,24 @@ def main() -> int:
     )
     parser.add_argument(
         "--multiplexer",
-        choices=("direct", "lemma", "tmux", "zellij", "herdr"),
-        default="lemma",
+        choices=("direct", "frame", "tmux", "zellij", "herdr"),
+        default="frame",
     )
     parser.add_argument("--repetitions", type=int)
     parser.add_argument(
         "--intent", choices=("smoke", "extended", "gate", "manual"), default="manual"
     )
     parser.add_argument(
-        "--server", type=Path, default=Path("build/release/lemma_test_server")
+        "--server", type=Path, default=Path("build/release/frame_test_server")
     )
     parser.add_argument(
-        "--cli", type=Path, default=Path("build/release/lemma_test_cli")
+        "--cli", type=Path, default=Path("build/release/frame_test_cli")
     )
     parser.add_argument(
-        "--peer", type=Path, default=Path("build/release/lemma_test_pty_peer")
+        "--peer", type=Path, default=Path("build/release/frame_test_pty_peer")
     )
     parser.add_argument(
-        "--probe", type=Path, default=Path("build/release/lemma_benchmark_probe")
+        "--probe", type=Path, default=Path("build/release/frame_benchmark_probe")
     )
     parser.add_argument("--tmux", type=Path, default=Path("tmux"))
     parser.add_argument("--zellij", type=Path, default=Path("zellij"))
@@ -4004,8 +4004,8 @@ def main() -> int:
     if arguments.mode == "profiles" and arguments.multiplexer == "direct":
         parser.error("pane profiles require a multiplexer")
     if arguments.extension_fixture is not None:
-        if arguments.multiplexer != "lemma":
-            parser.error("extension fixtures require the lemma multiplexer")
+        if arguments.multiplexer != "frame":
+            parser.error("extension fixtures require the frame multiplexer")
         if not arguments.extension_fixture_path.is_file():
             parser.error(
                 f"missing extension fixture: {arguments.extension_fixture_path}"
@@ -4029,7 +4029,7 @@ def main() -> int:
     herdr: Path | None = None
     if arguments.multiplexer == "direct":
         build_profile = arguments.probe.parent.name
-    elif arguments.multiplexer == "lemma":
+    elif arguments.multiplexer == "frame":
         for executable in (arguments.server, arguments.cli):
             if not executable.is_file():
                 parser.error(f"missing executable: {executable}")
@@ -4050,8 +4050,8 @@ def main() -> int:
     def create_runtime() -> MuxRuntime:
         if arguments.multiplexer == "direct":
             return DirectRuntime(arguments.peer, arguments.probe)
-        if arguments.multiplexer == "lemma":
-            return LemmaRuntime(
+        if arguments.multiplexer == "frame":
+            return FrameRuntime(
                 arguments.server,
                 arguments.cli,
                 arguments.peer,
@@ -4090,7 +4090,7 @@ def main() -> int:
                 runtime, arguments.repetitions if repetitions is None else repetitions
             )
             result["resources_after_workload"] = runtime_resource_snapshot(runtime)
-            if isinstance(runtime, LemmaRuntime):
+            if isinstance(runtime, FrameRuntime):
                 result["extension_fixture_ready"] = runtime.extension_fixture_ready
             if not binary_provenance:
                 binary_provenance = runtime.binary_provenance()
@@ -4195,7 +4195,7 @@ def main() -> int:
             }
 
     if arguments.mode in ("profiles", "all") and arguments.multiplexer in {
-        "lemma",
+        "frame",
         "tmux",
         "herdr",
         "zellij",
@@ -4221,7 +4221,7 @@ def main() -> int:
                 ) -> dict[str, Any]:
                     if not isinstance(
                         runtime,
-                        (LemmaRuntime, TmuxRuntime, HerdrRuntime, ZellijRuntime),
+                        (FrameRuntime, TmuxRuntime, HerdrRuntime, ZellijRuntime),
                     ):
                         raise TypeError("pane profile requires a multiplexer runtime")
                     return pane_profile(
@@ -4327,7 +4327,7 @@ def main() -> int:
                 "render_wire_overhead_bytes_per_frame": ATTACH_HEADER_BYTES + 4,
                 "outer_bytes_metric_excludes_private_framing": True,
             }
-            if arguments.multiplexer == "lemma"
+            if arguments.multiplexer == "frame"
             else None
         ),
         "workloads": workloads,

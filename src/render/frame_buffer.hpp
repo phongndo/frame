@@ -1,8 +1,8 @@
-#ifndef LEMMA_RENDER_FRAME_BUFFER_HPP
-#define LEMMA_RENDER_FRAME_BUFFER_HPP
+#ifndef FRAME_RENDER_FRAME_BUFFER_HPP
+#define FRAME_RENDER_FRAME_BUFFER_HPP
 
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "render/pane_composition.hpp"
 #include "render/scene.hpp"
 #include "render/status_line.hpp"
@@ -13,7 +13,7 @@
 #include <optional>
 #include <span>
 
-namespace lemma::render {
+namespace frame::render {
 
 inline constexpr std::size_t frame_bytes_max = limits::frame_transaction_bytes_max;
 inline constexpr std::size_t frame_bytes_min = std::size_t{64} * 1'024U;
@@ -115,6 +115,6 @@ static_assert(sizeof(FrameBuffer) <= 5U * sizeof(void*));
                                                 bool force_full = false) noexcept
     -> std::expected<CompositionResult, CompositionError>;
 
-} // namespace lemma::render
+} // namespace frame::render
 
-#endif // LEMMA_RENDER_FRAME_BUFFER_HPP
+#endif // FRAME_RENDER_FRAME_BUFFER_HPP

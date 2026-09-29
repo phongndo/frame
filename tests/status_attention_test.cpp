@@ -14,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::user {
+namespace frame::user {
 namespace {
 
 [[nodiscard]] auto signals(const std::uint64_t generation, const std::uint64_t bells = 0,
@@ -279,4 +279,4 @@ TEST(StatusAttentionTest, DecodesPublicSignalRecords) {
 }
 
 } // namespace
-} // namespace lemma::user
+} // namespace frame::user

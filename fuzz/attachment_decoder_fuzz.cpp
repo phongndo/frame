@@ -9,7 +9,7 @@
 namespace {
 
 void fuzz_client_decoder(const std::span<const std::byte> input, const std::size_t chunk_max) {
-  lemma::protocol::ClientDecoder decoder;
+  frame::protocol::ClientDecoder decoder;
   if (!decoder.prepare().has_value()) {
     return;
   }
@@ -40,7 +40,7 @@ void fuzz_client_decoder(const std::span<const std::byte> input, const std::size
 }
 
 void fuzz_server_decoder(const std::span<const std::byte> input, const std::size_t chunk_max) {
-  lemma::protocol::ServerDecoder decoder;
+  frame::protocol::ServerDecoder decoder;
   if (!decoder.prepare().has_value()) {
     return;
   }
@@ -81,7 +81,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* const data, const std::size_t size) {
   if (data == nullptr || size < 2 ||
       size >
-          lemma::protocol::server_decoder_bytes_max + lemma::protocol::client_decoder_bytes_max) {
+          frame::protocol::server_decoder_bytes_max + frame::protocol::client_decoder_bytes_max) {
     return 0;
   }
   const auto source = std::span(data, size);

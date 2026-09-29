@@ -1,5 +1,5 @@
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "terminal/fingerprint.hpp"
 
 #include <gmock/gmock.h>
@@ -14,7 +14,7 @@
 #include <string_view>
 #include <utility>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace {
 
 void write_text(Terminal& terminal, const std::string_view text) {
@@ -1239,10 +1239,10 @@ TEST(TerminalTest, ReportsTruthfulChildVisibleIdentityAndGeometry) {
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   const std::string_view encoded(reinterpret_cast<const char*>(response.data()), response_size);
   EXPECT_THAT(encoded, testing::HasSubstr("\x1B[?62;22c"));
-  EXPECT_THAT(encoded, testing::HasSubstr("\x1BP>|lemma\x1B\\"));
+  EXPECT_THAT(encoded, testing::HasSubstr("\x1BP>|frame\x1B\\"));
   EXPECT_THAT(encoded, testing::HasSubstr("\x1B[8;24;80t"));
   EXPECT_THAT(encoded, testing::HasSubstr("\x1B[?997;1n"));
-  EXPECT_THAT(encoded, testing::HasSubstr("\x1BP1+r544E=6C656D6D61\x1B\\"));
+  EXPECT_THAT(encoded, testing::HasSubstr("\x1BP1+r544E=6672616D65\x1B\\"));
 }
 
 TEST(TerminalTest, DeniesKittyClipboardWritesWithoutRememberingPermission) {
@@ -1360,7 +1360,7 @@ TEST(TerminalTest, DeferredClipboardWriteSurvivesLaterTransactionsAndCancellatio
 // NOLINTEND(bugprone-unchecked-optional-access)
 TEST(TerminalTest, CapturesEffectsWithoutCallingApplicationCode) {
   auto terminal = make_terminal();
-  write_text(terminal, "\a\x1B]2;lemma title\x1B\\\x1B]7;file:///tmp\x1B\\"
+  write_text(terminal, "\a\x1B]2;frame title\x1B\\\x1B]7;file:///tmp\x1B\\"
                        "\x1B]777;notify;Codex;Needs attention\a\x1B]9;4;1;42\x1B\\"
                        "\x1B]52;c;YQ==\x1B\\\x1B_unsupported\x1B\\\x05\x1B[?7$p");
 
@@ -1377,7 +1377,7 @@ TEST(TerminalTest, CapturesEffectsWithoutCallingApplicationCode) {
 
   const auto title = terminal.title();
   ASSERT_TRUE(title.has_value());
-  EXPECT_THAT(*title, testing::StrEq("lemma title"));
+  EXPECT_THAT(*title, testing::StrEq("frame title"));
 
   ASSERT_GT(terminal.pending_pty_response_bytes(), 0U);
   std::array<std::byte, 64> response{};
@@ -1385,7 +1385,7 @@ TEST(TerminalTest, CapturesEffectsWithoutCallingApplicationCode) {
   EXPECT_GT(response_size, 0U);
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   const std::string_view encoded(reinterpret_cast<const char*>(response.data()), response_size);
-  EXPECT_THAT(encoded, testing::HasSubstr("lemma"));
+  EXPECT_THAT(encoded, testing::HasSubstr("frame"));
   EXPECT_EQ(terminal.pending_pty_response_bytes(), 0U);
 }
 
@@ -2092,4 +2092,4 @@ TEST(TerminalTest, TracksQuotaAllocatorUsage) {
 }
 
 } // namespace
-} // namespace lemma::vt
+} // namespace frame::vt

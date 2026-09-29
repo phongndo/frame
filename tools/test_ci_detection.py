@@ -182,7 +182,7 @@ class DetectionContractTest(unittest.TestCase):
     ) -> None:
         report = {
             "schema": 1,
-            "suite": "lemma-paired-regression",
+            "suite": "frame-paired-regression",
             "status": "failed",
             "comparisons": [
                 {

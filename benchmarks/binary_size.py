@@ -16,7 +16,7 @@ from typing import Any
 
 def binary_record(path: Path) -> dict[str, Any]:
     record: dict[str, Any] = {"path": str(path.resolve()), "bytes": path.stat().st_size}
-    with tempfile.TemporaryDirectory(prefix="lemma-stripped-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="frame-stripped-") as temporary:
         stripped = Path(temporary) / path.name
         shutil.copy2(path, stripped)
         subprocess.run(["strip", "-x", str(stripped)], check=True)
@@ -39,11 +39,11 @@ def main() -> int:
 
     binaries: dict[str, Any] = {}
     for name in (
-        "lemma",
-        "lemma_test_server",
-        "lemma_test_cli",
-        "lemma_test_pty_peer",
-        "lemma_benchmark_probe",
+        "frame",
+        "frame_test_server",
+        "frame_test_cli",
+        "frame_test_pty_peer",
+        "frame_benchmark_probe",
     ):
         path = arguments.build_directory / name
         binaries[name] = binary_record(path)

@@ -1,13 +1,13 @@
-#ifndef LEMMA_CORE_COMMAND_HISTORY_HPP
-#define LEMMA_CORE_COMMAND_HISTORY_HPP
+#ifndef FRAME_CORE_COMMAND_HISTORY_HPP
+#define FRAME_CORE_COMMAND_HISTORY_HPP
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <array>
 #include <cstdint>
 #include <string_view>
 
-namespace lemma::core {
+namespace frame::core {
 
 struct CommandLineHistoryEntry final {
   std::array<char, limits::command_line_bytes_max> text{};
@@ -41,6 +41,6 @@ void remember_command_line(CommandLineHistory& history, std::string_view command
 [[nodiscard]] auto save_command_line_history(std::string_view path,
                                              const CommandLineHistory& history) noexcept -> bool;
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_COMMAND_HISTORY_HPP
+#endif // FRAME_CORE_COMMAND_HISTORY_HPP

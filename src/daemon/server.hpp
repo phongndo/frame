@@ -1,9 +1,9 @@
-#ifndef LEMMA_DAEMON_SERVER_HPP
-#define LEMMA_DAEMON_SERVER_HPP
+#ifndef FRAME_DAEMON_SERVER_HPP
+#define FRAME_DAEMON_SERVER_HPP
 
 #include "api/command.hpp"
 #include "api/json.hpp"
-#include "lemma/id.hpp"
+#include "frame/id.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +13,7 @@
 #include <string_view>
 #include <utility>
 
-namespace lemma::daemon {
+namespace frame::daemon {
 
 // Immutable process runtime routing. Socket naming policy stays in the daemon boundary; callers
 // may only construct a validated absolute endpoint and pass it through component APIs.
@@ -194,6 +194,6 @@ struct PaneStatus final {
 [[nodiscard]] auto kill_all(const RuntimeEndpoint& endpoint) -> int;
 [[nodiscard]] auto shutdown(const RuntimeEndpoint& endpoint) -> int;
 
-} // namespace lemma::daemon
+} // namespace frame::daemon
 
-#endif // LEMMA_DAEMON_SERVER_HPP
+#endif // FRAME_DAEMON_SERVER_HPP

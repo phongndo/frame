@@ -11,7 +11,7 @@
 #include <sys/random.h>
 #endif
 
-namespace lemma::vt::detail {
+namespace frame::vt::detail {
 namespace {
 
 [[nodiscard]] auto generate_fingerprint_key() noexcept -> std::optional<FingerprintKey> {
@@ -64,4 +64,4 @@ auto process_fingerprint_key() noexcept -> const FingerprintKey* {
   return key.has_value() ? &*key : nullptr;
 }
 
-} // namespace lemma::vt::detail
+} // namespace frame::vt::detail

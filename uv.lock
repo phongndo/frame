@@ -39,7 +39,7 @@ wheels = [
 ]
 
 [[package]]
-name = "lemma"
+name = "frame"
 version = "0.1.0"
 source = { virtual = "." }
 

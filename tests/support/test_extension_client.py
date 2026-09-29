@@ -5,7 +5,7 @@ import socket
 import unittest
 from unittest.mock import patch
 
-from extensions.lemma_client import (
+from extensions.frame_client import (
     ERROR,
     EVENT,
     HEADER,
@@ -48,7 +48,7 @@ class ExtensionClientTest(unittest.TestCase):
         self.addCleanup(server.close)
         server.sendall(record(WELCOME, 1, {"limits": {"record_bytes": limit}}))
         with patch(
-            "extensions.lemma_client.socket.socket", return_value=ConnectedSocket(local)
+            "extensions.frame_client.socket.socket", return_value=ConnectedSocket(local)
         ):
             client = Client("unused", name="test", session="0:1")
         self.addCleanup(client.close)
@@ -56,7 +56,7 @@ class ExtensionClientTest(unittest.TestCase):
         return client, server
 
     def test_surface_capability_requires_a_session_before_connecting(self) -> None:
-        with patch("extensions.lemma_client.socket.socket") as create_socket:
+        with patch("extensions.frame_client.socket.socket") as create_socket:
             with self.assertRaisesRegex(
                 ValueError, "surface capability requires a session"
             ):
@@ -100,7 +100,7 @@ class ExtensionClientTest(unittest.TestCase):
         server.sendall(record(EVENT, 1, {}) * 3 + record(RESULT, 2, {"ok": True}))
         client.timeout = 3
         with patch(
-            "extensions.lemma_client.time.monotonic", side_effect=[0, 0, 1, 2, 4]
+            "extensions.frame_client.time.monotonic", side_effect=[0, 0, 1, 2, 4]
         ):
             with self.assertRaises(TimeoutError):
                 client.proc({"command": "session.list"})
@@ -108,7 +108,7 @@ class ExtensionClientTest(unittest.TestCase):
 
     def test_only_one_outstanding_proc(self) -> None:
         client, server = self.client()
-        sequence = client.send(PROC, {"schema": "lemma.proc/v1", "commands": []})
+        sequence = client.send(PROC, {"schema": "frame.proc/v1", "commands": []})
         with self.assertRaises(ProtocolError):
             client.send(PROC, {})
         with self.assertRaises(ProtocolError):
@@ -178,10 +178,10 @@ class ExtensionClientTest(unittest.TestCase):
         self.assertTrue(client.closed)
 
     def test_context_is_captured_not_inferred_from_focus(self) -> None:
-        value = {"schema": "lemma.command-context/v1", "pane": "0:7"}
-        with patch.dict("os.environ", {"LEMMA_COMMAND_CONTEXT": json.dumps(value)}):
+        value = {"schema": "frame.command-context/v1", "pane": "0:7"}
+        with patch.dict("os.environ", {"FRAME_COMMAND_CONTEXT": json.dumps(value)}):
             self.assertEqual(command_context(), value)
-        with patch.dict("os.environ", {"LEMMA_COMMAND_CONTEXT": "{}"}):
+        with patch.dict("os.environ", {"FRAME_COMMAND_CONTEXT": "{}"}):
             with self.assertRaises(ProtocolError):
                 command_context()
 

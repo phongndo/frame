@@ -23,7 +23,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-namespace lemma::extension {
+namespace frame::extension {
 namespace {
 constexpr std::size_t io_bytes_per_turn = std::size_t{16} * 1'024U;
 constexpr std::size_t queued_bytes_max = 2U * api::json_bytes_max;
@@ -282,7 +282,7 @@ auto CommandRuntime::start(const std::string_view command,
     return false;
   }
   try {
-    std::string payload = R"({"schema":"lemma.command-context/v1","command":)";
+    std::string payload = R"({"schema":"frame.command-context/v1","command":)";
     if (!api::append_json_string(payload, command)) {
       return false;
     }
@@ -391,4 +391,4 @@ auto CommandRuntime::poll_timeout(int current,
   return current;
 }
 
-} // namespace lemma::extension
+} // namespace frame::extension

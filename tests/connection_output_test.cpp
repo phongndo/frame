@@ -10,7 +10,7 @@
 
 #include <gtest/gtest.h>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 struct ScriptedConnectionWriter final {
@@ -62,4 +62,4 @@ TEST(ConnectionOutputTest, RetainsPartialWritesAcrossEagainAndRecovers) {
 }
 
 } // namespace
-} // namespace lemma::core
+} // namespace frame::core

@@ -1,5 +1,5 @@
-#ifndef LEMMA_PLATFORM_TERMINAL_MODE_HPP
-#define LEMMA_PLATFORM_TERMINAL_MODE_HPP
+#ifndef FRAME_PLATFORM_TERMINAL_MODE_HPP
+#define FRAME_PLATFORM_TERMINAL_MODE_HPP
 
 #include <chrono>
 #include <cstdint>
@@ -7,7 +7,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-namespace lemma::platform {
+namespace frame::platform {
 
 struct WindowSize final {
   std::uint16_t columns{80};
@@ -55,6 +55,6 @@ private:
   bool active_{false};
 };
 
-} // namespace lemma::platform
+} // namespace frame::platform
 
-#endif // LEMMA_PLATFORM_TERMINAL_MODE_HPP
+#endif // FRAME_PLATFORM_TERMINAL_MODE_HPP

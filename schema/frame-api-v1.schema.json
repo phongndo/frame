@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:lemma:schema:api:v1",
-  "title": "Lemma public control API",
+  "$id": "urn:frame:schema:api:v1",
+  "title": "Frame public control API",
   "description": "Canonical bounded Proc execution and asynchronous Event observation contracts.",
   "oneOf": [
     { "$ref": "#/$defs/proc" },
@@ -24,7 +24,7 @@
       "type": "object",
       "required": ["schema", "command", "endpoint", "session", "tab", "pane", "connection", "args"],
       "properties": {
-        "schema": { "const": "lemma.command-context/v1" },
+        "schema": { "const": "frame.command-context/v1" },
         "command": { "type": "string", "maxLength": 64 },
         "endpoint": { "type": "string", "pattern": "^/" },
         "session": { "$ref": "#/$defs/id" },
@@ -266,7 +266,7 @@
       "required": ["version", "api", "resources", "attachments"],
       "properties": {
         "version": { "type": "string" },
-        "api": { "const": "lemma.proc/v1" },
+        "api": { "const": "frame.proc/v1" },
         "resources": {
           "type": "object",
           "required": ["sessions", "panes", "scrollback_bytes"],
@@ -645,11 +645,11 @@
       "enum": ["applied", "no_effect", "stale", "wrong_owner", "conflict", "capacity", "unavailable", "failed"]
     },
     "commandResult": {
-      "title": "Lemma Command result v1",
+      "title": "Frame Command result v1",
       "type": "object",
       "required": ["schema", "command", "status"],
       "properties": {
-        "schema": { "const": "lemma.command-result/v1" },
+        "schema": { "const": "frame.command-result/v1" },
         "command": { "type": "string" },
         "status": { "$ref": "#/$defs/status" },
         "session": {
@@ -716,7 +716,7 @@
       "additionalProperties": false
     },
     "command": {
-      "title": "Lemma Command v1",
+      "title": "Frame Command v1",
       "oneOf": [
         {
           "type": "object",
@@ -1150,11 +1150,11 @@
       ]
     },
     "proc": {
-      "title": "Lemma Proc v1",
+      "title": "Frame Proc v1",
       "type": "object",
       "required": ["schema", "commands"],
       "properties": {
-        "schema": { "const": "lemma.proc/v1" },
+        "schema": { "const": "frame.proc/v1" },
         "on_error": { "enum": ["stop", "continue"], "default": "stop" },
         "commands": {
           "type": "array",
@@ -1166,11 +1166,11 @@
       "additionalProperties": false
     },
     "procResult": {
-      "title": "Lemma Proc result v1",
+      "title": "Frame Proc result v1",
       "type": "object",
       "required": ["schema", "ok", "results"],
       "properties": {
-        "schema": { "const": "lemma.proc-result/v1" },
+        "schema": { "const": "frame.proc-result/v1" },
         "ok": { "type": "boolean" },
         "partial": { "type": "boolean" },
         "results": {
@@ -1203,11 +1203,11 @@
       "additionalProperties": false
     },
     "subscription": {
-      "title": "Lemma Event subscription v1",
+      "title": "Frame Event subscription v1",
       "type": "object",
       "required": ["schema"],
       "properties": {
-        "schema": { "const": "lemma.events/v1" },
+        "schema": { "const": "frame.events/v1" },
         "session": { "$ref": "#/$defs/sessionSelector" },
         "pane": { "$ref": "#/$defs/paneSelector" },
         "panes": {
@@ -1294,11 +1294,11 @@
       "additionalProperties": false
     },
     "event": {
-      "title": "Lemma Event v1",
+      "title": "Frame Event v1",
       "type": "object",
       "required": ["schema", "sequence", "event"],
       "properties": {
-        "schema": { "const": "lemma.event/v1" },
+        "schema": { "const": "frame.event/v1" },
         "sequence": { "type": "integer", "minimum": 0 },
         "event": { "enum": ["snapshot", "state.changed", "attachment.changed", "pane.terminal", "pane.screen", "pane.process", "pane.closed", "pane.signal", "surface.key", "surface.mouse", "surface.paste", "surface.resized", "surface.focused", "surface.blurred", "surface.closed"] },
         "sessions": { "type": "array" },
@@ -1354,11 +1354,11 @@
       "additionalProperties": false
     },
     "extensionHello": {
-      "title": "Lemma extension Hello v1",
+      "title": "Frame extension Hello v1",
       "type": "object",
       "required": ["schema", "name", "capabilities"],
       "properties": {
-        "schema": { "const": "lemma.extension/v1" },
+        "schema": { "const": "frame.extension/v1" },
         "name": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[ -~]+$" },
         "capabilities": {
           "type": "array",
@@ -1382,7 +1382,7 @@
       "additionalProperties": false
     },
     "extensionWelcome": {
-      "title": "Lemma extension Welcome v1",
+      "title": "Frame extension Welcome v1",
       "type": "object",
       "required": ["schema", "owner", "capabilities", "limits"],
       "allOf": [
@@ -1392,7 +1392,7 @@
         }
       ],
       "properties": {
-        "schema": { "const": "lemma.extension-welcome/v1" },
+        "schema": { "const": "frame.extension-welcome/v1" },
         "owner": { "$ref": "#/$defs/id" },
         "attachment": { "$ref": "#/$defs/id" },
         "capabilities": {
@@ -1447,12 +1447,12 @@
       "additionalProperties": false
     },
     "surfaceUpdate": {
-      "title": "Lemma Surface update v1",
+      "title": "Frame Surface update v1",
       "type": "object",
       "required": ["schema", "surface"],
       "minProperties": 3,
       "properties": {
-        "schema": { "const": "lemma.surface-update/v1" },
+        "schema": { "const": "frame.surface-update/v1" },
         "surface": { "$ref": "#/$defs/id" },
         "styles": {
           "type": "array",
@@ -1500,11 +1500,11 @@
       "additionalProperties": false
     },
     "extensionError": {
-      "title": "Lemma extension error v1",
+      "title": "Frame extension error v1",
       "type": "object",
       "required": ["schema", "reason"],
       "properties": {
-        "schema": { "const": "lemma.extension-error/v1" },
+        "schema": { "const": "frame.extension-error/v1" },
         "reason": { "type": "string" }
       },
       "additionalProperties": false

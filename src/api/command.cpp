@@ -2,9 +2,9 @@
 
 #include "api/json.hpp"
 #include "core/float_layer.hpp"
-#include "lemma/command.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/command.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,7 +21,7 @@
 #include <system_error>
 #include <utility>
 
-namespace lemma::api {
+namespace frame::api {
 namespace {
 
 template <typename Id>
@@ -1821,4 +1821,4 @@ auto decode_event_subscription(const JsonValue& document) -> EventSubscriptionDe
   return {.subscription = std::move(result), .error = {}};
 }
 
-} // namespace lemma::api
+} // namespace frame::api

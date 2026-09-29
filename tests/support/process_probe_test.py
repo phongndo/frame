@@ -100,7 +100,7 @@ class CommandProbeTest(unittest.TestCase):
             timeout=10,
             check=True,
         )
-        marker = b"__LEMMA_WARM_SCROLL_DONE__"
+        marker = b"__FRAME_WARM_SCROLL_DONE__"
         self.assertEqual(result.stdout.count(marker), 2)
         self.assertTrue(marker + b"0|\r\n" in result.stdout, "missing completion 0")
         self.assertTrue(result.stdout.endswith(marker + b"1|\r\n"))
@@ -140,11 +140,11 @@ class TriggerProbeTest(unittest.TestCase):
                         process.kill()
 
     def test_only_the_prepared_token_completes_the_sample(self) -> None:
-        result = self.run_trigger(b"__LEMMA_TAB_0000_AAAAAA__")
+        result = self.run_trigger(b"__FRAME_TAB_0000_AAAAAA__")
         self.assertNotEqual(result.returncode, 0, result.stdout)
 
     def test_token_is_decoded_across_differential_cursor_moves(self) -> None:
-        reply = b"__LEMMA_TAB_0001_BC\x1b[3;20HDEFG__"
+        reply = b"__FRAME_TAB_0001_BC\x1b[3;20HDEFG__"
         result = self.run_trigger(reply)
         self.assertEqual(result.returncode, 0, result.stderr)
         measured = json.loads(result.stdout)
@@ -186,30 +186,30 @@ class PainterTest(unittest.TestCase):
         return process
 
     def test_paints_a_hidden_frame_before_acknowledging(self) -> None:
-        process = self.start("paint", b"__LEMMA_PAINT_READY__")
-        self.receipts.sendto(b"c__LEMMA_SESSION_0002_CCCCCC__", str(self.control))
+        process = self.start("paint", b"__FRAME_PAINT_READY__")
+        self.receipts.sendto(b"c__FRAME_SESSION_0002_CCCCCC__", str(self.control))
         # A frame can exceed the PTY buffer (about 1 KiB on macOS), so keep draining while
         # waiting for the receipt or the painter blocks before it can acknowledge.
         deadline = time.monotonic() + 5.0
         while not select.select([self.receipts], [], [], 0)[0]:
             self.assertLess(time.monotonic(), deadline, "painter did not acknowledge")
             process.drain(0.01)
-        self.assertEqual(self.receipts.recv(256), b"__LEMMA_SESSION_0002_CCCCCC__")
+        self.assertEqual(self.receipts.recv(256), b"__FRAME_SESSION_0002_CCCCCC__")
         process.drain(0.05)
-        self.assertIn("__LEMMA_SESSION_0002_CCCCCC__", process.screen.text())
+        self.assertIn("__FRAME_SESSION_0002_CCCCCC__", process.screen.text())
         self.assertIn("c" * 40, process.screen.text())
 
     def test_rejects_a_control_without_a_fill_letter(self) -> None:
-        process = self.start("paint", b"__LEMMA_PAINT_READY__")
-        self.receipts.sendto(b"__LEMMA_SESSION_0002_CCCCCC__", str(self.control))
+        process = self.start("paint", b"__FRAME_PAINT_READY__")
+        self.receipts.sendto(b"__FRAME_SESSION_0002_CCCCCC__", str(self.control))
         with self.assertRaisesRegex(RuntimeError, "exited unsuccessfully"):
             process.wait_for_exit(2.0)
 
     def test_resize_reports_the_new_geometry_before_the_repaint(self) -> None:
-        process = self.start("resize-paint", b"__LEMMA_RESIZE_READY__")
-        marker = "__LEMMA_RESIZE_0000_AAAAAA__"
+        process = self.start("resize-paint", b"__FRAME_RESIZE_READY__")
+        marker = "__FRAME_RESIZE_0000_AAAAAA__"
         self.receipts.sendto(b"a" + marker.encode(), str(self.control))
-        self.assertEqual(self.receipts.recv(256), b"__LEMMA_RESIZE_ARMED__")
+        self.assertEqual(self.receipts.recv(256), b"__FRAME_RESIZE_ARMED__")
         self.receipts.setblocking(False)
         completed = subprocess.run(
             [
@@ -250,7 +250,7 @@ class BlockedPeerTest(unittest.TestCase):
             dict(os.environ),
         )
         self.addCleanup(process.close)
-        process.read_until(b"__LEMMA_PTY_READY__", 2.0)
+        process.read_until(b"__FRAME_PTY_READY__", 2.0)
         self.gate.touch()
         return process
 
@@ -259,10 +259,10 @@ class BlockedPeerTest(unittest.TestCase):
         digest = 14_695_981_039_346_656_037
         for byte in payload:
             digest = ((digest ^ byte) * 1_099_511_628_211) & ((1 << 64) - 1)
-        marker = f"__LEMMA_PTY_DONE__ bytes={len(payload)} digest={digest:x}".encode()
+        marker = f"__FRAME_PTY_DONE__ bytes={len(payload)} digest={digest:x}".encode()
         process = self.start_peer(len(payload), 1_000)
         with PtyOutputMonitor(
-            process, marker, failure_markers=(b"__LEMMA_PTY_FAILED__",)
+            process, marker, failure_markers=(b"__FRAME_PTY_FAILED__",)
         ) as completion:
             for index, byte in enumerate(payload):
                 completion.check()
@@ -277,7 +277,7 @@ class BlockedPeerTest(unittest.TestCase):
     def test_stalled_partial_payload_still_reports_its_received_count(self) -> None:
         process = self.start_peer(8, 300)
         process.write_all(b"qqq", 1.0)
-        process.read_until(b"__LEMMA_PTY_FAILED__ received=3", 2.0)
+        process.read_until(b"__FRAME_PTY_FAILED__ received=3", 2.0)
 
     def test_override_cannot_disable_or_raise_the_idle_guard(self) -> None:
         for timeout in ("0", "30001", "invalid"):

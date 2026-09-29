@@ -13,10 +13,10 @@ from threading import Event
 from typing import Any
 
 from benchmarks.mux_benchmark import attach_frame, connect_blocked_client
-from extensions.lemma_client import EVENT as CLIENT_EVENT
-from extensions.lemma_client import PROC as PROC_REQUEST
-from extensions.lemma_client import Client
-from tests.support.mux_harness import LemmaServer, Session, wait_until
+from extensions.frame_client import EVENT as CLIENT_EVENT
+from extensions.frame_client import PROC as PROC_REQUEST
+from extensions.frame_client import Client
+from tests.support.mux_harness import FrameServer, Session, wait_until
 
 MAGIC = b"\x8aLME"
 HEADER = struct.Struct(">4sBBBBII")
@@ -112,7 +112,7 @@ class ExtensionPeer:
 
 class ExtensionRuntimeMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
 
     def test_python_client_defaults_negotiate_without_a_session(self) -> None:
@@ -278,7 +278,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             observer.send(
                 PROC_REQUEST,
                 {
-                    "schema": "lemma.proc/v1",
+                    "schema": "frame.proc/v1",
                     "commands": [
                         {
                             "command": "pane.input",
@@ -352,7 +352,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             observer.send(
                 PROC_REQUEST,
                 {
-                    "schema": "lemma.proc/v1",
+                    "schema": "frame.proc/v1",
                     "commands": [
                         {
                             "command": "pane.input",
@@ -415,7 +415,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
         self.addCleanup(peer.close)
         peer.send(HELLO, 1, json.loads(example.read_text()))
         welcome = peer.receive_matching(2, 1)
-        self.assertEqual(welcome["schema"], "lemma.extension-welcome/v1")
+        self.assertEqual(welcome["schema"], "frame.extension-welcome/v1")
         self.assertEqual(set(welcome["capabilities"]), {"observe", "proc", "surface"})
         self.assertIn("attachment", welcome)
         self.assertEqual(peer.receive_matching(EVENT)["event"], "snapshot")
@@ -430,11 +430,11 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "conformance",
                 "capabilities": ["proc", "surface"],
                 "events": {
-                    "schema": "lemma.events/v1",
+                    "schema": "frame.events/v1",
                     "session": {"id": session.state().id},
                 },
             },
@@ -444,7 +444,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             2,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {
                         "command": "surface.create",
@@ -473,7 +473,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                     SURFACE_UPDATE,
                     sequence,
                     {
-                        "schema": "lemma.surface-update/v1",
+                        "schema": "frame.surface-update/v1",
                         "surface": surface,
                         **case["patch"],
                     },
@@ -483,7 +483,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                     PROC,
                     sequence + 1,
                     {
-                        "schema": "lemma.proc/v1",
+                        "schema": "frame.proc/v1",
                         "commands": [{"command": "session.list"}],
                     },
                 )
@@ -511,10 +511,10 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "focus-handoff",
                 "capabilities": ["proc", "surface"],
-                "events": {"schema": "lemma.events/v1", "session": {"id": first.id}},
+                "events": {"schema": "frame.events/v1", "session": {"id": first.id}},
             },
         )
         peer.receive_matching(2, 1)
@@ -522,7 +522,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             2,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {
                         "command": "surface.create",
@@ -550,7 +550,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                 PROC,
                 sequence,
                 {
-                    "schema": "lemma.proc/v1",
+                    "schema": "frame.proc/v1",
                     "commands": [
                         {"command": "surface.focus", "surface": {"id": surface}}
                     ],
@@ -640,11 +640,11 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "opaque-input",
                 "capabilities": ["proc", "surface"],
                 "events": {
-                    "schema": "lemma.events/v1",
+                    "schema": "frame.events/v1",
                     "session": {"id": session.state().id},
                 },
             },
@@ -654,7 +654,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             2,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {
                         "command": "surface.create",
@@ -675,7 +675,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             3,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [{"command": "surface.focus", "surface": {"id": surface}}],
             },
         )
@@ -709,7 +709,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                         if event.get("event") != "surface.paste":
                             continue
                         # Python's strict UTF-8/JSON decoder and bytes.fromhex are independent
-                        # of Lemma's parser, serializer, and framing implementation.
+                        # of Frame's parser, serializer, and framing implementation.
                         self.assertNotIn("text", event)
                         chunk = bytes.fromhex(event["bytes_hex"])
                         self.assertLessEqual(len(chunk), 4096)
@@ -719,7 +719,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
         peer.send(
             PROC,
             4,
-            {"schema": "lemma.proc/v1", "commands": [{"command": "session.list"}]},
+            {"schema": "frame.proc/v1", "commands": [{"command": "session.list"}]},
         )
         self.assertTrue(peer.receive_matching(PROC_RESULT, 4)["ok"])
 
@@ -813,7 +813,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                         PROC,
                         4,
                         {
-                            "schema": "lemma.proc/v1",
+                            "schema": "frame.proc/v1",
                             "commands": [{"command": "session.list"}],
                         },
                     )
@@ -847,8 +847,8 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
     ) -> None:
         # Exercise the full public peer budget without the shipped status observer occupying it.
         self.server.close()
-        self.server = LemmaServer.from_environment(
-            config_text='require("lemma").extension.set("statusline", false)'
+        self.server = FrameServer.from_environment(
+            config_text='require("frame").extension.set("statusline", false)'
         )
         self.addCleanup(self.server.close)
         session = self.server.create_session("global-fairness", command=("cat",))
@@ -864,11 +864,11 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                 HELLO,
                 1,
                 {
-                    "schema": "lemma.extension/v1",
+                    "schema": "frame.extension/v1",
                     "name": f"fair-{index}",
                     "capabilities": ["observe", "proc", "surface"],
                     "events": {
-                        "schema": "lemma.events/v1",
+                        "schema": "frame.events/v1",
                         "session": {"id": state.id},
                         "panes": [{"id": state.focused.id}],
                         "screen": True,
@@ -892,7 +892,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                 PROC,
                 2,
                 {
-                    "schema": "lemma.proc/v1",
+                    "schema": "frame.proc/v1",
                     "commands": [
                         {
                             "command": "surface.create",
@@ -910,7 +910,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             updates = []
             for sequence in range(10, 14):
                 document: dict[str, Any] = {
-                    "schema": "lemma.surface-update/v1",
+                    "schema": "frame.surface-update/v1",
                     "surface": surface,
                     "rows": [
                         {
@@ -923,7 +923,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                     # One near-limit complete record pays the global parse/validation budget and
                     # is rejected without preventing small records on other peers from progressing.
                     document = {
-                        "schema": "lemma.surface-update/v1",
+                        "schema": "frame.surface-update/v1",
                         "surface": surface,
                         "padding": "x" * 900_000,
                     }
@@ -933,7 +933,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                     PROC,
                     14,
                     {
-                        "schema": "lemma.proc/v1",
+                        "schema": "frame.proc/v1",
                         "commands": [{"command": "session.list"}],
                     },
                 )
@@ -988,10 +988,10 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "blocked",
                 "capabilities": ["proc", "surface"],
-                "events": {"schema": "lemma.events/v1", "session": {"id": state.id}},
+                "events": {"schema": "frame.events/v1", "session": {"id": state.id}},
             },
         )
         blocked.receive_matching(2, 1)
@@ -999,7 +999,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             2,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {
                         "command": "surface.create",
@@ -1014,7 +1014,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             3,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [{"command": "surface.focus", "surface": {"id": surface}}],
             },
         )
@@ -1029,7 +1029,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                 HELLO,
                 1,
                 {
-                    "schema": "lemma.extension/v1",
+                    "schema": "frame.extension/v1",
                     "name": f"other-{index}",
                     "capabilities": ["proc"],
                 },
@@ -1047,7 +1047,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                         PROC,
                         sequence,
                         {
-                            "schema": "lemma.proc/v1",
+                            "schema": "frame.proc/v1",
                             "commands": [{"command": "session.list"}],
                         },
                     )
@@ -1101,11 +1101,11 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "process-events",
                 "capabilities": ["observe"],
                 "events": {
-                    "schema": "lemma.events/v1",
+                    "schema": "frame.events/v1",
                     "session": {"id": state.id},
                     "pane": {"id": state.focused.id},
                 },
@@ -1193,11 +1193,11 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "quiescent",
                 "capabilities": ["observe"],
                 "events": {
-                    "schema": "lemma.events/v1",
+                    "schema": "frame.events/v1",
                     "session": {"id": session.state().id},
                     "panes": panes,
                     "screen": True,
@@ -1241,13 +1241,13 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                     peer = ExtensionPeer(str(self.server.socket_path))
                     try:
                         hello: dict[str, Any] = {
-                            "schema": "lemma.extension/v1",
+                            "schema": "frame.extension/v1",
                             "name": "capabilities",
                             "capabilities": capabilities,
                         }
                         if scoped:
                             hello["events"] = {
-                                "schema": "lemma.events/v1",
+                                "schema": "frame.events/v1",
                                 "session": {"id": state.id},
                             }
                         peer.send(HELLO, 1, hello)
@@ -1298,7 +1298,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
                                 PROC,
                                 2,
                                 {
-                                    "schema": "lemma.proc/v1",
+                                    "schema": "frame.proc/v1",
                                     "commands": [{"command": "session.list"}],
                                 },
                             )
@@ -1321,10 +1321,10 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "shrink",
                 "capabilities": ["proc", "surface"],
-                "events": {"schema": "lemma.events/v1", "session": {"id": state.id}},
+                "events": {"schema": "frame.events/v1", "session": {"id": state.id}},
             },
         )
         peer.receive_matching(2, 1)
@@ -1334,7 +1334,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             nonlocal sequence
             sequence += 1
             peer.send(
-                PROC, sequence, {"schema": "lemma.proc/v1", "commands": [command]}
+                PROC, sequence, {"schema": "frame.proc/v1", "commands": [command]}
             )
             return peer.receive_matching(PROC_RESULT, sequence)
 
@@ -1424,10 +1424,10 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "scope-test",
                 "capabilities": ["proc", "surface"],
-                "events": {"schema": "lemma.events/v1", "session": {"id": original.id}},
+                "events": {"schema": "frame.events/v1", "session": {"id": original.id}},
             },
         )
         peer.receive_matching(2, 1)
@@ -1435,7 +1435,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             2,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {
                         "command": "surface.create",
@@ -1450,7 +1450,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             3,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {
                         "command": "surface.focus",
@@ -1498,10 +1498,10 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "buffered",
                 "capabilities": ["proc", "surface"],
-                "events": {"schema": "lemma.events/v1", "session": {"id": state.id}},
+                "events": {"schema": "frame.events/v1", "session": {"id": state.id}},
             },
         )
         peer.receive_matching(2, 1)
@@ -1509,7 +1509,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             2,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {
                         "command": "surface.create",
@@ -1533,7 +1533,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
         for index in range(512):
             payload = json.dumps(
                 {
-                    "schema": "lemma.surface-update/v1",
+                    "schema": "frame.surface-update/v1",
                     "surface": surface,
                     "rows": [
                         {
@@ -1574,18 +1574,18 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "runtime-test",
                 "capabilities": ["observe", "proc", "surface"],
                 "events": {
-                    "schema": "lemma.events/v1",
+                    "schema": "frame.events/v1",
                     "session": {"id": initial.id},
                 },
             },
         )
         welcome_kind, welcome_sequence, welcome = peer.receive()
         self.assertEqual((welcome_kind, welcome_sequence), (2, 1))
-        self.assertEqual(welcome["schema"], "lemma.extension-welcome/v1")
+        self.assertEqual(welcome["schema"], "frame.extension-welcome/v1")
         snapshot_kind, snapshot_sequence, snapshot = peer.receive()
         self.assertEqual((snapshot_kind, snapshot_sequence), (EVENT, 1))
         self.assertEqual(snapshot["event"], "snapshot")
@@ -1594,7 +1594,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             2,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {
                         "command": "surface.create",
@@ -1613,7 +1613,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             SURFACE_UPDATE,
             3,
             {
-                "schema": "lemma.surface-update/v1",
+                "schema": "frame.surface-update/v1",
                 "surface": surface,
                 "rows": [
                     {
@@ -1631,7 +1631,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             4,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {
                         "command": "surface.configure",
@@ -1653,7 +1653,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             5,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [{"command": "surface.focus", "surface": {"id": surface}}],
             },
         )
@@ -1695,7 +1695,7 @@ class ExtensionRuntimeMuxTest(unittest.TestCase):
             PROC,
             6,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {
                         "command": "pane.send",

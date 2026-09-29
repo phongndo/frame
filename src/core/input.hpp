@@ -1,8 +1,8 @@
-#ifndef LEMMA_CORE_INPUT_HPP
-#define LEMMA_CORE_INPUT_HPP
+#ifndef FRAME_CORE_INPUT_HPP
+#define FRAME_CORE_INPUT_HPP
 
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -10,11 +10,11 @@
 #include <memory>
 #include <span>
 
-namespace lemma::protocol {
+namespace frame::protocol {
 struct KeyInput;
 }
 
-namespace lemma::core {
+namespace frame::core {
 
 // Per-pane PTY output is allocated on demand and shares a process-wide memory budget. Queue
 // operations remain bounded and non-throwing so exhausted aggregate capacity applies backpressure.
@@ -103,6 +103,6 @@ enum class InputQueueResult : std::uint8_t {
 [[nodiscard]] auto queue_alternate_scroll_input(PanePtyWriteQueue& queue, vt::Terminal& terminal,
                                                 bool upward) noexcept -> InputQueueResult;
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_INPUT_HPP
+#endif // FRAME_CORE_INPUT_HPP

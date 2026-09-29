@@ -3,7 +3,7 @@
 #include "trace.hpp"
 
 #include "core/layout.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "render/pane_composition.hpp"
 #include "render/status_line.hpp"
 
@@ -24,7 +24,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 namespace {
 
 constexpr std::size_t composition_panes_max = 6;
@@ -408,8 +408,8 @@ private:
   for (std::size_t index = 0; index < operations; ++index) {
     if (const auto error = world->apply(random, index); error.has_value()) {
       return testing::AssertionFailure()
-             << *error << "\nreplay: LEMMA_COMPOSITION_SIM_SEED=" << seed
-             << " LEMMA_COMPOSITION_SIM_OPERATIONS=" << operations << " ./test sim";
+             << *error << "\nreplay: FRAME_COMPOSITION_SIM_SEED=" << seed
+             << " FRAME_COMPOSITION_SIM_OPERATIONS=" << operations << " ./test sim";
     }
   }
   if (hash != nullptr) {
@@ -424,9 +424,9 @@ TEST(CompositionSimulationTest, GeneratedMultiPaneIncrementalProjectionMatchesFu
   constexpr std::array seeds{0ULL, 1ULL, 0xC0FFEEULL, 0x51A7E123ULL};
   std::uint64_t selected_seed = 0;
   std::uint64_t selected_operations = composition_operations_default;
-  const bool configured = std::getenv("LEMMA_COMPOSITION_SIM_SEED") != nullptr;
-  ASSERT_TRUE(environment_u64("LEMMA_COMPOSITION_SIM_SEED", selected_seed));
-  ASSERT_TRUE(environment_u64("LEMMA_COMPOSITION_SIM_OPERATIONS", selected_operations));
+  const bool configured = std::getenv("FRAME_COMPOSITION_SIM_SEED") != nullptr;
+  ASSERT_TRUE(environment_u64("FRAME_COMPOSITION_SIM_SEED", selected_seed));
+  ASSERT_TRUE(environment_u64("FRAME_COMPOSITION_SIM_OPERATIONS", selected_operations));
   ASSERT_GT(selected_operations, 0U);
   ASSERT_LE(selected_operations, trace_operations_max);
   if (configured) {
@@ -447,4 +447,4 @@ TEST(CompositionSimulationTest, SameSeedReachesTheSameOuterTerminalState) {
 }
 
 } // namespace
-} // namespace lemma::test::sim
+} // namespace frame::test::sim

@@ -15,20 +15,20 @@ from tests.mux.test_extension_runtime import (
 )
 from tests.support.mux_harness import (
     Client,
-    LemmaServer,
+    FrameServer,
     wait_for_process_exit,
     wait_until,
 )
 
 
 class UserExtensionsMuxTest(unittest.TestCase):
-    def server(self, config: str | None = None) -> LemmaServer:
-        server = LemmaServer.from_environment(config_text=config)
+    def server(self, config: str | None = None) -> FrameServer:
+        server = FrameServer.from_environment(config_text=config)
         self.addCleanup(server.close)
         return server
 
     def test_invalid_configuration_falls_back_to_the_shipped_user_layer(self) -> None:
-        server = self.server('require("lemma").extension.set("invalid", {})')
+        server = self.server('require("frame").extension.set("invalid", {})')
         session = server.create_session("fallback", command=("cat",))
         client = session.require_client()
         client.expect_output("fallback  |")
@@ -39,7 +39,7 @@ class UserExtensionsMuxTest(unittest.TestCase):
         client.expect_output("fallback  |")
 
     def test_status_is_replaceable_and_pane_uses_the_released_row(self) -> None:
-        server = self.server('require("lemma").extension.set("statusline", false)')
+        server = self.server('require("frame").extension.set("statusline", false)')
         session = server.create_session("bare", command=("cat",))
         session.require_client().send("__NATIVE_INPUT__\r")
         session.require_client().expect_output("__NATIVE_INPUT__")
@@ -95,7 +95,7 @@ class UserExtensionsMuxTest(unittest.TestCase):
         self,
     ) -> None:
         server = self.server()
-        # A rendered status row proves lemma-ui has discovered Sessions, so "attn" below is
+        # A rendered status row proves frame-ui has discovered Sessions, so "attn" below is
         # observed from its creation, like a background agent started detached.
         server.create_session("boot", command=("cat",)).require_client().expect_output(
             "boot  |"
@@ -240,10 +240,10 @@ class UserExtensionsMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "global-observer",
                 "capabilities": ["observe"],
-                "events": {"schema": "lemma.events/v1"},
+                "events": {"schema": "frame.events/v1"},
             },
         )
         welcome = global_peer.receive_matching(2, 1)
@@ -259,11 +259,11 @@ class UserExtensionsMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "presentation-observer",
                 "capabilities": ["observe", "proc"],
                 "events": {
-                    "schema": "lemma.events/v1",
+                    "schema": "frame.events/v1",
                     "session": {"id": session.state().id},
                     "presentation": True,
                 },
@@ -334,9 +334,9 @@ class UserExtensionsMuxTest(unittest.TestCase):
             "os.execv(sys.argv[1],[sys.argv[1],'status'])"
         )
         config = f"""
-local lemma = require('lemma')
-lemma.extension.set('statusline', {{{json.dumps(sys.executable)}, '-c', {json.dumps(code)}, lemma.bundled_ui}})
-lemma.command.register('test.crash', {{description='crash', handler=function() os.exit(0) end}})
+local frame = require('frame')
+frame.extension.set('statusline', {{{json.dumps(sys.executable)}, '-c', {json.dumps(code)}, frame.bundled_ui}})
+frame.command.register('test.crash', {{description='crash', handler=function() os.exit(0) end}})
 """
         server = self.server(config)
         session = server.create_session("recovery", command=("cat",))
@@ -387,11 +387,11 @@ lemma.command.register('test.crash', {{description='crash', handler=function() o
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "focusable",
                 "capabilities": ["proc", "surface"],
                 "events": {
-                    "schema": "lemma.events/v1",
+                    "schema": "frame.events/v1",
                     "session": {"id": session.state().id},
                 },
             },
@@ -402,7 +402,7 @@ lemma.command.register('test.crash', {{description='crash', handler=function() o
             PROC,
             2,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [{"command": "surface.create", "placement": placement}],
             },
         )
@@ -413,7 +413,7 @@ lemma.command.register('test.crash', {{description='crash', handler=function() o
             PROC,
             3,
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {"command": "surface.focus", "surface": {"id": surface}},
                     {
@@ -432,7 +432,7 @@ lemma.command.register('test.crash', {{description='crash', handler=function() o
 
 class SessionPickerMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
         self.source = self.server.create_session("source", command=("cat",))
         self.client = self.source.require_client()
@@ -442,7 +442,7 @@ class SessionPickerMuxTest(unittest.TestCase):
             HELLO,
             1,
             {
-                "schema": "lemma.extension/v1",
+                "schema": "frame.extension/v1",
                 "name": "picker-test",
                 "capabilities": ["proc"],
             },
@@ -455,7 +455,7 @@ class SessionPickerMuxTest(unittest.TestCase):
         self.peer.send(
             PROC,
             self.sequence,
-            {"schema": "lemma.proc/v1", "commands": [{"command": command, **fields}]},
+            {"schema": "frame.proc/v1", "commands": [{"command": command, **fields}]},
         )
         result = self.peer.receive_matching(PROC_RESULT, self.sequence)
         self.assertTrue(result["ok"], result)

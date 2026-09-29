@@ -70,8 +70,8 @@ from mux_benchmark import (
     SHELL_STARTUP_MODES,
     TUI_REDRAW_READY,
     AttachVersionMismatch,
+    FrameRuntime,
     HerdrRuntime,
-    LemmaRuntime,
     PtyReceiptChannel,
     TmuxRuntime,
     ZellijRuntime,
@@ -166,38 +166,38 @@ class AttachVersionTest(unittest.TestCase):
 class OwnershipCensusTest(unittest.TestCase):
     # Reviewed declarations and sizes from a Release Clang dump, independent of TARGETS.
     LAYOUTS: ClassVar[dict[str, tuple[str, int]]] = {
-        "pane_semantic": ("struct lemma::core::Pane", 48),
-        "pane_runtime": ("struct lemma::core::engine_detail::PaneRuntime", 232),
+        "pane_semantic": ("struct frame::core::Pane", 48),
+        "pane_runtime": ("struct frame::core::engine_detail::PaneRuntime", 232),
         "pane_runtime_store": (
-            "class lemma::core::engine_detail::PaneRuntimeStore",
+            "class frame::core::engine_detail::PaneRuntimeStore",
             528,
         ),
-        "tab_inline": ("struct lemma::core::Tab", 2656),
-        "session_inline": ("struct lemma::core::Session", 85152),
-        "attachment_semantic": ("struct lemma::core::Attachment", 13984),
+        "tab_inline": ("struct frame::core::Tab", 2656),
+        "session_inline": ("struct frame::core::Session", 85152),
+        "attachment_semantic": ("struct frame::core::Attachment", 13984),
         "attachment_runtime": (
-            "struct lemma::core::engine_detail::AttachmentRuntime",
+            "struct frame::core::engine_detail::AttachmentRuntime",
             9096,
         ),
-        "session_record": ("struct lemma::core::engine_detail::SessionRecord", 95200),
-        "copy_mode_semantic": ("struct lemma::core::CopyModeState", 544),
+        "session_record": ("struct frame::core::engine_detail::SessionRecord", 95200),
+        "copy_mode_semantic": ("struct frame::core::CopyModeState", 544),
         "copy_mode_runtime": (
-            "struct lemma::core::engine_detail::CopyModeRuntimeState",
+            "struct frame::core::engine_detail::CopyModeRuntimeState",
             176,
         ),
         "pending_connection": (
-            "struct lemma::core::engine_detail::PendingConnection",
+            "struct frame::core::engine_detail::PendingConnection",
             144216,
         ),
-        "descriptor_owner": ("struct lemma::core::engine_detail::DescriptorOwner", 56),
-        "pty_write_queue_inline": ("class lemma::core::PanePtyWriteQueue", 32),
-        "client_decoder_inline": ("class lemma::protocol::ClientDecoder", 8312),
-        "connection_output_inline": ("class lemma::core::ConnectionOutput", 65552),
-        "client_frame_output_inline": ("class lemma::core::ClientFrameOutput", 400),
-        "frame_buffer_inline": ("class lemma::render::FrameBuffer", 40),
-        "terminal_impl_inline": ("struct lemma::vt::Terminal::Impl", 84304),
+        "descriptor_owner": ("struct frame::core::engine_detail::DescriptorOwner", 56),
+        "pty_write_queue_inline": ("class frame::core::PanePtyWriteQueue", 32),
+        "client_decoder_inline": ("class frame::protocol::ClientDecoder", 8312),
+        "connection_output_inline": ("class frame::core::ConnectionOutput", 65552),
+        "client_frame_output_inline": ("class frame::core::ClientFrameOutput", 400),
+        "frame_buffer_inline": ("class frame::render::FrameBuffer", 40),
+        "terminal_impl_inline": ("struct frame::vt::Terminal::Impl", 84304),
         "terminal_quota_allocator_inline": (
-            "class lemma::vt::detail::QuotaAllocator",
+            "class frame::vt::detail::QuotaAllocator",
             64,
         ),
     }
@@ -491,7 +491,7 @@ class UserFacingWorkloadTest(unittest.TestCase):
         for shell, login_file, other_file in (
             ("/bin/bash", "home/.bash_profile", "home/.bashrc"),
             ("/bin/zsh", "zdot/.zprofile", "zdot/.zshrc"),
-            ("/bin/dash", "home/.profile", "config/lemma/shell-startup.sh"),
+            ("/bin/dash", "home/.profile", "config/frame/shell-startup.sh"),
         ):
             with self.subTest(shell=shell), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -559,7 +559,7 @@ class UserFacingWorkloadTest(unittest.TestCase):
                     self.assertIn(action, NAVIGATION_KEYS[subject], (workload, subject))
         for subject in workloads["session_switch"]["subjects"]:
             self.assertTrue(
-                subject == "lemma" or "next_session" in NAVIGATION_KEYS[subject]
+                subject == "frame" or "next_session" in NAVIGATION_KEYS[subject]
             )
 
     def test_resize_requires_both_pane_dimensions_to_cross_the_baseline(self) -> None:
@@ -600,9 +600,9 @@ core id: 1
         )
 
 
-class LemmaBenchmarkAdapterTest(unittest.TestCase):
+class FrameBenchmarkAdapterTest(unittest.TestCase):
     def test_disabled_extension_fixture_is_not_part_of_binary_provenance(self) -> None:
-        runtime = object.__new__(LemmaRuntime)
+        runtime = object.__new__(FrameRuntime)
         runtime.server_path = Path("/server")
         runtime.cli_path = Path("/cli")
         runtime.peer_path = Path("/peer")
@@ -619,7 +619,7 @@ class LemmaBenchmarkAdapterTest(unittest.TestCase):
         self.assertEqual(provenance.call_count, 4)
 
     def test_lifecycle_sentinel_uses_the_built_quiescent_peer(self) -> None:
-        peer = Path("/fixture/lemma_test_pty_peer")
+        peer = Path("/fixture/frame_test_pty_peer")
 
         self.assertEqual(
             lifecycle_sentinel_arguments(peer),
@@ -627,12 +627,12 @@ class LemmaBenchmarkAdapterTest(unittest.TestCase):
         )
 
     def test_profile_readiness_requires_shell_execution_not_input_echo(self) -> None:
-        runtime = object.__new__(LemmaRuntime)
+        runtime = object.__new__(FrameRuntime)
         client = mock.Mock()
 
         wait_for_profile_shell(runtime, client, 17)
 
-        marker = b"__LEMMA_PROFILE_PANE_0017_READY__"
+        marker = b"__FRAME_PROFILE_PANE_0017_READY__"
         command = client.write_all.call_args.args[0]
         self.assertNotIn(marker, command)
         client.read_until.assert_called_once_with(marker, 5.0, visible_text=False)
@@ -669,7 +669,7 @@ class LemmaBenchmarkAdapterTest(unittest.TestCase):
         self.assertEqual(runtime._command.call_count, 3)
 
     def test_start_and_attach_waits_for_the_inner_shell(self) -> None:
-        for runtime_type in (LemmaRuntime, TmuxRuntime):
+        for runtime_type in (FrameRuntime, TmuxRuntime):
             with self.subTest(runtime=runtime_type.multiplexer):
                 runtime = object.__new__(runtime_type)
                 runtime.start_detached = mock.Mock()
@@ -783,9 +783,9 @@ class LemmaBenchmarkAdapterTest(unittest.TestCase):
         )
 
     def test_maps_generic_lifecycle_commands_to_the_canonical_cli(self) -> None:
-        runtime = object.__new__(LemmaRuntime)
-        runtime.cli_path = Path("/tmp/lemma-test-cli")
-        runtime.socket_path = Path("/tmp/lemma-test.sock")
+        runtime = object.__new__(FrameRuntime)
+        runtime.cli_path = Path("/tmp/frame-test-cli")
+        runtime.socket_path = Path("/tmp/frame-test.sock")
         runtime.environment = {}
 
         with mock.patch("mux_benchmark.subprocess.run") as run:
@@ -794,8 +794,8 @@ class LemmaBenchmarkAdapterTest(unittest.TestCase):
         self.assertEqual(
             run.call_args.args[0],
             [
-                "/tmp/lemma-test-cli",
-                "/tmp/lemma-test.sock",
+                "/tmp/frame-test-cli",
+                "/tmp/frame-test.sock",
                 "kill",
                 "work",
             ],
@@ -817,7 +817,7 @@ class BlockedPtyWorkloadTest(unittest.TestCase):
                 "def emit(data):\n"
                 "    while data:\n"
                 "        data = data[os.write(1, data):]\n"
-                "emit(b'__LEMMA_PTY_READY__\\r\\n')\n"
+                "emit(b'__FRAME_PTY_READY__\\r\\n')\n"
                 "# A mux may redraw even when its pane does not read input.\n"
                 "while not gate.exists():\n"
                 "    emit(b'\\r' * 32768)\n"
@@ -1032,14 +1032,14 @@ class ComparisonEvidenceTest(unittest.TestCase):
                 (tasks[-1]["subject"], tasks[-1]["phase"]), ("direct", "after")
             )
             self.assertEqual({task["subject"] for task in tasks[1:-1]}, multiplexers)
-        lemma = next(r for r in report["results"] if r["multiplexer"] == "lemma")
-        self.assertEqual(lemma["repetitions"], 2)
-        self.assertEqual(lemma["workloads"]["warm_scroll"]["status"], "completed")
+        frame = next(r for r in report["results"] if r["multiplexer"] == "frame")
+        self.assertEqual(frame["repetitions"], 2)
+        self.assertEqual(frame["workloads"]["warm_scroll"]["status"], "completed")
         self.assertEqual(
-            len(lemma["workloads"]["warm_scroll"]["key_to_outer_bytes"]["samples_ns"]),
+            len(frame["workloads"]["warm_scroll"]["key_to_outer_bytes"]["samples_ns"]),
             2,
         )
-        pooled = lemma["workloads"][sampled["id"]]
+        pooled = frame["workloads"][sampled["id"]]
         self.assertEqual(pooled["repetitions"], 2 * scale * blocks)
         endpoint = pooled["key_to_outer_bytes"]
         self.assertEqual(len(endpoint["samples_ns"]), 2 * scale * blocks)
@@ -1080,7 +1080,7 @@ class ComparisonEvidenceTest(unittest.TestCase):
         ) -> Exception | None:
             if identifier != sampled["id"] or block != 2:
                 return None
-            if subject == "lemma":
+            if subject == "frame":
                 destination.with_suffix(".stderr.log").write_text(
                     "open-loop timeout: sent=200 pty=199", encoding="utf-8"
                 )
@@ -1100,7 +1100,7 @@ class ComparisonEvidenceTest(unittest.TestCase):
         self.assertIn(sampled["id"], stderr)
         results = {result["multiplexer"]: result for result in report["results"]}
         for subject, error in (
-            ("lemma", "CalledProcessError"),
+            ("frame", "CalledProcessError"),
             ("zellij", "native open-loop probe failed"),
         ):
             pooled = results[subject]["workloads"][sampled["id"]]
@@ -1108,19 +1108,19 @@ class ComparisonEvidenceTest(unittest.TestCase):
             self.assertIn(error, pooled["error"])
             self.assertEqual(len(pooled["blocks"]), blocks)
             self.assertEqual(pooled["completed_blocks"], blocks - 1)
-        lemma_failure = next(
+        frame_failure = next(
             block
-            for block in results["lemma"]["workloads"][sampled["id"]]["blocks"]
+            for block in results["frame"]["workloads"][sampled["id"]]["blocks"]
             if block["status"] == "failed"
         )
-        self.assertIn("open-loop timeout", lemma_failure["stderr_tail"])
-        self.assertTrue(lemma_failure["fragment"].endswith(".json"))
+        self.assertIn("open-loop timeout", frame_failure["stderr_tail"])
+        self.assertTrue(frame_failure["fragment"].endswith(".json"))
         # Other subjects and workloads still completed.
         self.assertEqual(
             results["tmux"]["workloads"][sampled["id"]]["status"], "completed"
         )
         self.assertEqual(
-            results["lemma"]["workloads"]["warm_scroll"]["status"], "completed"
+            results["frame"]["workloads"]["warm_scroll"]["status"], "completed"
         )
         with self.assertRaisesRegex(ReportError, sampled["id"]):
             validate_comparison_report(report, manifest, allow_failures=True)
@@ -1166,16 +1166,16 @@ class ComparisonEvidenceTest(unittest.TestCase):
     def test_only_comparison_sampling_may_raise_a_workload_sample_count(self) -> None:
         manifest, sampled, _, _ = self.sampled_workload()
         _, report, _ = self.sampled_comparison()
-        lemma = next(r for r in report["results"] if r["multiplexer"] == "lemma")
+        frame = next(r for r in report["results"] if r["multiplexer"] == "frame")
         # A process or gate report cannot claim extra samples through the pooled count.
         standalone = {
-            **lemma,
+            **frame,
             "scenario_ids": [sampled["id"]],
-            "workloads": {sampled["id"]: lemma["workloads"][sampled["id"]]},
+            "workloads": {sampled["id"]: frame["workloads"][sampled["id"]]},
         }
         with self.assertRaisesRegex(ReportError, "expected 1 or 2"):
             validate_process_report(standalone, manifest, allow_failures=False)
-        unsampled = copy.deepcopy(lemma)
+        unsampled = copy.deepcopy(frame)
         warm = unsampled["workloads"]["warm_scroll"]
         warm["repetitions"] = 4
         warm["key_to_outer_bytes"]["samples_ns"] *= 2
@@ -1186,8 +1186,8 @@ class ComparisonEvidenceTest(unittest.TestCase):
         manifest, sampled, blocks, scale = self.sampled_workload()
         _, report, _ = self.sampled_comparison()
 
-        def lemma(document: dict[str, Any]) -> dict[str, Any]:
-            result = next(r for r in document["results"] if r["multiplexer"] == "lemma")
+        def frame(document: dict[str, Any]) -> dict[str, Any]:
+            result = next(r for r in document["results"] if r["multiplexer"] == "frame")
             return result["workloads"][sampled["id"]]
 
         def after(document: dict[str, Any]) -> dict[str, Any]:
@@ -1211,10 +1211,10 @@ class ComparisonEvidenceTest(unittest.TestCase):
             pooled["blocks"][0]["status"] = "failed"
 
         cases = (
-            (lemma, drop_samples, "did not pool every block"),
-            (lemma, drop_block, f"retained {blocks - 1} of {blocks} blocks"),
-            (lemma, drop_block_median, "block medians do not match"),
-            (lemma, duplicate_block, "invalid block indices"),
+            (frame, drop_samples, "did not pool every block"),
+            (frame, drop_block, f"retained {blocks - 1} of {blocks} blocks"),
+            (frame, drop_block_median, "block medians do not match"),
+            (frame, duplicate_block, "invalid block indices"),
             (after, drop_samples, "did not pool every block"),
             (after, drop_block, f"retained {blocks - 1} of {blocks} blocks"),
             (after, drop_block_median, "block medians do not match"),
@@ -1287,7 +1287,7 @@ class BenchEntrypointTest(unittest.TestCase):
         with mock.patch.dict(
             mux.__globals__,
             {
-                "BUILD": Path("/tmp/lemma-custom-profile"),
+                "BUILD": Path("/tmp/frame-custom-profile"),
                 "build": build,
                 "run": run,
             },
@@ -1298,7 +1298,7 @@ class BenchEntrypointTest(unittest.TestCase):
         probe_index = arguments.index("--probe")
         self.assertEqual(
             arguments[probe_index + 1],
-            "/tmp/lemma-custom-profile/lemma_benchmark_probe",
+            "/tmp/frame-custom-profile/frame_benchmark_probe",
         )
 
 
@@ -1643,7 +1643,7 @@ class BenchmarkManifestTest(unittest.TestCase):
             for item in manifest["process_workloads"]
             if item["id"] == "session_switch"
         )
-        workload["unsupported_subjects"]["lemma"] = "not reviewed"
+        workload["unsupported_subjects"]["frame"] = "not reviewed"
         with self.assertRaisesRegex(ManifestError, "only excluded subjects"):
             validate_manifest(manifest)
 
@@ -1671,7 +1671,7 @@ class BenchmarkManifestTest(unittest.TestCase):
             manifest,
             "herdr",
             "blocked_pty",
-            "peer emitted __LEMMA_PTY_FAILED__ after input loss",
+            "peer emitted __FRAME_PTY_FAILED__ after input loss",
         )
         reviewed_stall = expected_failure(
             manifest,
@@ -2071,7 +2071,7 @@ class MuxFixtureTest(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             mock.patch.dict(
                 os.environ,
-                {"PATH": "/toolchain/bin", "LEMMA_CONFIG": "/user/config.lua"},
+                {"PATH": "/toolchain/bin", "FRAME_CONFIG": "/user/config.lua"},
             ),
             mock.patch("mux_benchmark.account_login_shell", return_value="/bin/bash"),
         ):
@@ -2079,7 +2079,7 @@ class MuxFixtureTest(unittest.TestCase):
             environment = benchmark_environment(root)
             self.assertEqual(environment["PATH"], "/toolchain/bin")
             self.assertEqual(environment["HOME"], str(root / "home"))
-            self.assertNotIn("LEMMA_CONFIG", environment)
+            self.assertNotIn("FRAME_CONFIG", environment)
 
     def test_interaction_markers_are_unique_for_all_allowed_repetitions(self) -> None:
         markers = [

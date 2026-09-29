@@ -1,4 +1,4 @@
-lemma-mux-trace-v1
+frame-mux-trace-v1
 # corpus-kind: regression
 # description: resizing a zoomed tab must permit stale hidden-pane projection rectangles
 # source-trace: build/mux-sim-failures/mux-0x0.min.trace

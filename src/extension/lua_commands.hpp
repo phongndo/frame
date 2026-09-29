@@ -1,5 +1,5 @@
-#ifndef LEMMA_EXTENSION_LUA_COMMANDS_HPP
-#define LEMMA_EXTENSION_LUA_COMMANDS_HPP
+#ifndef FRAME_EXTENSION_LUA_COMMANDS_HPP
+#define FRAME_EXTENSION_LUA_COMMANDS_HPP
 
 #include "extension/commands.hpp"
 
@@ -9,7 +9,7 @@
 
 struct lua_State;
 
-namespace lemma::extension {
+namespace frame::extension {
 
 struct LuaCommands final {
   std::vector<CommandDescriptor> descriptors;
@@ -19,11 +19,11 @@ struct LuaCommands final {
   bool published{false};
 };
 
-// Installs lemma.command into the module table at the top of the Lua stack.
+// Installs frame.command into the module table at the top of the Lua stack.
 void install_commands(lua_State* state, LuaCommands& commands);
 [[nodiscard]] auto run_commands(lua_State* state, LuaCommands& commands, int descriptor) noexcept
     -> int;
 
-} // namespace lemma::extension
+} // namespace frame::extension
 
-#endif // LEMMA_EXTENSION_LUA_COMMANDS_HPP
+#endif // FRAME_EXTENSION_LUA_COMMANDS_HPP

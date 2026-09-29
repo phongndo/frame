@@ -16,7 +16,7 @@ from tests.support.pty_process import (
     PtyProcess,
 )
 
-LEMMA_OUTER_TERMINAL_RESTORE = (
+FRAME_OUTER_TERMINAL_RESTORE = (
     b"\x1b[0m\x1b[?2026l\x1b[?1l\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l"
     b"\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l"
     b"\x1b[?2004l\x1b]112\x1b\\\x1b[0 q\x1b[?25h\x1b[?7h\x1b[<u\x1b[?1049l"
@@ -61,13 +61,13 @@ class AnsiScreenTrackerTest(unittest.TestCase):
     def test_finds_marker_across_fragmented_incremental_cell_updates(self) -> None:
         tracker = AnsiScreenTracker(80, 24)
         for fragment in (
-            b"\x1b[23;1H__LEMMA_DONE",
+            b"\x1b[23;1H__FRAME_DONE",
             b"\x1b]0;ignored\x1b\\",
             b"\x1b[23;13H__",
         ):
             tracker.feed(fragment)
 
-        self.assertTrue(tracker.contains(b"__LEMMA_DONE__"))
+        self.assertTrue(tracker.contains(b"__FRAME_DONE__"))
         self.assertFalse(tracker.contains(b"ignored"))
 
     def test_reports_a_sparse_marker_overwritten_later_in_the_same_feed(self) -> None:
@@ -217,7 +217,7 @@ class PtyProcessBufferingTest(unittest.TestCase):
         process = PtyProcess(
             [sys.executable, "-c", "pass"],
             dict(os.environ),
-            terminal_restore_sequence=LEMMA_OUTER_TERMINAL_RESTORE,
+            terminal_restore_sequence=FRAME_OUTER_TERMINAL_RESTORE,
         )
         try:
             process.wait_for_exit(5.0)
@@ -227,17 +227,17 @@ class PtyProcessBufferingTest(unittest.TestCase):
             process.close()
 
     def test_retains_configured_terminal_mode_cleanup(self) -> None:
-        script = f"import os; os.write(1, {LEMMA_OUTER_TERMINAL_RESTORE!r})"
+        script = f"import os; os.write(1, {FRAME_OUTER_TERMINAL_RESTORE!r})"
         process = PtyProcess(
             [sys.executable, "-c", script],
             dict(os.environ),
-            terminal_restore_sequence=LEMMA_OUTER_TERMINAL_RESTORE,
+            terminal_restore_sequence=FRAME_OUTER_TERMINAL_RESTORE,
         )
         try:
             process.wait_for_exit(5.0)
             self.assertTrue(process.terminal_modes_restored)
             self.assertTrue(process.terminal_state_restored)
-            self.assertIn(LEMMA_OUTER_TERMINAL_RESTORE, process.final_output)
+            self.assertIn(FRAME_OUTER_TERMINAL_RESTORE, process.final_output)
         finally:
             process.close()
 

@@ -1,10 +1,10 @@
-# Lemma's virtual terminal, not the terminal hosting an attached client.
+# Frame's virtual terminal, not the terminal hosting an attached client.
 # The base matches the existing xterm-compatible Ghostty input/VT contract.
-# Cursor shape (Ss/Se) and color (Cs/Cr) are inherited because Lemma presents
+# Cursor shape (Ss/Se) and color (Cs/Cr) are inherited because Frame presents
 # the focused Pane's canonical cursor. Ms stays cancelled: application clipboard
 # writes are opt-in (terminal.clipboard_write, denied by default), so a static
 # entry cannot promise them.
-lemma|Lemma terminal multiplexer,
+frame|Frame terminal multiplexer,
 	Tc, RGB,
 	Ms@,
 	Smulx=\E[4:%p1%dm,

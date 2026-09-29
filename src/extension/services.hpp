@@ -1,5 +1,5 @@
-#ifndef LEMMA_EXTENSION_SERVICES_HPP
-#define LEMMA_EXTENSION_SERVICES_HPP
+#ifndef FRAME_EXTENSION_SERVICES_HPP
+#define FRAME_EXTENSION_SERVICES_HPP
 
 #include "config/config.hpp"
 #include "extension/lua_host.hpp"
@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace lemma::extension {
+namespace frame::extension {
 
 [[nodiscard]] auto bundled_ui_path() -> std::string;
 
@@ -32,5 +32,5 @@ private:
   std::string endpoint_;
 };
 
-} // namespace lemma::extension
+} // namespace frame::extension
 #endif

@@ -7,8 +7,8 @@
 #include "api/json.hpp"
 #include "config/config.hpp"
 #include "extension/commands.hpp"
+#include "frame/limits.hpp"
 #include "input/input_router.hpp"
-#include "lemma/limits.hpp"
 #include "platform/io.hpp"
 
 #include <algorithm>
@@ -47,7 +47,7 @@ extern "C" {
 #include <lualib.h>
 }
 
-namespace lemma::extension {
+namespace frame::extension {
 namespace {
 
 using platform::close_descriptor;
@@ -132,7 +132,7 @@ struct LuaConfiguration final {
   while (lua_next(state, absolute) != 0) {
     const auto key = lua_table_key(state);
     if (!key.has_value()) {
-      return raise_lua_error(state, "lemma.setup.input keys must be strings");
+      return raise_lua_error(state, "frame.setup.input keys must be strings");
     }
     if (*key == "preset") {
       std::size_t size = 0;
@@ -157,7 +157,7 @@ struct LuaConfiguration final {
         }
       }
     } else {
-      return raise_lua_error(state, "unknown lemma.setup.input option");
+      return raise_lua_error(state, "unknown frame.setup.input option");
     }
     lua_pop(state, 1);
   }
@@ -165,7 +165,7 @@ struct LuaConfiguration final {
     target.reset(*preset);
   }
   if (prefix_seen && !target.set_prefix(prefix)) {
-    return raise_lua_error(state, "Lemma keymap capacity reached while setting input.prefix");
+    return raise_lua_error(state, "Frame keymap capacity reached while setting input.prefix");
   }
   return 0;
 }
@@ -192,7 +192,7 @@ struct LuaConfiguration final {
       continue;
     }
     if (key != std::optional<std::string_view>{"scrollback_lines"}) {
-      return raise_lua_error(state, "unknown lemma.setup.terminal option");
+      return raise_lua_error(state, "unknown frame.setup.terminal option");
     }
     if (lua_type(state, -1) == LUA_TBOOLEAN && lua_toboolean(state, -1) == 0) {
       target.scrollback_lines = std::nullopt;
@@ -248,7 +248,7 @@ struct LuaConfiguration final {
     const auto* const option = std::ranges::find_if(
         options, [&key](const Option& candidate) { return key == candidate.name; });
     if (option == options.end()) {
-      return raise_lua_error(state, "unknown lemma.setup.ui option");
+      return raise_lua_error(state, "unknown frame.setup.ui option");
     }
     if (lua_type(state, -1) != LUA_TBOOLEAN) {
       return raise_lua_error(state, option->error);
@@ -320,7 +320,7 @@ struct LuaConfiguration final {
   while (lua_next(state, absolute) != 0) {
     const auto key = lua_table_key(state);
     if (!key.has_value()) {
-      return raise_lua_error(state, "lemma.setup.launch keys must be strings");
+      return raise_lua_error(state, "frame.setup.launch keys must be strings");
     }
     if (*key == "default_cwd") {
       std::size_t size = 0;
@@ -340,7 +340,7 @@ struct LuaConfiguration final {
         return 0;
       }
     } else {
-      return raise_lua_error(state, "unknown lemma.setup.launch option");
+      return raise_lua_error(state, "unknown frame.setup.launch option");
     }
     lua_pop(state, 1);
   }
@@ -379,7 +379,7 @@ struct LuaConfiguration final {
   while (lua_next(state, 1) != 0) {
     const auto key = lua_table_key(state);
     if (!key.has_value()) {
-      return raise_lua_error(state, "lemma.setup keys must be strings");
+      return raise_lua_error(state, "frame.setup keys must be strings");
     }
     luaL_checktype(state, -1, LUA_TTABLE);
     if ((*key == "input" && read_input_options(state, -1, target.input) != 0) ||
@@ -391,7 +391,7 @@ struct LuaConfiguration final {
     }
     if (*key != "input" && *key != "terminal" && *key != "ui" && *key != "launch" &&
         *key != "history") {
-      return raise_lua_error(state, "unknown lemma.setup option");
+      return raise_lua_error(state, "unknown frame.setup option");
     }
     lua_pop(state, 1);
   }
@@ -517,10 +517,10 @@ command_binding_action(lua_State* const state, const int index,
   const auto context = config::parse_context({context_data, context_size});
   const auto chord = config::parse_key({key_data, key_size});
   if (!context.has_value()) {
-    return raise_lua_error(state, "invalid Lemma keymap context");
+    return raise_lua_error(state, "invalid Frame keymap context");
   }
   if (!chord.has_value()) {
-    return raise_lua_error(state, "invalid Lemma key");
+    return raise_lua_error(state, "invalid Frame key");
   }
   auto disposition = input::CommandContextDisposition::retain;
   if (!lua_isnoneornil(state, 4)) {
@@ -535,10 +535,10 @@ command_binding_action(lua_State* const state, const int index,
   }
   const auto action = binding_action(state, 3, disposition);
   if (!action.has_value()) {
-    return raise_lua_error(state, "invalid Lemma keymap action");
+    return raise_lua_error(state, "invalid Frame keymap action");
   }
   if (!host_configuration(state).configuration.input.set_action(*context, *chord, *action)) {
-    return raise_lua_error(state, "Lemma keymap capacity reached");
+    return raise_lua_error(state, "Frame keymap capacity reached");
   }
   return 0;
 }
@@ -554,7 +554,7 @@ command_binding_action(lua_State* const state, const int index,
   std::size_t size = 0;
   const char* const value = luaL_checklstring(state, 1, &size);
   if (!config::parse_context({value, size}).has_value()) {
-    return raise_lua_error(state, "invalid Lemma input context");
+    return raise_lua_error(state, "invalid Frame input context");
   }
   static_cast<void>(push_action(state, "push"));
   lua_pushlstring(state, value, size);
@@ -600,7 +600,7 @@ command_binding_action(lua_State* const state, const int index,
   const auto context = config::parse_context({value, size});
   luaL_checktype(state, 2, LUA_TTABLE);
   if (!context.has_value()) {
-    return raise_lua_error(state, "invalid Lemma input context");
+    return raise_lua_error(state, "invalid Frame input context");
   }
   auto& input = host_configuration(state).configuration.input;
   const auto& current = input.contexts.at(static_cast<std::size_t>(*context));
@@ -613,7 +613,7 @@ command_binding_action(lua_State* const state, const int index,
   while (lua_next(state, 2) != 0) {
     const auto key = lua_table_key(state);
     if (!key.has_value()) {
-      return raise_lua_error(state, "lemma.context.set keys must be strings");
+      return raise_lua_error(state, "frame.context.set keys must be strings");
     }
     if (*key == "label") {
       std::size_t configured_size = 0;
@@ -657,7 +657,7 @@ command_binding_action(lua_State* const state, const int index,
       }
       preempts = lua_toboolean(state, -1) != 0;
     } else {
-      return raise_lua_error(state, "unknown lemma.context.set option");
+      return raise_lua_error(state, "unknown frame.context.set option");
     }
     lua_pop(state, 1);
   }
@@ -665,7 +665,7 @@ command_binding_action(lua_State* const state, const int index,
                                     .lifetime = lifetime,
                                     .unbound = unbound,
                                     .preempts_interaction = preempts})) {
-    return raise_lua_error(state, "invalid Lemma context options");
+    return raise_lua_error(state, "invalid Frame context options");
   }
   return 0;
 }
@@ -678,13 +678,13 @@ command_binding_action(lua_State* const state, const int index,
   const auto context = config::parse_context({context_data, context_size});
   const auto chord = config::parse_key({key_data, key_size});
   if (!context.has_value()) {
-    return raise_lua_error(state, "invalid Lemma keymap context");
+    return raise_lua_error(state, "invalid Frame keymap context");
   }
   if (!chord.has_value()) {
-    return raise_lua_error(state, "invalid Lemma key");
+    return raise_lua_error(state, "invalid Frame key");
   }
   if (!host_configuration(state).configuration.input.unbind(*context, *chord)) {
-    return raise_lua_error(state, "Lemma keymap override capacity reached");
+    return raise_lua_error(state, "Frame keymap override capacity reached");
   }
   return 0;
 }
@@ -725,7 +725,7 @@ void set_host_function(lua_State* const state, LuaConfiguration& configuration, 
   return 0;
 }
 
-void install_lemma_module(lua_State* const state, LuaConfiguration& configuration) {
+void install_frame_module(lua_State* const state, LuaConfiguration& configuration) {
   lua_createtable(state, 0, 3);
   set_host_function(state, configuration, "setup", &config_setup);
   install_commands(state, configuration.commands);
@@ -748,7 +748,7 @@ void install_lemma_module(lua_State* const state, LuaConfiguration& configuratio
   lua_setfield(state, -2, "context");
   lua_getfield(state, LUA_REGISTRYINDEX, LUA_LOADED_TABLE);
   lua_pushvalue(state, -2);
-  lua_setfield(state, -2, "lemma");
+  lua_setfield(state, -2, "frame");
   lua_pop(state, 2);
 }
 
@@ -829,7 +829,7 @@ void install_lemma_module(lua_State* const state, LuaConfiguration& configuratio
   }
   luaL_openlibs(state);
   LuaConfiguration configuration;
-  install_lemma_module(state, configuration);
+  install_frame_module(state, configuration);
   if (!install_config_search_path(state, path)) {
     static_cast<void>(send_host_message(descriptor, HostMessageStatus::failed,
                                         "failed to configure Lua module search path"));
@@ -837,7 +837,7 @@ void install_lemma_module(lua_State* const state, LuaConfiguration& configuratio
     return 1;
   }
   int status = luaL_loadbufferx(state, bundled_defaults.data(), bundled_defaults.size(),
-                                "@lemma/defaults.lua", "t");
+                                "@frame/defaults.lua", "t");
   if (status == LUA_OK) {
     status = lua_pcall(state, 0, 0, 0);
   }
@@ -967,16 +967,16 @@ struct HostFrame final {
 }
 
 [[nodiscard]] auto candidate_configuration_path() -> std::string {
-  const char* const configured = std::getenv("LEMMA_CONFIG");
+  const char* const configured = std::getenv("FRAME_CONFIG");
   if (configured != nullptr && *configured != '\0') {
     return {configured};
   }
   const char* const xdg = std::getenv("XDG_CONFIG_HOME");
   if (xdg != nullptr && *xdg == '/') {
-    return std::string(xdg) + "/lemma/init.lua";
+    return std::string(xdg) + "/frame/init.lua";
   }
   const char* const home = std::getenv("HOME");
-  return home != nullptr && *home == '/' ? std::string(home) + "/.config/lemma/init.lua"
+  return home != nullptr && *home == '/' ? std::string(home) + "/.config/frame/init.lua"
                                          : std::string{};
 }
 
@@ -1183,7 +1183,7 @@ namespace {
 auto load_configuration_impl(const std::optional<std::string_view> requested_path,
                              const bool builtins_only) noexcept -> ConfigurationLoad {
   ConfigurationLoad result;
-  const char* const configured_environment = std::getenv("LEMMA_CONFIG");
+  const char* const configured_environment = std::getenv("FRAME_CONFIG");
   const bool path_required =
       !builtins_only && (requested_path.has_value() ||
                          (configured_environment != nullptr && *configured_environment != '\0'));
@@ -1291,8 +1291,8 @@ auto ConfigurationLoader::start() noexcept -> bool {
     const auto size = platform::executable_path(executable);
     const std::string_view executable_name(executable.data(), size);
     std::string helper(executable_name.substr(0, executable_name.find_last_of('/') + 1U));
-    helper += "lemma-config-host";
-    const char* const configured = std::getenv("LEMMA_CONFIG");
+    helper += "frame-config-host";
+    const char* const configured = std::getenv("FRAME_CONFIG");
     std::string required = configured != nullptr && *configured != '\0' ? "required" : "optional";
     input_.resize(host_header_bytes + config::configuration_document_bytes_max);
     used_ = 0;
@@ -1428,4 +1428,4 @@ auto ConfigurationLoader::advance(const std::chrono::steady_clock::time_point no
   return true;
 }
 
-} // namespace lemma::extension
+} // namespace frame::extension

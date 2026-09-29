@@ -1,4 +1,4 @@
-#include "lemma/base64.hpp"
+#include "frame/base64.hpp"
 #include "render/graphics.hpp"
 #include "render/pane_composition.hpp"
 
@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace lemma::render {
+namespace frame::render {
 namespace {
 void write(vt::Terminal& terminal, const std::string_view bytes) {
   terminal.write(std::as_bytes(std::span(bytes)));
@@ -428,4 +428,4 @@ TEST(GraphicsTest, DeletedMultipartImageCannotLeaveAStalePlacement) {
   EXPECT_EQ(outer.graphics(placements).value(), 1U);
 }
 } // namespace
-} // namespace lemma::render
+} // namespace frame::render

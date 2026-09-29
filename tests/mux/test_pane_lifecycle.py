@@ -6,9 +6,9 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from extensions.lemma_client import Client
+from extensions.frame_client import Client
 from tests.support.mux_harness import (
-    LemmaServer,
+    FrameServer,
     process_exists,
     wait_for_process_exit,
     wait_until,
@@ -17,7 +17,7 @@ from tests.support.mux_harness import (
 
 class PaneLifecycleTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
 
     def test_closing_one_split_kills_only_its_child(self) -> None:
@@ -109,7 +109,7 @@ class FloatingPaneTest(unittest.TestCase):
     """Floating Panes are Core and API state; Scene composition arrives separately."""
 
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
         self.control = Client(
             str(self.server.socket_path), name="float-control", capabilities=("proc",)

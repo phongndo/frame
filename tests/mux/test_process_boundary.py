@@ -6,7 +6,7 @@ import shlex
 import unittest
 from pathlib import Path
 
-from tests.support.mux_harness import LemmaServer, process_exists, wait_until
+from tests.support.mux_harness import FrameServer, process_exists, wait_until
 
 
 def release_fifo(path: Path) -> None:
@@ -28,7 +28,7 @@ def release_fifo(path: Path) -> None:
 
 class ProcessBoundaryMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
 
     def test_final_pty_output_precedes_structured_process_exit(self) -> None:
@@ -64,10 +64,10 @@ class ProcessBoundaryMuxTest(unittest.TestCase):
         )
         pane = session.pane()
         client = session.require_client()
-        client.expect_output("__LEMMA_WINCH_READY__")
+        client.expect_output("__FRAME_WINCH_READY__")
 
         client.resize(100, 30)
-        client.expect_output("__LEMMA_WINCH_29_100__")
+        client.expect_output("__FRAME_WINCH_29_100__")
         resized = session.state()
         self.assertEqual(resized.focused_pane, pane.id)
         self.assertEqual((resized.columns, resized.rows), (100, 30))

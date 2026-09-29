@@ -1,13 +1,13 @@
 #include "core/presentation_gate.hpp"
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <chrono>
 #include <cstdint>
 #include <limits>
 #include <optional>
 
-namespace lemma::core {
+namespace frame::core {
 
 [[nodiscard]] auto PresentationGate::observe(const bool child_synchronized_output,
                                              const bool damage, const TimePoint now) noexcept
@@ -63,4 +63,4 @@ namespace lemma::core {
   return suppression_ == PresentationSuppression::held ? std::optional(deadline_) : std::nullopt;
 }
 
-} // namespace lemma::core
+} // namespace frame::core

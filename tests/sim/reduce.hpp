@@ -1,5 +1,5 @@
-#ifndef LEMMA_TESTS_SIM_REDUCE_HPP
-#define LEMMA_TESTS_SIM_REDUCE_HPP
+#ifndef FRAME_TESTS_SIM_REDUCE_HPP
+#define FRAME_TESTS_SIM_REDUCE_HPP
 
 #include <algorithm>
 #include <concepts>
@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 
 inline constexpr std::size_t trace_reduction_evaluations_max = 16'384;
 
@@ -116,6 +116,6 @@ template <typename Operation, typename FailurePredicate>
   return reduce_trace(original, std::move(fails), no_value_shrinks, evaluations_max);
 }
 
-} // namespace lemma::test::sim
+} // namespace frame::test::sim
 
-#endif // LEMMA_TESTS_SIM_REDUCE_HPP
+#endif // FRAME_TESTS_SIM_REDUCE_HPP

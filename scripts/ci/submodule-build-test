@@ -44,6 +44,6 @@ if [[ "${dependency_changed}" == false ]]; then
   # directory in the worktree. With no remaining context, build conservatively.
 fi
 
-scripts/ci/configure debug -DLEMMA_BUILD_TESTS=ON -DLEMMA_BUILD_BENCHMARKS=ON
+scripts/ci/configure debug -DFRAME_BUILD_TESTS=ON -DFRAME_BUILD_BENCHMARKS=ON
 cmake --build --preset debug
 scripts/ci/test debug

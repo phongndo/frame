@@ -1,7 +1,7 @@
 #include "terminal/terminal_impl.hpp"
 
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <array>
 #include <cstddef>
@@ -13,7 +13,7 @@
 #include <string_view>
 #include <utility>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace {
 constexpr std::size_t representations_max = 32;
 
@@ -231,4 +231,4 @@ void Terminal::cancel_clipboard() noexcept {
   }
   impl_->clipboard.reset();
 }
-} // namespace lemma::vt
+} // namespace frame::vt

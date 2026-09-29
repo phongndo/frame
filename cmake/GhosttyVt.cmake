@@ -2,29 +2,29 @@ include_guard(GLOBAL)
 
 # Build the pinned libghostty-vt without writing generated files into the Git submodule. The output
 # and both Zig caches are scoped to the active CMake binary tree and Ghostty commit.
-function(lemma_add_pinned_ghostty)
+function(frame_add_pinned_ghostty)
   set(pin_file "${CMAKE_SOURCE_DIR}/third_party/ghostty-metadata/PIN.json")
   set(
-    LEMMA_GHOSTTY_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/ghostty"
+    FRAME_GHOSTTY_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/ghostty"
     CACHE PATH "Pinned Ghostty source tree"
   )
   set(
-    LEMMA_GHOSTTY_NIX_SOURCE_REV ""
+    FRAME_GHOSTTY_NIX_SOURCE_REV ""
     CACHE STRING "Locked revision for an immutable Ghostty Nix source"
   )
   set(
-    LEMMA_GHOSTTY_ZIG_SYSTEM_DIR ""
+    FRAME_GHOSTTY_ZIG_SYSTEM_DIR ""
     CACHE PATH "Offline Zig dependency directory"
   )
   set(
-    LEMMA_GHOSTTY_ZIG_LIBC ""
+    FRAME_GHOSTTY_ZIG_LIBC ""
     CACHE FILEPATH "Zig libc installation description for sandboxed native builds"
   )
   set(
-    LEMMA_GHOSTTY_ZIG_TARGET ""
+    FRAME_GHOSTTY_ZIG_TARGET ""
     CACHE STRING "Explicit Zig target for sandboxed packaged builds"
   )
-  set(source_dir "${LEMMA_GHOSTTY_SOURCE_DIR}")
+  set(source_dir "${FRAME_GHOSTTY_SOURCE_DIR}")
 
   if(NOT EXISTS "${pin_file}")
     message(FATAL_ERROR "missing Ghostty pin metadata: ${pin_file}")
@@ -41,16 +41,16 @@ function(lemma_add_pinned_ghostty)
 
   set(GHOSTTY_PIN_FILE "${pin_file}")
   set(GHOSTTY_SOURCE_DIR "${source_dir}")
-  set(GHOSTTY_NIX_SOURCE_REV "${LEMMA_GHOSTTY_NIX_SOURCE_REV}")
+  set(GHOSTTY_NIX_SOURCE_REV "${FRAME_GHOSTTY_NIX_SOURCE_REV}")
   set(
     pin_validation_args
     "-DGHOSTTY_PIN_FILE=${pin_file}"
     "-DGHOSTTY_SOURCE_DIR=${source_dir}"
   )
-  if(LEMMA_GHOSTTY_NIX_SOURCE_REV)
+  if(FRAME_GHOSTTY_NIX_SOURCE_REV)
     list(
       APPEND pin_validation_args
-      "-DGHOSTTY_NIX_SOURCE_REV=${LEMMA_GHOSTTY_NIX_SOURCE_REV}"
+      "-DGHOSTTY_NIX_SOURCE_REV=${FRAME_GHOSTTY_NIX_SOURCE_REV}"
     )
   else()
     find_package(Git REQUIRED)
@@ -62,16 +62,16 @@ function(lemma_add_pinned_ghostty)
 
   find_program(ZIG_EXECUTABLE zig REQUIRED)
   set(zig_system_args)
-  if(LEMMA_GHOSTTY_ZIG_SYSTEM_DIR)
-    list(APPEND zig_system_args --system "${LEMMA_GHOSTTY_ZIG_SYSTEM_DIR}")
+  if(FRAME_GHOSTTY_ZIG_SYSTEM_DIR)
+    list(APPEND zig_system_args --system "${FRAME_GHOSTTY_ZIG_SYSTEM_DIR}")
   endif()
   set(zig_libc_args)
-  if(LEMMA_GHOSTTY_ZIG_LIBC)
-    list(APPEND zig_libc_args --libc "${LEMMA_GHOSTTY_ZIG_LIBC}")
+  if(FRAME_GHOSTTY_ZIG_LIBC)
+    list(APPEND zig_libc_args --libc "${FRAME_GHOSTTY_ZIG_LIBC}")
   endif()
   set(zig_target_args)
-  if(LEMMA_GHOSTTY_ZIG_TARGET)
-    list(APPEND zig_target_args "-Dtarget=${LEMMA_GHOSTTY_ZIG_TARGET}")
+  if(FRAME_GHOSTTY_ZIG_TARGET)
+    list(APPEND zig_target_args "-Dtarget=${FRAME_GHOSTTY_ZIG_TARGET}")
   endif()
   execute_process(
     COMMAND "${ZIG_EXECUTABLE}" version
@@ -157,7 +157,7 @@ function(lemma_add_pinned_ghostty)
   file(MAKE_DIRECTORY "${include_dir}")
 
   add_custom_target(
-    lemma_ghostty_vt_validate
+    frame_ghostty_vt_validate
     COMMAND "${CMAKE_COMMAND}" ${pin_validation_args} -P "${pin_validator}"
     COMMENT "Validating pinned Ghostty source"
     VERBATIM
@@ -190,13 +190,13 @@ function(lemma_add_pinned_ghostty)
     VERBATIM
     USES_TERMINAL
   )
-  add_custom_target(lemma_ghostty_vt_build DEPENDS "${static_library}")
-  if(LEMMA_VALIDATE_GHOSTTY_EVERY_BUILD)
-    add_dependencies(lemma_ghostty_vt_build lemma_ghostty_vt_validate)
+  add_custom_target(frame_ghostty_vt_build DEPENDS "${static_library}")
+  if(FRAME_VALIDATE_GHOSTTY_EVERY_BUILD)
+    add_dependencies(frame_ghostty_vt_build frame_ghostty_vt_validate)
   endif()
   # Preserve the target name used by analysis scripts and existing embedders.
   add_custom_target(zig_build_lib_vt)
-  add_dependencies(zig_build_lib_vt lemma_ghostty_vt_build)
+  add_dependencies(zig_build_lib_vt frame_ghostty_vt_build)
 
   add_library(ghostty-vt-static STATIC IMPORTED GLOBAL)
   set_target_properties(
@@ -206,14 +206,14 @@ function(lemma_add_pinned_ghostty)
       IMPORTED_LOCATION_RELEASE "${static_library}"
       INTERFACE_INCLUDE_DIRECTORIES "${include_dir}"
       INTERFACE_COMPILE_DEFINITIONS
-        "GHOSTTY_STATIC;LEMMA_GHOSTTY_EXPECT_VERSION=\"${expected_version}\";LEMMA_GHOSTTY_EXPECT_SIMD=${simd_definition};LEMMA_GHOSTTY_EXPECT_KITTY_GRAPHICS=${kitty_graphics_definition};LEMMA_GHOSTTY_EXPECT_TMUX_CONTROL_MODE=${tmux_control_definition};LEMMA_GHOSTTY_EXPECT_OPTIMIZE=${optimize_definition}"
+        "GHOSTTY_STATIC;FRAME_GHOSTTY_EXPECT_VERSION=\"${expected_version}\";FRAME_GHOSTTY_EXPECT_SIMD=${simd_definition};FRAME_GHOSTTY_EXPECT_KITTY_GRAPHICS=${kitty_graphics_definition};FRAME_GHOSTTY_EXPECT_TMUX_CONTROL_MODE=${tmux_control_definition};FRAME_GHOSTTY_EXPECT_OPTIMIZE=${optimize_definition}"
   )
   if(WIN32)
     set_property(
       TARGET ghostty-vt-static PROPERTY INTERFACE_LINK_LIBRARIES "ntdll;kernel32"
     )
   endif()
-  add_dependencies(ghostty-vt-static lemma_ghostty_vt_build)
+  add_dependencies(ghostty-vt-static frame_ghostty_vt_build)
 
   message(STATUS "Pinned Ghostty: ${pinned_commit}")
   message(STATUS "Ghostty output: ${prefix}")

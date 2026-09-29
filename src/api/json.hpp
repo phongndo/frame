@@ -1,5 +1,5 @@
-#ifndef LEMMA_API_JSON_HPP
-#define LEMMA_API_JSON_HPP
+#ifndef FRAME_API_JSON_HPP
+#define FRAME_API_JSON_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::api {
+namespace frame::api {
 
 inline constexpr std::size_t json_bytes_max = std::size_t{1} * 1'024U * 1'024U;
 inline constexpr std::size_t json_nodes_max = 4'096;
@@ -59,6 +59,6 @@ struct JsonParseResult final {
 [[nodiscard]] auto append_json_value(std::string& output, const JsonValue& value,
                                      std::size_t maximum = json_bytes_max) -> bool;
 
-} // namespace lemma::api
+} // namespace frame::api
 
-#endif // LEMMA_API_JSON_HPP
+#endif // FRAME_API_JSON_HPP

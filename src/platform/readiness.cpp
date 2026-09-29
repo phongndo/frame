@@ -16,7 +16,7 @@
 #include <sys/epoll.h>
 #endif
 
-namespace lemma::platform {
+namespace frame::platform {
 
 struct Readiness::Impl final {
 #ifdef __linux__
@@ -220,4 +220,4 @@ auto Readiness::wait(const std::span<pollfd> descriptors,
   return ::poll(descriptors.data(), static_cast<nfds_t>(descriptors.size()), timeout_milliseconds);
 }
 
-} // namespace lemma::platform
+} // namespace frame::platform

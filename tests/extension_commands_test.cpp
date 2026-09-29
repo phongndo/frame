@@ -12,7 +12,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-namespace lemma::extension {
+namespace frame::extension {
 namespace {
 
 // GTest assertions establish presence before the test examines decoded values.
@@ -183,4 +183,4 @@ TEST(ExtensionRuntimeTest, CancellationRevokesProcOwnershipButRetainsBoundedWatc
 // NOLINTEND(bugprone-unchecked-optional-access)
 
 } // namespace
-} // namespace lemma::extension
+} // namespace frame::extension

@@ -39,9 +39,9 @@
 
 namespace {
 
-constexpr std::string_view latency_visible_ack = "__LEMMA_LATENCY_VISIBLE__";
-constexpr std::string_view latency_next_ready = "__LEMMA_LATENCY_NEXT__";
-constexpr std::string_view tui_wheel_armed = "__LEMMA_TUI_WHEEL_ARMED__";
+constexpr std::string_view latency_visible_ack = "__FRAME_LATENCY_VISIBLE__";
+constexpr std::string_view latency_next_ready = "__FRAME_LATENCY_NEXT__";
+constexpr std::string_view tui_wheel_armed = "__FRAME_TUI_WHEEL_ARMED__";
 constexpr std::string_view wheel_report = "\x1B[<64;10;10M";
 constexpr std::size_t read_bytes_max = std::size_t{64} * 1'024U;
 constexpr std::size_t repetitions_max = 10'000;
@@ -173,7 +173,7 @@ struct InteractionResult final {
   if (value != 0) {
     return {};
   }
-  std::string marker("__LEMMA_");
+  std::string marker("__FRAME_");
   marker.append(label);
   marker.push_back('_');
   marker.append(digits.data(), digits.size());
@@ -969,21 +969,21 @@ void stop_child(const int descriptor, const pid_t child) noexcept {
     const auto last = interaction_marker("OUTPUT", "LAA", 9'999);
     const auto generated_profile = interaction_marker("P2_IDLE", "LAK", 0);
     constexpr std::string_view encoded_outer =
-        "__LEMMA_\x1B[23;1HOUTPUT\x1B]ignored title\x1B\\_DONE__";
+        "__FRAME_\x1B[23;1HOUTPUT\x1B]ignored title\x1B\\_DONE__";
     std::string decoded_outer;
     OuterTextDecoder decoder;
     decoder.append({encoded_outer.data(), encoded_outer.size()}, decoded_outer);
     const auto maximum_repetition_window = open_loop_send_window(10'000U, 8'333'000U);
     const auto first_token =
-        lemma::diagnostic::latency_trace_marker_token(std::as_bytes(std::span(first)));
+        frame::diagnostic::latency_trace_marker_token(std::as_bytes(std::span(first)));
     const auto last_token =
-        lemma::diagnostic::latency_trace_marker_token(std::as_bytes(std::span(last)));
+        frame::diagnostic::latency_trace_marker_token(std::as_bytes(std::span(last)));
     return first_token != 0 && last_token != 0 && first_token != last_token &&
-                   first == "__LEMMA_OUTPUT_0000_AAAAAA__" &&
-                   last == "__LEMMA_OUTPUT_9999_YYYYJP__" &&
-                   generated_profile == "__LEMMA_P2_IDLE_0000_ZZZUCE__" &&
+                   first == "__FRAME_OUTPUT_0000_AAAAAA__" &&
+                   last == "__FRAME_OUTPUT_9999_YYYYJP__" &&
+                   generated_profile == "__FRAME_P2_IDLE_0000_ZZZUCE__" &&
                    interaction_marker("OUTPUT", "OUT", 0).empty() &&
-                   decoded_outer == "__LEMMA_OUTPUT_DONE__" &&
+                   decoded_outer == "__FRAME_OUTPUT_DONE__" &&
                    maximum_repetition_window > std::chrono::seconds(80)
                ? 0
                : 1;

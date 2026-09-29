@@ -3,12 +3,12 @@ from __future__ import annotations
 import time
 import unittest
 
-from tests.support.mux_harness import LemmaServer, wait_until
+from tests.support.mux_harness import FrameServer, wait_until
 
 
 class CommandLineTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
 
     def test_prompt_opens_clear_and_history_remains_available(self) -> None:
@@ -43,7 +43,7 @@ class CommandLineTest(unittest.TestCase):
         client.send(b"\x15" + b"unknown-command\r")
         client.expect_output("Error: Unknown command")
         self.assertFalse(client.screen_text().splitlines()[0].startswith(":"))
-        self.assertNotIn("lemma.command-result", client.screen_text())
+        self.assertNotIn("frame.command-result", client.screen_text())
 
         # Entering command mode replaces the message with a clean prompt.
         client.prefix(":")
@@ -127,10 +127,10 @@ class CommandLineTest(unittest.TestCase):
         )
 
     def test_configured_history_file_seeds_a_new_attachment_after_restart(self) -> None:
-        persistent = LemmaServer.from_environment(
+        persistent = FrameServer.from_environment(
             config_text=(
-                'local lemma = require("lemma")\n'
-                'lemma.setup({ history = { file = os.getenv("HOME") .. "/commands" } })'
+                'local frame = require("frame")\n'
+                'frame.setup({ history = { file = os.getenv("HOME") .. "/commands" } })'
             )
         )
         self.addCleanup(persistent.close)

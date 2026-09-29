@@ -1,4 +1,4 @@
-#include "lemma/terminal/terminal.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "render/frame_buffer.hpp"
 
 #include <cstddef>
@@ -9,7 +9,7 @@
 
 namespace {
 
-void print_stats(const char* const label, const lemma::vt::AllocationStats stats) {
+void print_stats(const char* const label, const frame::vt::AllocationStats stats) {
   std::cout << '"' << label << R"(":{"bytes_current":)" << stats.bytes_current
             << R"(,"bytes_peak":)" << stats.bytes_peak << R"(,"allocations_current":)"
             << stats.allocations_current << R"(,"allocations_total":)" << stats.allocations_total
@@ -19,19 +19,19 @@ void print_stats(const char* const label, const lemma::vt::AllocationStats stats
 } // namespace
 
 int main() {
-  lemma::vt::TerminalOptions options;
-  auto terminal_result = lemma::vt::Terminal::create(options);
+  frame::vt::TerminalOptions options;
+  auto terminal_result = frame::vt::Terminal::create(options);
   if (!terminal_result.has_value()) {
     return 1;
   }
   auto terminal = std::move(*terminal_result);
   const auto created = terminal.allocation_stats();
 
-  lemma::render::FrameBuffer frame;
+  frame::render::FrameBuffer frame;
   if (!frame.prepare({.columns = options.size.columns, .rows = options.size.rows})) {
     return 1;
   }
-  const auto rendered = lemma::render::compose_retained_single_pane(terminal, frame, true);
+  const auto rendered = frame::render::compose_retained_single_pane(terminal, frame, true);
   if (!rendered.has_value()) {
     return 1;
   }

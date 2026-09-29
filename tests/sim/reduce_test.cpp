@@ -10,7 +10,7 @@
 #include <span>
 #include <vector>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 namespace {
 
 struct ReducerOperation final {
@@ -86,4 +86,4 @@ TEST(TraceReductionTest, StopsAtTheConfiguredEvaluationBound) {
 }
 
 } // namespace
-} // namespace lemma::test::sim
+} // namespace frame::test::sim

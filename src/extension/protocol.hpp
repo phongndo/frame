@@ -1,7 +1,7 @@
-#ifndef LEMMA_EXTENSION_PROTOCOL_HPP
-#define LEMMA_EXTENSION_PROTOCOL_HPP
+#ifndef FRAME_EXTENSION_PROTOCOL_HPP
+#define FRAME_EXTENSION_PROTOCOL_HPP
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <array>
 #include <cstddef>
@@ -11,15 +11,15 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::extension {
+namespace frame::extension {
 
 inline constexpr std::array<std::byte, 4> protocol_magic{std::byte{0x8a}, std::byte{'L'},
                                                          std::byte{'M'}, std::byte{'E'}};
 inline constexpr std::uint8_t protocol_major = 1;
 inline constexpr std::uint8_t protocol_minor = 0;
 inline constexpr std::size_t protocol_header_bytes = limits::extension_record_header_bytes;
-inline constexpr std::string_view protocol_schema = "lemma.extension/v1";
-inline constexpr std::string_view surface_update_schema = "lemma.surface-update/v1";
+inline constexpr std::string_view protocol_schema = "frame.extension/v1";
+inline constexpr std::string_view surface_update_schema = "frame.surface-update/v1";
 
 enum class RecordKind : std::uint8_t {
   hello = 1,
@@ -114,6 +114,6 @@ private:
   RecordKind output_record_kind_{RecordKind::error};
 };
 
-} // namespace lemma::extension
+} // namespace frame::extension
 
-#endif // LEMMA_EXTENSION_PROTOCOL_HPP
+#endif // FRAME_EXTENSION_PROTOCOL_HPP

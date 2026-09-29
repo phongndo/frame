@@ -1,4 +1,4 @@
-"""Deterministic real-process harness for Lemma mux behavior."""
+"""Deterministic real-process harness for Frame mux behavior."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import TypeVar
 from tests.support.pty_process import PtyProcess
 
 ALT_SCREEN = b"\x1b[?1049h"
-LEMMA_OUTER_TERMINAL_RESTORE = (
+FRAME_OUTER_TERMINAL_RESTORE = (
     b"\x18\x1b_Gq=2,m=0;\x1b\\\x1b_Ga=d,d=A,q=2\x1b\\"
     b"\x1b]8;;\x1b\\\x1b[0m\x1b[?2026l\x1b[r\x1b[?1l\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l"
     b"\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l"
@@ -127,7 +127,7 @@ def wait_for_process_exit(
 
 class Client:
     def __init__(
-        self, server: LemmaServer, session: str, columns: int, rows: int
+        self, server: FrameServer, session: str, columns: int, rows: int
     ) -> None:
         self.server = server
         self.session = session
@@ -141,7 +141,7 @@ class Client:
                 session,
             ],
             server.environment,
-            terminal_restore_sequence=LEMMA_OUTER_TERMINAL_RESTORE,
+            terminal_restore_sequence=FRAME_OUTER_TERMINAL_RESTORE,
         )
         if (columns, rows) != (80, 24):
             self.process.resize(columns, rows)
@@ -222,7 +222,7 @@ class Client:
         self.process.close()
 
 
-class LemmaServer:
+class FrameServer:
     def __init__(
         self,
         server: str | Path,
@@ -238,7 +238,7 @@ class LemmaServer:
         for binary in (self.server_path, self.cli_path, self.peer_path):
             if not binary.is_file():
                 raise FileNotFoundError(binary)
-        self.temporary = tempfile.TemporaryDirectory(prefix="lemma-mux-test-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="frame-mux-test-")
         self.root = Path(self.temporary.name)
         self.socket_path = self.root / "daemon.sock"
         self.log_path = self.root / "server.log"
@@ -250,9 +250,9 @@ class LemmaServer:
         # A fresh ZDOTDIR must not launch zsh-newuser-install instead of the test shell.
         (zdot / ".zshrc").write_text("", encoding="utf-8")
         if config_text is not None:
-            lemma_config = config / "lemma"
-            lemma_config.mkdir(mode=0o700)
-            (lemma_config / "init.lua").write_text(config_text)
+            frame_config = config / "frame"
+            frame_config.mkdir(mode=0o700)
+            (frame_config / "init.lua").write_text(config_text)
         self.environment = {
             "HOME": str(home),
             "XDG_CONFIG_HOME": str(config),
@@ -288,8 +288,8 @@ class LemmaServer:
         *,
         config_text: str | None = None,
         environment: dict[str, str] | None = None,
-    ) -> LemmaServer:
-        required = ("LEMMA_TEST_SERVER", "LEMMA_TEST_CLI", "LEMMA_TEST_PTY_PEER")
+    ) -> FrameServer:
+        required = ("FRAME_TEST_SERVER", "FRAME_TEST_CLI", "FRAME_TEST_PTY_PEER")
         missing = [name for name in required if not os.environ.get(name)]
         if missing:
             raise RuntimeError(
@@ -301,7 +301,7 @@ class LemmaServer:
             environment=environment,
         )
 
-    def __enter__(self) -> LemmaServer:
+    def __enter__(self) -> FrameServer:
         return self
 
     def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
@@ -311,7 +311,7 @@ class LemmaServer:
         def connect() -> bool | None:
             if self.process.poll() is not None:
                 raise RuntimeError(
-                    f"Lemma server exited during startup with {self.process.returncode}\n{self.logs()}"
+                    f"Frame server exited during startup with {self.process.returncode}\n{self.logs()}"
                 )
             peer = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
@@ -322,7 +322,7 @@ class LemmaServer:
                 peer.close()
             return True
 
-        wait_until("Lemma daemon socket", connect, diagnostics=self.logs)
+        wait_until("Frame daemon socket", connect, diagnostics=self.logs)
 
     def command(self, *arguments: str, timeout: float = 5.0) -> CommandResult:
         completed = subprocess.run(
@@ -552,7 +552,7 @@ class LemmaServer:
 
 
 class Session:
-    def __init__(self, server: LemmaServer, name: str) -> None:
+    def __init__(self, server: FrameServer, name: str) -> None:
         self.server = server
         self.name = name
         self.client: Client | None = None

@@ -2,10 +2,10 @@
 set -euo pipefail
 
 scripts/ci/configure debug \
-  -DLEMMA_BUILD_TESTS=ON \
-  -DLEMMA_BUILD_BENCHMARKS=OFF
+  -DFRAME_BUILD_TESTS=ON \
+  -DFRAME_BUILD_BENCHMARKS=OFF
 # Prepare generated includes without building the application.
-cmake --build --preset debug --target lemma_analysis_inputs
+cmake --build --preset debug --target frame_analysis_inputs
 
 # check-clangd.sh disables per-token feature tests and promotes all emitted warnings to failures, so
 # this lane can validate every production source/header without exercising hover and code actions.

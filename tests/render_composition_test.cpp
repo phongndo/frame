@@ -1,5 +1,5 @@
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "render/grid.hpp"
 #include "render/pane_composition.hpp"
 #include "render/scene.hpp"
@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::render {
+namespace frame::render {
 namespace {
 
 [[nodiscard]] auto make_terminal(const std::uint16_t columns, const std::uint16_t rows)
@@ -111,7 +111,7 @@ TEST(PaneCompositionTest, ErasesLongBlankTailsWithoutTouchingNeighboringPanes) {
   ASSERT_TRUE(initial.has_value());
   outer.write(std::span(output).first(initial->bytes));
 
-  write_text(left, "\x1B[H__LEMMA_OUTPUT_0000_AAAAAA__\x1B[K");
+  write_text(left, "\x1B[H__FRAME_OUTPUT_0000_AAAAAA__\x1B[K");
   const auto changed =
       compose_frame(panes, {.columns = 88, .rows = 2}, output, false, {}, initial->outer_modes);
   ASSERT_TRUE(changed.has_value());
@@ -119,7 +119,7 @@ TEST(PaneCompositionTest, ErasesLongBlankTailsWithoutTouchingNeighboringPanes) {
   outer.write(std::span(output).first(changed->bytes));
 
   auto expected = make_terminal(88, 2);
-  write_text(expected, "__LEMMA_OUTPUT_0000_AAAAAA__\x1B[1;81Hneighbor\x1B[2;1H ");
+  write_text(expected, "__FRAME_OUTPUT_0000_AAAAAA__\x1B[1;81Hneighbor\x1B[2;1H ");
   std::array<std::byte, 1024> actual_text{};
   std::array<std::byte, 1024> expected_text{};
   const auto actual_size = outer.format_screen(vt::ScreenFormat::plain, actual_text);
@@ -171,7 +171,7 @@ TEST(PaneCompositionTest, StatusControlHitTestMatchesRenderedLabelsAndOverflow) 
       StatusTab{.number = 2, .title = "nvim", .active = true},
       StatusTab{.number = 3, .title = "logs"},
   };
-  const StatusLine status{.session_name = "lemma",
+  const StatusLine status{.session_name = "frame",
                           .tabs = tabs,
                           .prompt_target = StatusPromptTarget::none,
                           .prompt_feedback = StatusPromptFeedback::none,
@@ -774,7 +774,7 @@ TEST(PaneCompositionTest, DrawsBoldSessionBeforeLeftAlignedTabs) {
   std::array<std::byte, std::size_t{16} * 1'024U> output{};
 
   const auto result = compose_frame(std::span(&pane, 1), {.columns = 40, .rows = 3}, output, true,
-                                    {.session_name = "lemma",
+                                    {.session_name = "frame",
                                      .tabs = tabs,
                                      .prompt_target = StatusPromptTarget::none,
                                      .prompt_feedback = StatusPromptFeedback::none,
@@ -785,7 +785,7 @@ TEST(PaneCompositionTest, DrawsBoldSessionBeforeLeftAlignedTabs) {
 
   ASSERT_TRUE(result.has_value());
   const auto encoded = as_text(std::span(output).first(result->bytes));
-  EXPECT_THAT(encoded, testing::HasSubstr("\x1B[1;1H\x1B[0;1m lemma \x1B[0m | 1:zsh"));
+  EXPECT_THAT(encoded, testing::HasSubstr("\x1B[1;1H\x1B[0;1m frame \x1B[0m | 1:zsh"));
   EXPECT_THAT(encoded, testing::HasSubstr("\x1B[0;1m[ 2:nvim ]"));
   EXPECT_THAT(encoded, testing::Not(testing::HasSubstr("\x1B[0;2m")));
   EXPECT_THAT(encoded, testing::Not(testing::HasSubstr("\x1B[38")));
@@ -1793,4 +1793,4 @@ TEST(PaneCompositionTest, EnforcesPaneAndOutputBounds) {
 }
 
 } // namespace
-} // namespace lemma::render
+} // namespace frame::render

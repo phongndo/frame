@@ -6,7 +6,7 @@ build_type := if profile == "release" { "Release" } else if profile == "dev" { "
 conan_build_type := if profile == "dev" { "Release" } else { build_type }
 cpp_files := "apps include src tests benchmarks fuzz"
 python_paths := "bench benchmarks extensions scripts test tests tools conanfile.py"
-ghostty_cmake := if env_var_or_default("LEMMA_GHOSTTY_SOURCE_DIR", "") != "" { "-DLEMMA_GHOSTTY_SOURCE_DIR=" + env_var("LEMMA_GHOSTTY_SOURCE_DIR") + " -DLEMMA_GHOSTTY_NIX_SOURCE_REV=" + env_var_or_default("LEMMA_GHOSTTY_NIX_SOURCE_REV", "") + " -DLEMMA_GHOSTTY_ZIG_SYSTEM_DIR=" + env_var_or_default("LEMMA_GHOSTTY_ZIG_SYSTEM_DIR", "") } else { "" }
+ghostty_cmake := if env_var_or_default("FRAME_GHOSTTY_SOURCE_DIR", "") != "" { "-DFRAME_GHOSTTY_SOURCE_DIR=" + env_var("FRAME_GHOSTTY_SOURCE_DIR") + " -DFRAME_GHOSTTY_NIX_SOURCE_REV=" + env_var_or_default("FRAME_GHOSTTY_NIX_SOURCE_REV", "") + " -DFRAME_GHOSTTY_ZIG_SYSTEM_DIR=" + env_var_or_default("FRAME_GHOSTTY_ZIG_SYSTEM_DIR", "") } else { "" }
 
 _default:
     @just --list
@@ -49,7 +49,7 @@ configure: deps
         -DCMAKE_BUILD_TYPE={{ build_type }} \
         -DCMAKE_TOOLCHAIN_FILE="$PWD/build/{{ profile }}/conan/conan_toolchain.cmake" \
         {{ ghostty_cmake }} \
-        -DLEMMA_BUILD_TESTS=ON -DLEMMA_BUILD_BENCHMARKS=ON
+        -DFRAME_BUILD_TESTS=ON -DFRAME_BUILD_BENCHMARKS=ON
 
 # Build the application, tests, and benchmarks.
 build: configure
@@ -61,23 +61,23 @@ run *args:
 
 # Run the scripted libghostty-vt demo without adding a production CLI command.
 demo: build
-    {{ nix }} ./build/{{ profile }}/lemma_test_cli /tmp/lemma-demo-unused.sock demo
+    {{ nix }} ./build/{{ profile }}/frame_test_cli /tmp/frame-demo-unused.sock demo
 
 # Run the fast native and real-mux developer suite (stress/extended remain explicit).
 test:
-    {{ nix }} LEMMA_TEST_PROFILE={{ profile }} ./test
+    {{ nix }} FRAME_TEST_PROFILE={{ profile }} ./test
 
 # Run the short Release native benchmark smoke (use ./bench <domain> for filtering).
 bench:
-    {{ nix }} LEMMA_BENCH_PROFILE=release ./bench
+    {{ nix }} FRAME_BENCH_PROFILE=release ./bench
 
-# Run release native and direct/Lemma/tmux/Zellij/Herdr process baselines.
+# Run release native and direct/Frame/tmux/Zellij/Herdr process baselines.
 mux-bench:
     {{ nix }} scripts/ci/benchmarks extended
 
-# Compare coding-agent behavior with and without the embedded Lemma skill.
+# Compare coding-agent behavior with and without the embedded Frame skill.
 skill-bench *args:
-    {{ nix }} uv run --locked python tools/benchmark_lemma_skill.py "$@"
+    {{ nix }} uv run --locked python tools/benchmark_frame_skill.py "$@"
 
 # Prove regression detectors reject isolated production-source faults (opt-in, not timing evidence).
 detection-check *args:
@@ -116,7 +116,7 @@ fmt-check:
     {{ nix }} uv run --locked ruff format --check {{ python_paths }}
 
 _analysis-inputs: configure
-    {{ nix }} cmake --build --preset {{ profile }} --target lemma_analysis_inputs
+    {{ nix }} cmake --build --preset {{ profile }} --target frame_analysis_inputs
 
 # Run responsive clang-tidy checks in parallel; ci-lint adds the slower Static Analyzer.
 lint: _analysis-inputs
@@ -203,7 +203,7 @@ ci-check: docs-check
 
 # Configure the debug tree and install this repository's hk hooks.
 hooks:
-    {{ nix }} bash -c 'scripts/ci/configure debug -DLEMMA_BUILD_TESTS=ON -DLEMMA_BUILD_BENCHMARKS=ON && hk validate && hk install'
+    {{ nix }} bash -c 'scripts/ci/configure debug -DFRAME_BUILD_TESTS=ON -DFRAME_BUILD_BENCHMARKS=ON && hk validate && hk install'
 
 # Run every fast and pre-push hk check over the repository.
 hooks-check:

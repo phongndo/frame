@@ -1,11 +1,11 @@
-#ifndef LEMMA_TESTS_SIM_RANDOM_HPP
-#define LEMMA_TESTS_SIM_RANDOM_HPP
+#ifndef FRAME_TESTS_SIM_RANDOM_HPP
+#define FRAME_TESTS_SIM_RANDOM_HPP
 
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 
 // SplitMix64 gives the simulator one small, stable random stream. Its output is part of the replay
 // contract: changing this algorithm intentionally invalidates seed-only replay across commits.
@@ -39,6 +39,6 @@ private:
   std::uint64_t state_;
 };
 
-} // namespace lemma::test::sim
+} // namespace frame::test::sim
 
-#endif // LEMMA_TESTS_SIM_RANDOM_HPP
+#endif // FRAME_TESTS_SIM_RANDOM_HPP

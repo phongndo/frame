@@ -1,7 +1,7 @@
 #include "input/input_router.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/limits.hpp"
+#include "frame/assert.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -18,7 +18,7 @@
 #include <utility>
 #include <variant>
 
-namespace lemma::input {
+namespace frame::input {
 namespace {
 
 [[nodiscard]] constexpr auto chord_valid(const InputChord chord) noexcept -> bool {
@@ -415,7 +415,7 @@ auto push_context(const InputContextId context, const std::span<const std::byte>
 InputRouter::InputRouter(const CompiledInputMap& map) noexcept : map_(&map) { reset(); }
 
 void InputRouter::reset() noexcept {
-  LEMMA_ASSERT(map_ != nullptr && map_->context_count_ > 0U);
+  FRAME_ASSERT(map_ != nullptr && map_->context_count_ > 0U);
   stack_ = {};
   captured_contexts_ = {};
   stack_.front().context = InputContextId(0);
@@ -438,7 +438,7 @@ void InputRouter::reconfigure(const CompiledInputMap& map) noexcept {
 
 void InputRouter::select_base(const ConfiguredInputContext selected) noexcept {
   const auto slot = static_cast<std::uint8_t>(selected);
-  LEMMA_ASSERT(selected < ConfiguredInputContext::count && slot < map_->context_count_);
+  FRAME_ASSERT(selected < ConfiguredInputContext::count && slot < map_->context_count_);
   const auto context_id = InputContextId(slot);
   if (stack_.front().context == context_id) {
     return;
@@ -451,18 +451,18 @@ void InputRouter::select_base(const ConfiguredInputContext selected) noexcept {
 }
 
 auto InputRouter::active_frame() noexcept -> ContextFrame& {
-  LEMMA_ASSERT(depth_ > 0U && depth_ <= stack_.size());
+  FRAME_ASSERT(depth_ > 0U && depth_ <= stack_.size());
   return std::span(stack_).subspan(depth_ - 1U, 1).front();
 }
 
 auto InputRouter::active_frame() const noexcept -> const ContextFrame& {
-  LEMMA_ASSERT(depth_ > 0U && depth_ <= stack_.size());
+  FRAME_ASSERT(depth_ > 0U && depth_ <= stack_.size());
   return std::span(stack_).subspan(depth_ - 1U, 1).front();
 }
 
 auto InputRouter::context(const InputContextId id) const noexcept
     -> const CompiledInputMap::Context& {
-  LEMMA_ASSERT(map_ != nullptr && id.valid() && id.slot_ < map_->context_count_);
+  FRAME_ASSERT(map_ != nullptr && id.valid() && id.slot_ < map_->context_count_);
   return std::span(map_->contexts_).subspan(id.slot_, 1).front();
 }
 
@@ -538,7 +538,7 @@ auto InputRouter::forwarded(const PhysicalKey key) const noexcept -> bool {
 
 auto InputRouter::captured_context(const PhysicalKey key) const noexcept -> InputContextId {
   const auto index = static_cast<std::size_t>(key);
-  LEMMA_ASSERT(index < static_cast<std::size_t>(PhysicalKey::count) && captured(key));
+  FRAME_ASSERT(index < static_cast<std::size_t>(PhysicalKey::count) && captured(key));
   const auto packed = std::span(captured_contexts_).subspan(index / 2U, 1).front();
   const auto slot = index % 2U == 0U ? static_cast<std::uint8_t>(packed & 0x0FU)
                                      : static_cast<std::uint8_t>(packed >> 4U);
@@ -551,7 +551,7 @@ void InputRouter::capture(const PhysicalKey key, const InputContextId context_id
   if (bit == 0U || index >= static_cast<std::size_t>(PhysicalKey::count)) {
     return;
   }
-  LEMMA_ASSERT(context_id.valid() && context_id.slot_ < input_contexts_max && !forwarded(key));
+  FRAME_ASSERT(context_id.valid() && context_id.slot_ < input_contexts_max && !forwarded(key));
   captured_keys_ |= bit;
   auto& packed = std::span(captured_contexts_).subspan(index / 2U, 1).front();
   if (index % 2U == 0U) {
@@ -567,7 +567,7 @@ void InputRouter::forward(const PhysicalKey key) noexcept {
   if (bit == 0U) {
     return;
   }
-  LEMMA_ASSERT(!captured(key));
+  FRAME_ASSERT(!captured(key));
   forwarded_keys_ |= bit;
 }
 
@@ -589,7 +589,7 @@ void InputRouter::release(const PhysicalKey key) noexcept {
 // NOLINTNEXTLINE(bugprone-exception-escape,readability-function-cognitive-complexity)
 auto InputRouter::route_legacy(const std::span<const std::byte> input,
                                const std::size_t forward_limit) noexcept -> LegacyRouteResult {
-  LEMMA_ASSERT(!input.empty() && forward_limit > 0U);
+  FRAME_ASSERT(!input.empty() && forward_limit > 0U);
   const auto before = active_frame().context;
   const auto& metadata = context(before);
 
@@ -621,7 +621,7 @@ auto InputRouter::route_legacy(const std::span<const std::byte> input,
   }
 
   if (matched == nullptr && metadata.unbound == UnboundBehavior::retry_base) {
-    LEMMA_ASSERT(metadata.lifetime == ContextLifetime::one_shot);
+    FRAME_ASSERT(metadata.lifetime == ContextLifetime::one_shot);
     pop();
     auto retried = route_legacy(input, forward_limit);
     retried.presentation_changed = retried.presentation_changed || visible_context_changed(before);
@@ -679,7 +679,7 @@ auto InputRouter::route_legacy(const std::span<const std::byte> input,
         } else if constexpr (std::is_same_v<Action, PushContextBinding>) {
           const auto pushed =
               push(action.context, std::span(action.deferred).first(action.deferred_size));
-          LEMMA_ASSERT(pushed);
+          FRAME_ASSERT(pushed);
           preempt_interaction = context(action.context).preempts_interaction;
         } else if constexpr (std::is_same_v<Action, PopContextBinding>) {
           pop();
@@ -736,7 +736,7 @@ auto InputRouter::route_key(const KeyEvent& event) noexcept -> KeyRouteResult {
   const auto& metadata = context(before);
   const auto* const matched = binding(before, key_chord(event));
   if (matched == nullptr && metadata.unbound == UnboundBehavior::retry_base) {
-    LEMMA_ASSERT(metadata.lifetime == ContextLifetime::one_shot);
+    FRAME_ASSERT(metadata.lifetime == ContextLifetime::one_shot);
     pop();
     auto retried = route_key(event);
     retried.presentation_changed = retried.presentation_changed || visible_context_changed(before);
@@ -801,7 +801,7 @@ auto InputRouter::route_key(const KeyEvent& event) noexcept -> KeyRouteResult {
         } else if constexpr (std::is_same_v<Action, PushContextBinding>) {
           const auto pushed =
               push(action.context, std::span(action.deferred).first(action.deferred_size));
-          LEMMA_ASSERT(pushed);
+          FRAME_ASSERT(pushed);
           preempt_interaction = context(action.context).preempts_interaction;
         } else if constexpr (std::is_same_v<Action, PopContextBinding>) {
           pop();
@@ -1064,7 +1064,7 @@ auto compile_input_map(const InputMapConfiguration& configuration) noexcept
 auto default_input_map() noexcept -> const CompiledInputMap& {
   static const CompiledInputMap map = [] {
     auto compiled = compile_input_map(InputMapConfiguration{});
-    LEMMA_ASSERT(compiled.has_value());
+    FRAME_ASSERT(compiled.has_value());
     return std::move(*compiled);
   }();
   return map;
@@ -1080,4 +1080,4 @@ static_assert(input_context_stack_max <= 0xFFU);
 static_assert(input_context_label_bytes_max <= 0xFFU);
 static_assert(deferred_input_bytes_max <= 0xFFU);
 
-} // namespace lemma::input
+} // namespace frame::input

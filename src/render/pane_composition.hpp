@@ -1,7 +1,7 @@
-#ifndef LEMMA_RENDER_PANE_COMPOSITION_HPP
-#define LEMMA_RENDER_PANE_COMPOSITION_HPP
+#ifndef FRAME_RENDER_PANE_COMPOSITION_HPP
+#define FRAME_RENDER_PANE_COMPOSITION_HPP
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 #include "render/scene.hpp"
 #include "render/status_line.hpp"
 
@@ -12,7 +12,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::render {
+namespace frame::render {
 class GraphicsProjection;
 
 inline constexpr std::size_t message_view_line_bytes_max = limits::status_message_bytes_max + 32U;
@@ -72,6 +72,6 @@ compose_frame(std::span<const PaneSurface> panes, Viewport viewport, std::span<s
               MessageView message_view = {}) noexcept
     -> std::expected<CompositionResult, CompositionError>;
 
-} // namespace lemma::render
+} // namespace frame::render
 
-#endif // LEMMA_RENDER_PANE_COMPOSITION_HPP
+#endif // FRAME_RENDER_PANE_COMPOSITION_HPP

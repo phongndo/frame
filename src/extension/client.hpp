@@ -1,5 +1,5 @@
-#ifndef LEMMA_EXTENSION_CLIENT_HPP
-#define LEMMA_EXTENSION_CLIENT_HPP
+#ifndef FRAME_EXTENSION_CLIENT_HPP
+#define FRAME_EXTENSION_CLIENT_HPP
 
 #include "api/json.hpp"
 #include "extension/protocol.hpp"
@@ -11,7 +11,7 @@
 #include <string>
 #include <string_view>
 
-namespace lemma::extension {
+namespace frame::extension {
 
 struct ClientRecord final {
   RecordKind kind{RecordKind::error};
@@ -55,6 +55,6 @@ private:
 [[nodiscard]] auto json_quote(std::string_view value) -> std::string;
 [[nodiscard]] auto json_encode(const api::JsonValue& value) -> std::string;
 
-} // namespace lemma::extension
+} // namespace frame::extension
 
-#endif // LEMMA_EXTENSION_CLIENT_HPP
+#endif // FRAME_EXTENSION_CLIENT_HPP

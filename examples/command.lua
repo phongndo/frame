@@ -1,6 +1,6 @@
-local lemma = require("lemma")
+local frame = require("frame")
 
-lemma.command.register("work.shell", {
+frame.command.register("work.shell", {
   description = "Open a shell tab",
   timeout_ms = 30000,
   handler = function(ctx, args)

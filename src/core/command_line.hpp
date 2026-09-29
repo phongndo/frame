@@ -1,10 +1,10 @@
-#ifndef LEMMA_CORE_COMMAND_LINE_HPP
-#define LEMMA_CORE_COMMAND_LINE_HPP
+#ifndef FRAME_CORE_COMMAND_LINE_HPP
+#define FRAME_CORE_COMMAND_LINE_HPP
 
 #include "api/command.hpp"
 #include "extension/commands.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,7 +14,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::core {
+namespace frame::core {
 
 inline constexpr std::size_t command_line_bytes_max = limits::command_line_bytes_max;
 inline constexpr std::size_t command_line_words_max = 64;
@@ -93,6 +93,6 @@ struct CommandLineCompletion final {
                                          std::span<const std::string_view> candidates)
     -> CommandLineCompletion;
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_COMMAND_LINE_HPP
+#endif // FRAME_CORE_COMMAND_LINE_HPP
