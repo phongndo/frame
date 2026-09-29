@@ -580,10 +580,18 @@ if(FRAME_BUILD_TESTS)
   frame_add_python_mux_test(pane_lifecycle tests.mux.test_pane_lifecycle)
   frame_add_python_mux_test(session_lifecycle tests.mux.test_session_lifecycle)
   frame_add_python_mux_test(resize tests.mux.test_resize)
-  frame_add_python_mux_test(terminal_boundary tests.mux.test_terminal_boundary)
-  # This suite includes real 30-second transport and 10-second worker deadlines, plus process tests.
+  # Keep independent terminal-boundary suites within the per-entry deadline on slower runners.
+  frame_add_python_mux_test(terminal_boundary.clipboard
+                            tests.mux.test_terminal_boundary.ClipboardMuxTest)
+  # Clipboard includes real 30-second transport and 10-second worker deadlines, plus process tests.
   # Its outer budget must cover their sum; the individual protocol deadlines remain unchanged.
-  set_tests_properties(mux.terminal_boundary PROPERTIES TIMEOUT 90)
+  set_tests_properties(mux.terminal_boundary.clipboard PROPERTIES TIMEOUT 90)
+  frame_add_python_mux_test(terminal_boundary.focus
+                            tests.mux.test_terminal_boundary.FocusReportMuxTest)
+  frame_add_python_mux_test(terminal_boundary.graphics
+                            tests.mux.test_terminal_boundary.GraphicsMuxTest)
+  frame_add_python_mux_test(terminal_boundary.terminal
+                            tests.mux.test_terminal_boundary.TerminalBoundaryMuxTest)
   frame_add_python_mux_test(outer_terminal tests.mux.test_outer_terminal)
   # Rate-limit and fairness tests wait for real 5-second notification refills.
   set_tests_properties(mux.outer_terminal PROPERTIES TIMEOUT 90)
