@@ -62,12 +62,14 @@ class OuterTitleMuxTest(unittest.TestCase):
 
     def test_title_prefers_tab_name_then_pane_title_then_process_name(self) -> None:
         # The ticker has no terminal title, so its label is the process name. Darwin's /bin/sh
-        # re-executes another shell, so tick from the interpreter whose name is known.
+        # re-executes another shell, so tick from the interpreter whose name is known. Linux names a
+        # process by its exec path and Darwin by the resolved binary, so exec the resolved path.
+        interpreter = Path(sys.executable).resolve()
         session = self.server.create_session(
             "title_order",
-            command=(sys.executable, "-c", TICKER),
+            command=(str(interpreter), "-c", TICKER),
         )
-        process_title = f"title_order: {Path(sys.executable).resolve().name}"
+        process_title = f"title_order: {interpreter.name}"
         client = session.require_client()
         state = session.state()
         left_id = state.focused_pane
