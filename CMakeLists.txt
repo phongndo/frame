@@ -572,15 +572,18 @@ if(FRAME_BUILD_TESTS)
   endfunction()
 
   frame_add_python_mux_test(configuration tests.mux.test_configuration)
-  # Keep independent extension suites within the per-entry deadline under sanitizers.
+  # Keep independent suites within the per-entry deadline under sanitizers and on slower runners.
   frame_add_python_mux_test(extensions.lua tests.mux.test_extensions.ExtensionMuxTest)
   frame_add_python_mux_test(extensions.picker tests.mux.test_extensions.PickerMuxTest)
-  frame_add_python_mux_test(user_extensions tests.mux.test_user_extensions)
+  frame_add_python_mux_test(user_extensions.extensions
+                            tests.mux.test_user_extensions.UserExtensionsMuxTest)
+  frame_add_python_mux_test(user_extensions.session_picker
+                            tests.mux.test_user_extensions.SessionPickerMuxTest)
   frame_add_python_mux_test(command_line tests.mux.test_command_line)
   frame_add_python_mux_test(pane_lifecycle tests.mux.test_pane_lifecycle)
   frame_add_python_mux_test(session_lifecycle tests.mux.test_session_lifecycle)
-  frame_add_python_mux_test(resize tests.mux.test_resize)
-  # Keep independent terminal-boundary suites within the per-entry deadline on slower runners.
+  frame_add_python_mux_test(resize.geometry tests.mux.test_resize.ResizeMuxTest)
+  frame_add_python_mux_test(resize.copy_reflow tests.mux.test_resize.CopyModeReflowMuxTest)
   frame_add_python_mux_test(terminal_boundary.clipboard
                             tests.mux.test_terminal_boundary.ClipboardMuxTest)
   # Clipboard includes real 30-second transport and 10-second worker deadlines, plus process tests.
