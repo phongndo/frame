@@ -197,15 +197,22 @@ for index, line in enumerate(sys.stdin):
         data += bytes.fromhex(text) * int(count or 1)
     os.write(1, data + b'__EMITTED_%d__\\r\\n' % index)
 """
-# Darwin sleeps overshoot enough that 20 x 10 ms can cross a second 250 ms bell refill.
+# Paced writers record the seconds between their first and last write in argv[1]. Darwin CI
+# sleeps overshoot by several times, so rate bounds derive from that span, not the nominal pacing.
 BELL_FLOOD = """
 import os, sys, time
 sys.stdin.readline()
-for _ in range(20):
+start = time.monotonic()
+for index in range(20):
+    if index:
+        time.sleep(0.005)
     os.write(1, b'\\x07')
-    time.sleep(0.005)
+open(sys.argv[1], 'w').write(repr(time.monotonic() - start))
 time.sleep(60)
 """
+# Mirrors core/outer_attention.hpp.
+OUTER_BELL_BURST = 4
+OUTER_ATTENTION_INTERVAL = 0.25
 PROGRESS_REMOVED = b"\x1b]9;4;0\x1b\\"
 
 
@@ -231,9 +238,12 @@ time.sleep(60)
 PROGRESS_STEPS = """
 import os, sys, time
 sys.stdin.readline()
+start = time.monotonic()
 for percent in range(1, 41):
+    if percent > 1:
+        time.sleep(0.01)
     os.write(1, b'\\x1b]9;4;1;%d\\x1b\\\\' % percent)
-    time.sleep(0.01)
+open(sys.argv[1], 'w').write(repr(time.monotonic() - start))
 os.write(1, b'__STEPS_DONE__\\r\\n')
 sys.stdin.readline()
 """
@@ -292,6 +302,19 @@ class OuterAttentionMuxTest(unittest.TestCase):
             ).output
         )
         return document["results"][0]["result"]["pane"]
+
+    @staticmethod
+    def paced_span(client: Client, path: Path) -> float:
+        """Returns the span a paced writer recorded, keeping the client flowing meanwhile."""
+
+        def recorded() -> float | None:
+            client.drain(0.01)
+            text = path.read_text() if path.exists() else ""
+            return float(text) if text else None
+
+        return wait_until(
+            f"{path.name} to be recorded", recorded, diagnostics=client.diagnostics
+        )
 
     def reload(self, ui: str) -> None:
         config = Path(self.server.environment["XDG_CONFIG_HOME"]) / "frame/init.lua"
@@ -422,17 +445,24 @@ class OuterAttentionMuxTest(unittest.TestCase):
         self.assertNotIn(b";note 3\x1b\\", client.process.output_tail)
         self.expect_notification(client, b"limits: ", b"note 3", timeout=8.0)
 
-        # Twenty separate bells from a background Tab within 200 ms forward a burst of four,
-        # then one coalesced bell after the next refill.
-        bells = self.new_tab(session, "bells", sys.executable, "-c", BELL_FLOOD)
+        # Twenty separate bells from a background Tab forward a burst of four, then at most one
+        # per refill while the flood lasts and one coalesced bell after it. One more refill allows
+        # for the daemon observing the last bell later than the child wrote it.
+        span_path = self.server.root / "bell-flood.span"
+        bells = self.new_tab(
+            session, "bells", sys.executable, "-c", BELL_FLOOD, str(span_path)
+        )
         time.sleep(0.2)
         client.drain(0.1)
         before = client.process.output_tail.count(b"\x07")
         self.emit(session, bells, b"")
-        client.drain(0.8)
+        span = self.paced_span(client, span_path)
+        client.drain(2 * OUTER_ATTENTION_INTERVAL)
         rung = client.process.output_tail.count(b"\x07") - before
-        self.assertGreaterEqual(rung, 2, client.diagnostics())
-        self.assertLessEqual(rung, 5, client.diagnostics())
+        refills = int(span / OUTER_ATTENTION_INTERVAL)
+        detail = f"span={span:.3f}s\n{client.diagnostics()}"
+        self.assertGreaterEqual(rung, 2, detail)
+        self.assertLessEqual(rung, OUTER_BELL_BURST + 2 + refills, detail)
 
     def test_attention_is_not_replayed_across_session_switch(self) -> None:
         early = b"\x1b]9;before attach\x07\x07"
@@ -517,7 +547,10 @@ class OuterAttentionMuxTest(unittest.TestCase):
     def test_progress_is_coalesced_at_a_bounded_rate(self) -> None:
         session = self.start("steps")
         client = session.require_client()
-        pane = self.new_tab(session, "steps", sys.executable, "-c", PROGRESS_STEPS)
+        span_path = self.server.root / "progress-steps.span"
+        pane = self.new_tab(
+            session, "steps", sys.executable, "-c", PROGRESS_STEPS, str(span_path)
+        )
         client.prefix("n")
         self.server.wait_for_state(
             session.name,
@@ -528,11 +561,16 @@ class OuterAttentionMuxTest(unittest.TestCase):
         before = client.process.output_tail.count(b"\x1b]9;4;1;")
         self.emit(session, pane, b"")
         client.expect_output("__STEPS_DONE__")
-        # Forty changes within about 400 ms present a few intermediate values and the latest.
+        span = self.paced_span(client, span_path)
+        # Forty changes present the first value, at most one per interval while they continue, and
+        # the latest after them. One more interval allows for the daemon observing the last late.
         client.expect_raw(b"\x1b]9;4;1;40\x1b\\")
         client.drain(0.3)
         presented = client.process.output_tail.count(b"\x1b]9;4;1;") - before
-        self.assertLessEqual(presented, 5, client.diagnostics())
+        intervals = int(span / OUTER_ATTENTION_INTERVAL)
+        self.assertLessEqual(
+            presented, 3 + intervals, f"span={span:.3f}s\n{client.diagnostics()}"
+        )
 
     def test_ended_process_and_session_remove_progress(self) -> None:
         # A held Pane whose process exited no longer reports progress.
