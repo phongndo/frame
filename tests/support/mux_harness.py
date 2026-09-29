@@ -175,15 +175,29 @@ class Client:
 
     def expect_output(self, marker: str | bytes, *, timeout: float = 5.0) -> None:
         encoded = marker.encode() if isinstance(marker, str) else marker
-        if self.process.screen.contains(encoded):
-            return
-        try:
-            self.process.read_until(encoded, timeout, visible_text=True)
-        except BaseException as error:
-            raise MuxTimeout(
-                f"did not observe visible output {encoded!r}\n{self.diagnostics()}\n"
-                f"server:\n{self.server.logs()}"
-            ) from error
+        if not self.process.screen.contains(encoded):
+            try:
+                self.process.read_until(encoded, timeout, visible_text=True)
+            except BaseException as error:
+                raise MuxTimeout(
+                    f"did not observe visible output {encoded!r}\n{self.diagnostics()}\n"
+                    f"server:\n{self.server.logs()}"
+                ) from error
+
+        # The marker can be observed inside a synchronized update while screen_text() still
+        # presents the previous frame. Darwin's small PTY splits frames across reads, so finish
+        # the update before callers assert on the presented screen.
+        def presented() -> bool | None:
+            if self.process.screen.synchronized_text is None:
+                return True
+            self.drain(0.005)
+            return None
+
+        wait_until(
+            f"the frame showing {encoded!r} to be presented",
+            presented,
+            diagnostics=self.diagnostics,
+        )
 
     def expect_raw(self, marker: str | bytes, *, timeout: float = 5.0) -> None:
         encoded = marker.encode() if isinstance(marker, str) else marker

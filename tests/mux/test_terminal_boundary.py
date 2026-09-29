@@ -462,9 +462,11 @@ class FocusReportMuxTest(unittest.TestCase):
         )
 
         # Fill the stalled Pane's input queue exactly: halve each rejected batch down to one byte.
+        # The many commands take seconds on Darwin, so keep the client's small outer PTY flowing.
         chunk = 4096
         total = 0
         while chunk > 0:
+            self.server.drain_clients()
             sent = self.server.command(
                 "send",
                 "--session",
@@ -487,15 +489,15 @@ class FocusReportMuxTest(unittest.TestCase):
         client.send(b"Z")
         client.drain(0.2)
         gate.touch()
+
+        def recorded_report_and_input() -> bool | None:
+            self.server.drain_clients()
+            data = recorded.read_bytes() if recorded.exists() else b""
+            return True if b"Z" in data and b"\x1b[I" in data else None
+
         wait_until(
             "stalled pane to record the focus report and input",
-            lambda: (
-                True
-                if recorded.exists()
-                and b"Z" in (data := recorded.read_bytes())
-                and b"\x1b[I" in data
-                else None
-            ),
+            recorded_report_and_input,
             diagnostics=lambda: (
                 f"recorded={recorded.read_bytes() if recorded.exists() else None!r}\n"
                 f"{self.server.diagnostics(session.name)}"
