@@ -1,5 +1,5 @@
-#ifndef LEMMA_PLATFORM_PTY_HPP
-#define LEMMA_PLATFORM_PTY_HPP
+#ifndef FRAME_PLATFORM_PTY_HPP
+#define FRAME_PLATFORM_PTY_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -9,7 +9,7 @@
 
 #include <sys/types.h>
 
-namespace lemma::platform {
+namespace frame::platform {
 
 enum class EnvironmentMode : std::uint8_t {
   inherit,
@@ -51,6 +51,6 @@ struct EnvironmentVariable final {
 [[nodiscard]] auto foreground_process_name(int pty_descriptor, std::span<char> output) noexcept
     -> std::size_t;
 
-} // namespace lemma::platform
+} // namespace frame::platform
 
-#endif // LEMMA_PLATFORM_PTY_HPP
+#endif // FRAME_PLATFORM_PTY_HPP

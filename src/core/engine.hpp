@@ -1,5 +1,5 @@
-#ifndef LEMMA_CORE_ENGINE_HPP
-#define LEMMA_CORE_ENGINE_HPP
+#ifndef FRAME_CORE_ENGINE_HPP
+#define FRAME_CORE_ENGINE_HPP
 
 #include "extension/commands.hpp"
 
@@ -12,14 +12,14 @@
 
 #include <poll.h>
 
-namespace lemma::input {
+namespace frame::input {
 class CompiledInputMap;
 }
-namespace lemma::config {
+namespace frame::config {
 class Generation;
 }
 
-namespace lemma::core {
+namespace frame::core {
 
 using EndpointRelease = void (*)(void* context) noexcept;
 
@@ -141,6 +141,6 @@ struct ReactorEnvironment final {
                               StopRequested stop_requested, ChildReaper child_reaper) noexcept
     -> int;
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_ENGINE_HPP
+#endif // FRAME_CORE_ENGINE_HPP

@@ -1,9 +1,9 @@
-#ifndef LEMMA_GEOMETRY_HPP
-#define LEMMA_GEOMETRY_HPP
+#ifndef FRAME_GEOMETRY_HPP
+#define FRAME_GEOMETRY_HPP
 
 #include <cstdint>
 
-namespace lemma {
+namespace frame {
 
 struct PaneRectangle final {
   std::uint16_t column{0};
@@ -15,6 +15,6 @@ struct PaneRectangle final {
       -> bool = default;
 };
 
-} // namespace lemma
+} // namespace frame
 
-#endif // LEMMA_GEOMETRY_HPP
+#endif // FRAME_GEOMETRY_HPP

@@ -1,8 +1,8 @@
 #include "core/input.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/assert.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "protocol/attachment.hpp"
 
 #include <algorithm>
@@ -19,7 +19,7 @@
 #include <string_view>
 #include <utility>
 
-namespace lemma::core {
+namespace frame::core {
 
 std::atomic_size_t PanePtyWriteQueue::allocated_bytes{0};
 
@@ -30,18 +30,18 @@ std::atomic_size_t PanePtyWriteQueue::allocated_bytes{0};
 PanePtyWriteQueue::~PanePtyWriteQueue() { release_storage(); }
 
 auto PanePtyWriteQueue::readable_span() const noexcept -> std::span<const std::byte> {
-  LEMMA_ASSERT(size_ <= capacity());
+  FRAME_ASSERT(size_ <= capacity());
   if (size_ == 0) {
     return {};
   }
-  LEMMA_ASSERT(storage_ != nullptr);
-  LEMMA_ASSERT(read_offset_ <= storage_capacity_);
-  LEMMA_ASSERT(size_ <= storage_capacity_ - read_offset_);
+  FRAME_ASSERT(storage_ != nullptr);
+  FRAME_ASSERT(read_offset_ <= storage_capacity_);
+  FRAME_ASSERT(size_ <= storage_capacity_ - read_offset_);
   return std::span(storage_.get(), storage_capacity_).subspan(read_offset_, size_);
 }
 
 auto PanePtyWriteQueue::consume(const std::size_t bytes) noexcept -> bool {
-  LEMMA_ASSERT(size_ <= capacity());
+  FRAME_ASSERT(size_ <= capacity());
   if (bytes > size_) {
     return false;
   }
@@ -67,7 +67,7 @@ auto PanePtyWriteQueue::writable_span() noexcept -> std::span<std::byte> {
     return {};
   }
   const auto write_offset = read_offset_ + size_;
-  LEMMA_ASSERT(write_offset <= storage_capacity_);
+  FRAME_ASSERT(write_offset <= storage_capacity_);
   return std::span(storage_.get(), storage_capacity_).subspan(write_offset);
 }
 
@@ -87,8 +87,8 @@ auto PanePtyWriteQueue::append(const std::span<const std::byte> input) noexcept 
     return true;
   }
   const auto write_offset = read_offset_ + size_;
-  LEMMA_ASSERT(write_offset <= storage_capacity_);
-  LEMMA_ASSERT(input.size() <= storage_capacity_ - write_offset);
+  FRAME_ASSERT(write_offset <= storage_capacity_);
+  FRAME_ASSERT(input.size() <= storage_capacity_ - write_offset);
   auto storage = std::span(storage_.get(), storage_capacity_);
   std::memcpy(storage.subspan(write_offset, input.size()).data(), input.data(), input.size());
   size_ += input.size();
@@ -103,7 +103,7 @@ auto PanePtyWriteQueue::read(const std::span<std::byte> output) noexcept -> std:
   }
   std::memcpy(output.data(), readable.data(), bytes);
   const bool consumed = consume(bytes);
-  LEMMA_ASSERT(consumed);
+  FRAME_ASSERT(consumed);
   return bytes;
 }
 
@@ -115,7 +115,7 @@ auto PanePtyWriteQueue::ensure_capacity(const std::size_t required) noexcept -> 
   }
   if (required <= storage_capacity_) {
     if (read_offset_ > storage_capacity_ - required) {
-      LEMMA_ASSERT(storage_ != nullptr);
+      FRAME_ASSERT(storage_ != nullptr);
       const auto storage = std::span(storage_.get(), storage_capacity_);
       std::memmove(storage_.get(), storage.subspan(read_offset_, size_).data(), size_);
       read_offset_ = 0;
@@ -136,9 +136,9 @@ auto PanePtyWriteQueue::ensure_capacity(const std::size_t required) noexcept -> 
 }
 
 auto PanePtyWriteQueue::replace_storage(const std::size_t new_capacity) noexcept -> bool {
-  LEMMA_ASSERT(new_capacity > storage_capacity_);
-  LEMMA_ASSERT(new_capacity >= size_);
-  LEMMA_ASSERT(new_capacity <= capacity());
+  FRAME_ASSERT(new_capacity > storage_capacity_);
+  FRAME_ASSERT(new_capacity >= size_);
+  FRAME_ASSERT(new_capacity <= capacity());
   if (!acquire_allocation(new_capacity)) {
     return false;
   }
@@ -153,7 +153,7 @@ auto PanePtyWriteQueue::replace_storage(const std::size_t new_capacity) noexcept
     return false;
   }
   if (size_ > 0) {
-    LEMMA_ASSERT(storage_ != nullptr);
+    FRAME_ASSERT(storage_ != nullptr);
     const auto storage = std::span(storage_.get(), storage_capacity_);
     std::memcpy(replacement.get(), storage.subspan(read_offset_, size_).data(), size_);
   }
@@ -183,7 +183,7 @@ void PanePtyWriteQueue::release_allocation(const std::size_t bytes) noexcept {
     return;
   }
   const auto previous = allocated_bytes.fetch_sub(bytes, std::memory_order_relaxed);
-  LEMMA_ASSERT(previous >= bytes);
+  FRAME_ASSERT(previous >= bytes);
 }
 
 void PanePtyWriteQueue::release_storage() noexcept {
@@ -224,7 +224,7 @@ static_assert(limits::pane_pty_write_queue_bytes_max >=
 
 [[nodiscard]] constexpr auto control_key(const std::byte byte) noexcept -> vt::Key {
   const auto value = std::to_integer<std::uint8_t>(byte);
-  LEMMA_ASSERT(value >= 1 && value <= 26);
+  FRAME_ASSERT(value >= 1 && value <= 26);
   return static_cast<vt::Key>(static_cast<std::uint8_t>(vt::Key::a) + value - 1U);
 }
 
@@ -386,7 +386,7 @@ template <typename Visitor>
       visit_normalized_input(terminal, input, [&](const std::span<const std::byte> bytes) noexcept {
         return queue.append(bytes);
       });
-  LEMMA_ASSERT(appended);
+  FRAME_ASSERT(appended);
   return appended ? InputQueueResult::queued : InputQueueResult::encoding_failed;
 }
 
@@ -588,4 +588,4 @@ auto queue_prefixed_key_input(PanePtyWriteQueue& queue, vt::Terminal& terminal,
                             : InputQueueResult::encoding_failed;
 }
 
-} // namespace lemma::core
+} // namespace frame::core

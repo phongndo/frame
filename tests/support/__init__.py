@@ -1,1 +1,1 @@
-"""Reusable support for Lemma tests."""
+"""Reusable support for Frame tests."""

@@ -1,14 +1,14 @@
-#ifndef LEMMA_CORE_FRAME_SCHEDULER_HPP
-#define LEMMA_CORE_FRAME_SCHEDULER_HPP
+#ifndef FRAME_CORE_FRAME_SCHEDULER_HPP
+#define FRAME_CORE_FRAME_SCHEDULER_HPP
 
-#include "lemma/id.hpp"
+#include "frame/id.hpp"
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 
-namespace lemma::core {
+namespace frame::core {
 
 // Values are ordered from lowest to highest priority.
 enum class FrameUrgency : std::uint8_t {
@@ -107,6 +107,6 @@ private:
   bool tracking_burst_{false};
 };
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_FRAME_SCHEDULER_HPP
+#endif // FRAME_CORE_FRAME_SCHEDULER_HPP

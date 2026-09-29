@@ -22,7 +22,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-namespace lemma::extension {
+namespace frame::extension {
 namespace {
 using Clock = std::chrono::steady_clock;
 constexpr auto request_timeout = std::chrono::seconds(3);
@@ -163,7 +163,7 @@ auto Client::next(const int timeout_ms) -> std::optional<ClientRecord> {
 
 auto Client::proc(const std::string_view commands) -> api::JsonValue {
   return request(RecordKind::proc, RecordKind::proc_result,
-                 std::string{R"({"schema":"lemma.proc/v1","commands":)"} + std::string(commands) +
+                 std::string{R"({"schema":"frame.proc/v1","commands":)"} + std::string(commands) +
                      '}');
 }
 
@@ -175,7 +175,7 @@ void Client::update(const std::string_view content) {
 auto Client::submit_proc(const std::string_view commands) -> std::uint32_t {
   const auto sequence =
       send(RecordKind::proc,
-           std::string{R"({"schema":"lemma.proc/v1","commands":)"} + std::string(commands) + '}');
+           std::string{R"({"schema":"frame.proc/v1","commands":)"} + std::string(commands) + '}');
   flush(Clock::now() + request_timeout);
   return sequence;
 }
@@ -196,4 +196,4 @@ auto json_encode(const api::JsonValue& value) -> std::string {
   return output;
 }
 
-} // namespace lemma::extension
+} // namespace frame::extension

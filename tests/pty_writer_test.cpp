@@ -11,7 +11,7 @@
 
 #include <gtest/gtest.h>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 struct ScriptedWriter final {
@@ -217,4 +217,4 @@ TEST(PtyWriterTest, RejectsInvalidWriterProgress) {
 }
 
 } // namespace
-} // namespace lemma::core
+} // namespace frame::core

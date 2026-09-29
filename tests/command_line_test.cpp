@@ -1,6 +1,6 @@
 #include "core/command_line.hpp"
 
-#include "lemma/command.hpp"
+#include "frame/command.hpp"
 
 #include <gtest/gtest.h>
 
@@ -8,7 +8,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 using namespace std::string_view_literals;
 
@@ -126,4 +126,4 @@ TEST(CommandLineTest, CompletesCatalogWordsAndDynamicSessionNames) {
 }
 
 } // namespace
-} // namespace lemma::core
+} // namespace frame::core

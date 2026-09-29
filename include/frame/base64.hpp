@@ -1,5 +1,5 @@
-#ifndef LEMMA_BASE64_HPP
-#define LEMMA_BASE64_HPP
+#ifndef FRAME_BASE64_HPP
+#define FRAME_BASE64_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-namespace lemma::base64 {
+namespace frame::base64 {
 // Allocation belongs to the caller's cold-path failure boundary. Decoding is strict, including
 // canonical padding bits; no malformed payload is interpreted as an alternative encoding.
 inline auto encode(const std::string_view bytes) -> std::string {
@@ -86,5 +86,5 @@ inline auto decode(const std::string_view text, const std::size_t limit)
   }
   return result;
 }
-} // namespace lemma::base64
+} // namespace frame::base64
 #endif

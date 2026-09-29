@@ -36,7 +36,7 @@ FAULTS = (
         "src/core/engine.cpp",
         ".fd = child_reaper.wake_descriptor, .events = POLLIN, .revents = 0",
         ".fd = child_reaper.wake_descriptor, .events = 0, .revents = 0",
-        "lemma_unit_tests",
+        "frame_unit_tests",
         "ReactorEnvironmentTest.ChildWakeCanPrecedeAcceptAndFragmentedRequest",
     ),
     Fault(
@@ -44,7 +44,7 @@ FAULTS = (
         "src/core/pty_writer.cpp",
         "const bool consumed = queue.consume(size);",
         "const bool consumed = queue.consume(bytes.size());",
-        "lemma_terminal_boundary_tests",
+        "frame_terminal_boundary_tests",
         "PtyWriterTest.ConsumesOnlyPartialWritesAndRecoversAfterEagain",
     ),
     Fault(
@@ -52,15 +52,15 @@ FAULTS = (
         "src/platform/pty.cpp",
         "return ::ioctl(pty_descriptor, TIOCSWINSZ, &native_size) == 0;",
         "return ::ioctl(pty_descriptor, TIOCGWINSZ, &native_size) == 0;",
-        "lemma_component_integration_tests",
+        "frame_component_integration_tests",
         "PlatformPtyTest.ResizeReachesSlaveGeometry",
     ),
     Fault(
         "stale-id",
-        "include/lemma/generational_store.hpp",
+        "include/frame/generational_store.hpp",
         "return slot.value != nullptr && slot.generation == id.generation();",
         "return slot.value != nullptr;",
-        "lemma_unit_tests",
+        "frame_unit_tests",
         "BoundedGenerationalStoreTest.RejectsStaleIdsAndReportsCapacity",
     ),
     Fault(
@@ -70,7 +70,7 @@ FAULTS = (
         "  void* (*volatile detection_allocate)(std::size_t) = &::operator new;\n"
         "  ::operator delete(detection_allocate(1));\n"
         "  auto* const output = target.output;",
-        "lemma_steady_state_allocation_audit",
+        "frame_steady_state_allocation_audit",
         "general_allocation_calls",
     ),
 )
@@ -83,7 +83,7 @@ SLOW_DISPATCH = Fault(
     "    const volatile auto detection_work = detection_index;\n"
     "    static_cast<void>(detection_work);\n"
     "  }",
-    "lemma_benchmarks",
+    "frame_benchmarks",
     "command_dispatch_cpu_p95",
 )
 
@@ -135,7 +135,7 @@ def require_success(tree: Path, command: list[str], log: Path, timeout: int) -> 
 @contextmanager
 def snapshot(root: Path, output: Path) -> Iterator[Path]:
     """Copy the working diff and nonignored new files, never edit the source checkout."""
-    tree = Path(tempfile.mkdtemp(prefix="lemma-detection-"))
+    tree = Path(tempfile.mkdtemp(prefix="frame-detection-"))
     tree.rmdir()
     subprocess.run(
         ["git", "worktree", "add", "--detach", str(tree), "HEAD"], cwd=root, check=True
@@ -209,7 +209,7 @@ def paired_outcome(report: dict, failed: bool) -> bool:
     ]
     return (
         report.get("schema") == 1
-        and report.get("suite") == "lemma-paired-regression"
+        and report.get("suite") == "frame-paired-regression"
         and report.get("status") == ("failed" if failed else "passed")
         and len(checks) == 1
         and checks[0].get("status") == ("failed" if failed else "passed")
@@ -223,7 +223,7 @@ def native_check(
     directory.mkdir()
     targets = [fault.target]
     if fault.name == "steady-allocation":
-        targets.append("lemma_unit_tests")
+        targets.append("frame_unit_tests")
     require_success(
         tree,
         ["cmake", "--build", "build/debug", "--target", *targets],
@@ -316,7 +316,7 @@ def main() -> int:
     )
     results: dict = {
         "schema": 1,
-        "suite": "lemma-detection-checks",
+        "suite": "frame-detection-checks",
         "status": "incomplete",
         "cases": [],
         "revision": subprocess.check_output(
@@ -345,8 +345,8 @@ def main() -> int:
                     [
                         "scripts/ci/configure",
                         "debug",
-                        "-DLEMMA_BUILD_TESTS=ON",
-                        "-DLEMMA_BUILD_BENCHMARKS=OFF",
+                        "-DFRAME_BUILD_TESTS=ON",
+                        "-DFRAME_BUILD_BENCHMARKS=OFF",
                     ],
                     output / "configure.log",
                     args.timeout,

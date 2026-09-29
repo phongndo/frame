@@ -367,7 +367,7 @@ def run_subject_workload(
         "--output",
         str(destination),
     ]
-    if subject == "lemma":
+    if subject == "frame":
         command.extend(
             [
                 "--server",
@@ -378,7 +378,7 @@ def run_subject_workload(
         )
     elif subject != "direct":
         command.extend([f"--{subject}", str(executables[subject])])
-    if subject not in {"direct", "lemma"}:
+    if subject not in {"direct", "frame"}:
         command.append("--allow-workload-failures")
     with destination.with_suffix(".stderr.log").open("w", encoding="utf-8") as stderr:
         subprocess.run(
@@ -392,7 +392,7 @@ def run_subject_workload(
     validate_process_report(
         report,
         load_manifest(arguments.manifest),
-        allow_failures=subject not in {"direct", "lemma"},
+        allow_failures=subject not in {"direct", "frame"},
     )
     return report
 
@@ -403,16 +403,16 @@ def main() -> int:
         "--manifest", type=Path, default=Path("benchmarks/workloads.json")
     )
     parser.add_argument(
-        "--server", type=Path, default=Path("build/release/lemma_test_server")
+        "--server", type=Path, default=Path("build/release/frame_test_server")
     )
     parser.add_argument(
-        "--cli", type=Path, default=Path("build/release/lemma_test_cli")
+        "--cli", type=Path, default=Path("build/release/frame_test_cli")
     )
     parser.add_argument(
-        "--peer", type=Path, default=Path("build/release/lemma_test_pty_peer")
+        "--peer", type=Path, default=Path("build/release/frame_test_pty_peer")
     )
     parser.add_argument(
-        "--probe", type=Path, default=Path("build/release/lemma_benchmark_probe")
+        "--probe", type=Path, default=Path("build/release/frame_benchmark_probe")
     )
     parser.add_argument("--tmux", default="tmux")
     parser.add_argument("--zellij", default="zellij")

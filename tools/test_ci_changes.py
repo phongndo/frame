@@ -55,7 +55,7 @@ class CiChangesTests(unittest.TestCase):
         )
 
     def test_schema_only_change_selects_native_contract_tests(self):
-        self.assertEqual(self.selected("schema/lemma-api-v1.schema.json"), {"cpp"})
+        self.assertEqual(self.selected("schema/frame-api-v1.schema.json"), {"cpp"})
 
     def test_canonical_example_changes_select_native_contract_tests(self):
         for path in ("examples/job.json", "examples/configuration.lua"):
@@ -84,15 +84,15 @@ class CiChangesTests(unittest.TestCase):
 
     def test_library_change_selects_cpp_correctness(self):
         self.assertEqual(
-            self.selected("include/lemma/id.hpp", "src/core/lemma.cpp"),
+            self.selected("include/frame/id.hpp", "src/core/frame.cpp"),
             {"cpp"},
         )
 
     def test_application_change_selects_cpp_correctness(self):
-        self.assertEqual(self.selected("apps/lemma/main.cpp"), {"cpp"})
+        self.assertEqual(self.selected("apps/frame/main.cpp"), {"cpp"})
 
     def test_benchmark_change_selects_cpp_jobs(self):
-        self.assertEqual(self.selected("benchmarks/lemma_benchmark.cpp"), {"cpp"})
+        self.assertEqual(self.selected("benchmarks/frame_benchmark.cpp"), {"cpp"})
 
     def test_python_benchmark_change_selects_cpp_and_python_jobs(self):
         self.assertEqual(

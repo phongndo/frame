@@ -1,11 +1,11 @@
-#ifndef LEMMA_CORE_TERMINAL_RESIZE_HPP
-#define LEMMA_CORE_TERMINAL_RESIZE_HPP
+#ifndef FRAME_CORE_TERMINAL_RESIZE_HPP
+#define FRAME_CORE_TERMINAL_RESIZE_HPP
 
-#include "lemma/terminal/terminal.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <cstdint>
 
-namespace lemma::core {
+namespace frame::core {
 
 enum class TerminalResizeStatus : std::uint8_t {
   unchanged,
@@ -24,6 +24,6 @@ using PtyResizeOperation = bool (*)(void* context, const vt::TerminalSize& size)
                                                PtyResizeOperation resize_pty,
                                                void* context) noexcept -> TerminalResizeStatus;
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_TERMINAL_RESIZE_HPP
+#endif // FRAME_CORE_TERMINAL_RESIZE_HPP

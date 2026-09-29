@@ -1,5 +1,5 @@
-#ifndef LEMMA_CLIENT_HOST_TERMINAL_THEME_HPP
-#define LEMMA_CLIENT_HOST_TERMINAL_THEME_HPP
+#ifndef FRAME_CLIENT_HOST_TERMINAL_THEME_HPP
+#define FRAME_CLIENT_HOST_TERMINAL_THEME_HPP
 
 #include "protocol/attachment.hpp"
 
@@ -9,7 +9,7 @@
 #include <optional>
 #include <span>
 
-namespace lemma::client {
+namespace frame::client {
 
 inline constexpr std::size_t host_theme_query_bytes_max = 512;
 inline constexpr std::size_t host_theme_palette_colors_queried =
@@ -53,6 +53,6 @@ private:
 
 [[nodiscard]] auto encode_host_terminal_theme_query(std::span<char> output) noexcept -> std::size_t;
 
-} // namespace lemma::client
+} // namespace frame::client
 
-#endif // LEMMA_CLIENT_HOST_TERMINAL_THEME_HPP
+#endif // FRAME_CLIENT_HOST_TERMINAL_THEME_HPP

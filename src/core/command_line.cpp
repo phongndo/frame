@@ -2,9 +2,9 @@
 
 #include "api/command.hpp"
 #include "extension/commands.hpp"
-#include "lemma/command.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/command.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 using namespace std::string_view_literals;
 
@@ -34,7 +34,7 @@ struct CommandDescriptor final {
 };
 
 // One catalog owns discovery. Future descriptor sources project into this same ordered view while
-// their handlers compile to typed Lemma commands.
+// their handlers compile to typed Frame commands.
 constexpr std::array command_catalog{
     CommandDescriptor{.path = "switch"},
     CommandDescriptor{.path = "attach"},
@@ -814,4 +814,4 @@ launch_completion_kind(const std::span<const std::string_view> words,
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,cppcoreguidelines-pro-bounds-constant-array-index)
 
-} // namespace lemma::core
+} // namespace frame::core

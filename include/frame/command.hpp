@@ -1,8 +1,8 @@
-#ifndef LEMMA_COMMAND_HPP
-#define LEMMA_COMMAND_HPP
+#ifndef FRAME_COMMAND_HPP
+#define FRAME_COMMAND_HPP
 
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <array>
 #include <cstdint>
@@ -10,7 +10,7 @@
 #include <string_view>
 #include <variant>
 
-namespace lemma {
+namespace frame {
 
 inline constexpr std::uint16_t command_tab_slots_max = 16;
 inline constexpr std::uint16_t command_resize_amount_max = 100;
@@ -173,6 +173,6 @@ private:
   void* observer_context_{nullptr};
 };
 
-} // namespace lemma
+} // namespace frame
 
-#endif // LEMMA_COMMAND_HPP
+#endif // FRAME_COMMAND_HPP

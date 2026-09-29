@@ -1,5 +1,5 @@
 -- Shipped key policy. Compiled at build time into the native input map.
--- User init.lua can replace any binding with lemma.keymap.set/del or preset="none".
+-- User init.lua can replace any binding with frame.keymap.set/del or preset="none".
 
 context("normal", "", "persistent", "forward", false)
 context("prefix", "", "one_shot", "replay_deferred", false)

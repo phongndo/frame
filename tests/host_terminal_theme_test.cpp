@@ -10,7 +10,7 @@
 
 #include <gtest/gtest.h>
 
-namespace lemma::client {
+namespace frame::client {
 namespace {
 
 [[nodiscard]] auto bytes(const std::string_view text) noexcept -> std::span<const std::byte> {
@@ -99,4 +99,4 @@ TEST(HostTerminalThemeParserTest, DecodesHighlightColorReplies) {
 }
 
 } // namespace
-} // namespace lemma::client
+} // namespace frame::client

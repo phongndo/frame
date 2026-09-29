@@ -1,5 +1,5 @@
-#ifndef LEMMA_INPUT_INPUT_ROUTER_HPP
-#define LEMMA_INPUT_INPUT_ROUTER_HPP
+#ifndef FRAME_INPUT_INPUT_ROUTER_HPP
+#define FRAME_INPUT_INPUT_ROUTER_HPP
 
 #include <array>
 #include <cstddef>
@@ -10,7 +10,7 @@
 #include <string_view>
 #include <variant>
 
-namespace lemma::input {
+namespace frame::input {
 
 inline constexpr std::size_t input_contexts_max = 16;
 inline constexpr std::size_t input_bindings_max = 240;
@@ -596,6 +596,6 @@ struct InputMapConfiguration final {
     -> std::expected<CompiledInputMap, InputMapError>;
 [[nodiscard]] auto default_input_map() noexcept -> const CompiledInputMap&;
 
-} // namespace lemma::input
+} // namespace frame::input
 
-#endif // LEMMA_INPUT_INPUT_ROUTER_HPP
+#endif // FRAME_INPUT_INPUT_ROUTER_HPP

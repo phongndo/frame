@@ -1,7 +1,7 @@
 #include "clipboard/transaction.hpp"
-#include "lemma/base64.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/base64.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -15,7 +15,7 @@
 #include <atomic>
 #include <new>
 
-namespace lemma::clipboard {
+namespace frame::clipboard {
 namespace {
 auto valid_mime(const std::string_view mime) noexcept -> bool {
   return !mime.empty() && mime.size() <= 255U &&
@@ -407,4 +407,4 @@ auto Transaction::contents() noexcept -> std::span<const vt::ClipboardContent> {
   }
   return std::span(views_).first(contents_.size());
 }
-} // namespace lemma::clipboard
+} // namespace frame::clipboard

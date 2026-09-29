@@ -1,10 +1,10 @@
-#ifndef LEMMA_TESTS_SIM_MODEL_HPP
-#define LEMMA_TESTS_SIM_MODEL_HPP
+#ifndef FRAME_TESTS_SIM_MODEL_HPP
+#define FRAME_TESTS_SIM_MODEL_HPP
 
 #include "core/layout.hpp"
 #include "core/session.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 
 struct MinimumExtent final {
   std::uint16_t columns{1};
@@ -334,6 +334,6 @@ private:
   std::vector<TabId> tabs_;
 };
 
-} // namespace lemma::test::sim
+} // namespace frame::test::sim
 
-#endif // LEMMA_TESTS_SIM_MODEL_HPP
+#endif // FRAME_TESTS_SIM_MODEL_HPP

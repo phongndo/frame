@@ -5,12 +5,12 @@ import subprocess
 import unittest
 from unittest import mock
 
-from tests.support.mux_harness import LemmaServer
+from tests.support.mux_harness import FrameServer
 
 
 class ServerCleanupTest(unittest.TestCase):
     def test_group_permission_error_after_daemon_exit_is_reaped(self) -> None:
-        server = object.__new__(LemmaServer)
+        server = object.__new__(FrameServer)
         server.clients = []
         server.process = mock.Mock(pid=123, poll=mock.Mock(side_effect=[None, 0]))
         with mock.patch(
@@ -21,7 +21,7 @@ class ServerCleanupTest(unittest.TestCase):
         server.process.wait.assert_called_once_with(timeout=2.0)
 
     def test_group_permission_error_before_exit_is_waitable_is_reaped(self) -> None:
-        server = object.__new__(LemmaServer)
+        server = object.__new__(FrameServer)
         server.clients = []
         server.process = mock.Mock(
             pid=123, poll=mock.Mock(return_value=None), wait=mock.Mock(return_value=0)
@@ -36,7 +36,7 @@ class ServerCleanupTest(unittest.TestCase):
         )
 
     def test_group_permission_error_for_live_daemon_is_not_hidden(self) -> None:
-        server = object.__new__(LemmaServer)
+        server = object.__new__(FrameServer)
         server.clients = []
         server.process = mock.Mock(
             pid=123,

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 MANIFEST_SCHEMA = 4
-SUBJECTS = ("direct", "lemma", "tmux", "zellij", "herdr")
+SUBJECTS = ("direct", "frame", "tmux", "zellij", "herdr")
 PROCESS_STATUSES = ("completed", "failed", "unsupported")
 
 
@@ -81,7 +81,7 @@ def _scaling_profiles(
 
 def load_manifest(path: Path | None = None) -> dict[str, Any]:
     selected = path or Path(
-        os.environ.get("LEMMA_BENCHMARK_MANIFEST", "benchmarks/workloads.json")
+        os.environ.get("FRAME_BENCHMARK_MANIFEST", "benchmarks/workloads.json")
     )
     try:
         manifest = json.loads(selected.read_text(encoding="utf-8"))

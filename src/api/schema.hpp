@@ -1,12 +1,12 @@
-#ifndef LEMMA_API_SCHEMA_HPP
-#define LEMMA_API_SCHEMA_HPP
+#ifndef FRAME_API_SCHEMA_HPP
+#define FRAME_API_SCHEMA_HPP
 
 #include <string_view>
 
-namespace lemma::api {
+namespace frame::api {
 
 [[nodiscard]] auto schema_document() noexcept -> std::string_view;
 
-} // namespace lemma::api
+} // namespace frame::api
 
-#endif // LEMMA_API_SCHEMA_HPP
+#endif // FRAME_API_SCHEMA_HPP

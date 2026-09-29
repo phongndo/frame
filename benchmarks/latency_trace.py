@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decode and correlate Lemma's bounded opt-in monotonic latency trace files."""
+"""Decode and correlate Frame's bounded opt-in monotonic latency trace files."""
 
 from __future__ import annotations
 
@@ -308,7 +308,7 @@ def build_report(
     )
     return {
         "schema": 3,
-        "suite": "lemma-latency-trace",
+        "suite": "frame-latency-trace",
         "trace_version": TRACE_VERSION,
         "clock": "CLOCK_MONOTONIC",
         "files": files,

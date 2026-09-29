@@ -1,11 +1,11 @@
-#ifndef LEMMA_CORE_PRESENTATION_GATE_HPP
-#define LEMMA_CORE_PRESENTATION_GATE_HPP
+#ifndef FRAME_CORE_PRESENTATION_GATE_HPP
+#define FRAME_CORE_PRESENTATION_GATE_HPP
 
 #include <chrono>
 #include <cstdint>
 #include <optional>
 
-namespace lemma::core {
+namespace frame::core {
 
 enum class PresentationSuppression : std::uint8_t {
   inactive,
@@ -53,6 +53,6 @@ private:
   bool pending_output_{false};
 };
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_PRESENTATION_GATE_HPP
+#endif // FRAME_CORE_PRESENTATION_GATE_HPP

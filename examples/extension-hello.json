@@ -1,9 +1,9 @@
 {
-  "schema": "lemma.extension/v1",
+  "schema": "frame.extension/v1",
   "name": "project-sidebar",
   "capabilities": ["observe", "proc", "surface"],
   "events": {
-    "schema": "lemma.events/v1",
+    "schema": "frame.events/v1",
     "session": {"name": "example"}
   }
 }

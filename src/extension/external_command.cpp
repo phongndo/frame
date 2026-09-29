@@ -1,7 +1,7 @@
 #include "extension/external_command.hpp"
 
 #include "api/json.hpp"
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <array>
 #include <cerrno>
@@ -19,7 +19,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-namespace lemma::extension {
+namespace frame::extension {
 namespace {
 void close_descriptor(int& descriptor) noexcept {
   if (descriptor >= 0) {
@@ -107,7 +107,7 @@ auto ExternalCommand::start(const std::span<const std::string> arguments,
     if (::dup2(input, STDIN_FILENO) < 0 || ::dup2(pipe.back(), STDOUT_FILENO) < 0 ||
         ::dup2(pipe.back(), STDERR_FILENO) < 0 || ::fcntl(STDIN_FILENO, F_SETFD, 0) != 0 ||
         ::fcntl(STDOUT_FILENO, F_SETFD, 0) != 0 || ::fcntl(STDERR_FILENO, F_SETFD, 0) != 0 ||
-        ::setenv("LEMMA_COMMAND_CONTEXT", context_text.c_str(), 1) != 0) {
+        ::setenv("FRAME_COMMAND_CONTEXT", context_text.c_str(), 1) != 0) {
       ::_exit(127);
     }
     if (input > STDERR_FILENO) {
@@ -200,4 +200,4 @@ auto ExternalCommand::completion(int status, const bool observed) -> std::string
   return result + '}';
 }
 
-} // namespace lemma::extension
+} // namespace frame::extension

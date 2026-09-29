@@ -1,9 +1,9 @@
-#ifndef LEMMA_CORE_LAYOUT_HPP
-#define LEMMA_CORE_LAYOUT_HPP
+#ifndef FRAME_CORE_LAYOUT_HPP
+#define FRAME_CORE_LAYOUT_HPP
 
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <array>
 #include <cstddef>
@@ -12,7 +12,7 @@
 #include <optional>
 #include <type_traits>
 
-namespace lemma::core {
+namespace frame::core {
 
 inline constexpr std::size_t pane_layout_panes_max =
     static_cast<std::size_t>(limits::panes_hard_max / limits::sessions_hard_max);
@@ -187,6 +187,6 @@ private:
 
 static_assert(std::is_trivially_copyable_v<PaneLayout>);
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_LAYOUT_HPP
+#endif // FRAME_CORE_LAYOUT_HPP

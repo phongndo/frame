@@ -1,7 +1,7 @@
-#ifndef LEMMA_CLIENT_HOST_INPUT_PARSER_HPP
-#define LEMMA_CLIENT_HOST_INPUT_PARSER_HPP
+#ifndef FRAME_CLIENT_HOST_INPUT_PARSER_HPP
+#define FRAME_CLIENT_HOST_INPUT_PARSER_HPP
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 #include "platform/terminal_mode.hpp"
 #include "protocol/attachment.hpp"
 
@@ -13,7 +13,7 @@
 #include <optional>
 #include <span>
 
-namespace lemma::client {
+namespace frame::client {
 
 enum class HostInputKind : std::uint8_t {
   ordinary,
@@ -115,6 +115,6 @@ private:
   bool any_button_pressed_{false};
 };
 
-} // namespace lemma::client
+} // namespace frame::client
 
-#endif // LEMMA_CLIENT_HOST_INPUT_PARSER_HPP
+#endif // FRAME_CLIENT_HOST_INPUT_PARSER_HPP

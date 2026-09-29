@@ -1,11 +1,11 @@
-#ifndef LEMMA_PLATFORM_IO_HPP
-#define LEMMA_PLATFORM_IO_HPP
+#ifndef FRAME_PLATFORM_IO_HPP
+#define FRAME_PLATFORM_IO_HPP
 
 #include <cstddef>
 #include <span>
 #include <string_view>
 
-namespace lemma::platform {
+namespace frame::platform {
 
 // Blocking completion helpers. Use only at setup/control boundaries or with descriptors whose
 // readiness has already been established. Hot-path output uses explicit partial-write state.
@@ -22,6 +22,6 @@ namespace lemma::platform {
 void close_descriptor(int& descriptor) noexcept;
 [[nodiscard]] auto set_nonblocking(int descriptor) noexcept -> bool;
 
-} // namespace lemma::platform
+} // namespace frame::platform
 
-#endif // LEMMA_PLATFORM_IO_HPP
+#endif // FRAME_PLATFORM_IO_HPP

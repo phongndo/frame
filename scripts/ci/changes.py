@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Classify a Git diff into the Lemma CI lanes that it can affect."""
+"""Classify a Git diff into the Frame CI lanes that it can affect."""
 
 from __future__ import annotations
 

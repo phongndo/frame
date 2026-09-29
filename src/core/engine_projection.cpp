@@ -15,14 +15,14 @@
 #include "core/presentation_gate.hpp"
 #include "core/session.hpp"
 #include "diagnostic/latency_trace.hpp"
+#include "frame/assert.hpp"
+#include "frame/command.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
+#include "frame/version.hpp"
 #include "input/input_router.hpp"
-#include "lemma/assert.hpp"
-#include "lemma/command.hpp"
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
-#include "lemma/version.hpp"
 #include "protocol/attachment.hpp"
 #include "render/frame_buffer.hpp"
 #include "render/pane_composition.hpp"
@@ -52,7 +52,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-namespace lemma::core::engine_detail {
+namespace frame::core::engine_detail {
 
 struct MessageViewStorage final {
   std::array<std::array<char, render::message_view_line_bytes_max>,
@@ -191,9 +191,9 @@ collect_surfaces(SessionRecord& session, PaneRuntimeStore& runtimes,
     return tab.title_override();
   }
   const auto* const focused = find_pane(session, tab, tab.focused_pane());
-  LEMMA_ASSERT(focused != nullptr);
+  FRAME_ASSERT(focused != nullptr);
   const auto* const runtime = find_pane_runtime(runtimes, session, tab, *focused);
-  LEMMA_ASSERT(runtime != nullptr);
+  FRAME_ASSERT(runtime != nullptr);
   if (runtime->process_name_size > 0) {
     return {runtime->process_name.data(), runtime->process_name_size};
   }
@@ -247,9 +247,9 @@ void mix_command_line_status(const CommandLineState& command_line, Mixer& mix) n
   };
   for (std::size_t position = 0; position < session.tab_order.size(); ++position) {
     const auto id = session.tab_order.at(position);
-    LEMMA_ASSERT(id.has_value());
+    FRAME_ASSERT(id.has_value());
     const auto* const tab = find_tab(session, *id);
-    LEMMA_ASSERT(tab != nullptr);
+    FRAME_ASSERT(tab != nullptr);
     mix(static_cast<std::uint8_t>(position + 1U));
     mix(tab->id == session.active_tab ? 1U : 0U);
     const auto title = tab_title(session, *tab, runtimes);
@@ -422,7 +422,7 @@ struct StatusPromptProjection final {
   }
   std::memcpy(output.subspan(used, suffix.size()).data(), suffix.data(), suffix.size());
   used += suffix.size();
-  LEMMA_ASSERT(used == encoded_size);
+  FRAME_ASSERT(used == encoded_size);
   return used;
 }
 
@@ -587,7 +587,7 @@ void present_outer_notification(SessionRecord& session, PaneRuntimeStore& runtim
   OuterNotificationBody body;
   body.append(signals.notification_body());
   const bool appended = append_outer_notification(output, used, title.view(), body.view());
-  LEMMA_ASSERT(appended);
+  FRAME_ASSERT(appended);
   chosen->outer_notifications = signals.notifications;
   if (waiting > 1U) {
     request_outer_attention_retry(attention, now);
@@ -703,7 +703,7 @@ void append_outer_attention(SessionRecord& session, PaneRuntimeStore& runtimes,
     }
   }
   std::uint64_t trace_correlation = 0;
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   trace_correlation = session.attachment_runtime.frame_trace_correlation;
   diagnostic::set_latency_trace_correlation(trace_correlation);
 #endif
@@ -718,7 +718,7 @@ void append_outer_attention(SessionRecord& session, PaneRuntimeStore& runtimes,
   diagnostic::record_latency_trace(diagnostic::LatencyTraceStage::frame_composition_finished,
                                    static_cast<std::uint32_t>(session.attachment_runtime.client),
                                    rendered.has_value() ? rendered->bytes : 0);
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   diagnostic::set_latency_trace_correlation(0);
   session.attachment_runtime.frame_trace_correlation = 0;
 #endif
@@ -768,11 +768,11 @@ template <typename Id>
     return false;
   }
   const auto* const focused = find_pane(session, *tab, tab->focused_pane());
-  LEMMA_ASSERT(focused != nullptr);
+  FRAME_ASSERT(focused != nullptr);
   const auto* const runtime = find_pane_runtime(runtimes, session, *tab, *focused);
-  LEMMA_ASSERT(runtime != nullptr);
+  FRAME_ASSERT(runtime != nullptr);
   const auto title_value = tab_title(session, *tab, runtimes);
-  return output.append_text("lemma session \"") && output.append_title(session.session_name()) &&
+  return output.append_text("frame session \"") && output.append_title(session.session_name()) &&
          output.append_text("\": ") && output.append_number(tab_count(session)) &&
          output.append_text(" tab(s), ") && output.append_number(pane_count(session)) &&
          output.append_text(" pane(s), focused pid ") &&
@@ -797,12 +797,12 @@ template <typename Id>
                                        const PaneRuntimeStore& runtimes) noexcept -> bool {
   for (std::size_t position = 0; position < session.tab_order.size(); ++position) {
     const auto id = session.tab_order.at(position);
-    LEMMA_ASSERT(id.has_value());
+    FRAME_ASSERT(id.has_value());
     const auto* const tab_value = find_tab(session, *id);
-    LEMMA_ASSERT(tab_value != nullptr);
+    FRAME_ASSERT(tab_value != nullptr);
     const auto& tab = *tab_value;
     const auto title_value = tab_title(session, tab, runtimes);
-    if (!output.append_text("lemma tab ") || !output.append_number(position + 1U) ||
+    if (!output.append_text("frame tab ") || !output.append_number(position + 1U) ||
         !output.append_text(": ") || !output.append_number(pane_count(tab)) ||
         !output.append_text(" pane(s), ") ||
         !output.append_text(tab.id == session.active_tab ? "active, title \""
@@ -840,17 +840,17 @@ template <typename Id>
                                         const PaneRuntimeStore& runtimes) noexcept -> bool {
   for (std::size_t tab_position = 0; tab_position < session.tab_order.size(); ++tab_position) {
     const auto tab_id = session.tab_order.at(tab_position);
-    LEMMA_ASSERT(tab_id.has_value());
+    FRAME_ASSERT(tab_id.has_value());
     const auto* const tab = find_tab(session, *tab_id);
-    LEMMA_ASSERT(tab != nullptr);
+    FRAME_ASSERT(tab != nullptr);
     for (const auto& pane_slot : session.panes) {
       if (pane_slot.pane == nullptr || pane_slot.pane->tab != tab->id) {
         continue;
       }
       const auto& pane = *pane_slot.pane;
       const auto* const runtime = find_pane_runtime(runtimes, session, *tab, pane);
-      LEMMA_ASSERT(runtime != nullptr);
-      if (!output.append_text("lemma pane ") || !append_id(output, pane.id) ||
+      FRAME_ASSERT(runtime != nullptr);
+      if (!output.append_text("frame pane ") || !append_id(output, pane.id) ||
           !output.append_text(": tab ") || !output.append_number(tab_position + 1U) ||
           !output.append_text(pane.id == tab->focused_pane() ? ", focused, " : ", unfocused, ") ||
           !append_process_state(output, pane, *runtime) || !output.append_text(", ") ||
@@ -927,9 +927,9 @@ template <typename Id>
   }
   for (std::size_t position = 0; position < session.tab_order.size(); ++position) {
     const auto id = session.tab_order.at(position);
-    LEMMA_ASSERT(id.has_value());
+    FRAME_ASSERT(id.has_value());
     const auto* const tab = find_tab(session, *id);
-    LEMMA_ASSERT(tab != nullptr);
+    FRAME_ASSERT(tab != nullptr);
     const auto title = tab_title(session, *tab, runtimes);
     if ((position > 0 && !output.append_text(",")) || !output.append_text("{\"position\":") ||
         !output.append_number(position + 1U) || !output.append_text(",\"id\":") ||
@@ -1124,16 +1124,16 @@ inline constexpr std::size_t pane_layer_json_bytes_max = 64 + api::float_placeme
   std::size_t emitted = 0;
   for (std::size_t tab_position = 0; tab_position < session.tab_order.size(); ++tab_position) {
     const auto tab_id = session.tab_order.at(tab_position);
-    LEMMA_ASSERT(tab_id.has_value());
+    FRAME_ASSERT(tab_id.has_value());
     const auto* const tab = find_tab(session, *tab_id);
-    LEMMA_ASSERT(tab != nullptr);
+    FRAME_ASSERT(tab != nullptr);
     for (const auto& pane_slot : session.panes) {
       if (pane_slot.pane == nullptr || pane_slot.pane->tab != tab->id) {
         continue;
       }
       const auto& pane = *pane_slot.pane;
       const auto* const runtime = find_pane_runtime(runtimes, session, *tab, pane);
-      LEMMA_ASSERT(runtime != nullptr);
+      FRAME_ASSERT(runtime != nullptr);
       std::array<char, pane_layer_json_bytes_max> layer{};
       if ((emitted > 0 && !output.append_text(",")) || !output.append_text("{\"id\":") ||
           !append_json_id(output, pane.id) || !output.append_text(",\"tab\":") ||
@@ -1392,7 +1392,7 @@ inline constexpr std::size_t pane_layer_json_bytes_max = 64 + api::float_placeme
     attached_sessions += session->attachment_runtime.client >= 0 ? 1U : 0U;
   }
   std::string output = R"({"version":)";
-  if (!api::append_json_string(output, lemma::version) || !append_public(output, R"(,"api":)") ||
+  if (!api::append_json_string(output, frame::version) || !append_public(output, R"(,"api":)") ||
       !api::append_json_string(output, api::proc_schema) ||
       !append_public(output, R"(,"resources":{"sessions":{"used":)") ||
       !append_public_number(output, active_sessions) || !append_public(output, R"(,"limit":)") ||
@@ -1637,7 +1637,7 @@ inline constexpr std::size_t pane_layer_json_bytes_max = 64 + api::float_placeme
                                        const std::optional<std::size_t> byte) -> std::string {
   std::string output;
   try {
-    output = R"({"schema":"lemma.proc-result/v1","ok":false,"error":{"reason":)";
+    output = R"({"schema":"frame.proc-result/v1","ok":false,"error":{"reason":)";
     if (!api::append_json_string(output, error.reason)) {
       return {};
     }
@@ -1661,7 +1661,7 @@ inline constexpr std::size_t pane_layer_json_bytes_max = 64 + api::float_placeme
                                          const bool target_resolved) -> std::string {
   std::string output;
   try {
-    output = R"({"schema":"lemma.command-result/v1","command":)";
+    output = R"({"schema":"frame.command-result/v1","command":)";
     if (!api::append_json_string(output, api::command_name(request.kind)) ||
         !append_public(output, ",\"status\":") ||
         !api::append_json_string(output, public_status_name(result.status))) {
@@ -1886,7 +1886,7 @@ void find_oldest_signal(const api::EventSubscription& subscription, SessionRecor
 
 [[nodiscard]] auto append_signal_event(std::string& output, const std::uint64_t sequence,
                                        const ObservedPane target) -> bool {
-  return append_public(output, R"({"schema":"lemma.event/v1","sequence":)") &&
+  return append_public(output, R"({"schema":"frame.event/v1","sequence":)") &&
          append_public_number(output, sequence) &&
          append_public(output, R"(,"event":"pane.signal","session":)") &&
          append_public_id(output, target.session->id) && append_public(output, R"(,"pane":)") &&
@@ -1915,7 +1915,7 @@ void find_oldest_signal(const api::EventSubscription& subscription, SessionRecor
 
 [[nodiscard]] auto append_event_header(std::string& output, PendingConnection& pending,
                                        const std::string_view event) -> bool {
-  return append_public(output, R"({"schema":"lemma.event/v1","sequence":)") &&
+  return append_public(output, R"({"schema":"frame.event/v1","sequence":)") &&
          append_public_number(output, pending.event_sequence++) &&
          append_public(output, R"(,"event":)") && api::append_json_string(output, event);
 }
@@ -1987,7 +1987,7 @@ void find_oldest_signal(const api::EventSubscription& subscription, SessionRecor
                                                api::CaptureWrap::rendered, 0, scratch);
   const auto at_prompt = target.runtime->terminal.cursor_at_prompt();
   if (!formatted.result.has_value() || !at_prompt.has_value() ||
-      !append_public(output, R"({"schema":"lemma.event/v1","sequence":)") ||
+      !append_public(output, R"({"schema":"frame.event/v1","sequence":)") ||
       !append_public_number(output, sequence) ||
       !append_public(output, R"(,"event":"pane.screen","session":)") ||
       !append_public_id(output, target.session->id) || !append_public(output, R"(,"pane":)") ||
@@ -2431,7 +2431,7 @@ void service_extension_observers(extension::Runtime& extensions, Sessions& sessi
     if (!extensions.has_capability(peer.owner, extension::capability_observe)) {
       continue;
     }
-    LEMMA_ASSERT(peer.slot < observations.size());
+    FRAME_ASSERT(peer.slot < observations.size());
     auto& observed = std::span(observations).subspan(peer.slot, 1).front();
     const auto* const subscription = extensions.subscription(peer.owner);
     if (subscription == nullptr) {
@@ -2442,7 +2442,7 @@ void service_extension_observers(extension::Runtime& extensions, Sessions& sessi
       return;
     }
     const auto hash = semantic_hash(sessions, subscription->session);
-    LEMMA_ASSERT(observed.owner == peer.owner);
+    FRAME_ASSERT(observed.owner == peer.owner);
     if (extensions.output_bytes(peer.owner) != 0) {
       continue;
     }
@@ -2451,7 +2451,7 @@ void service_extension_observers(extension::Runtime& extensions, Sessions& sessi
                                        : std::uint64_t{0};
     if (hash != observed.semantic_hash || presentation_hash != observed.presentation_hash) {
       try {
-        std::string event = R"({"schema":"lemma.event/v1","sequence":)" +
+        std::string event = R"({"schema":"frame.event/v1","sequence":)" +
                             std::to_string(extensions.event_sequence(peer.owner)) +
                             R"(,"event":"state.changed","sessions":)";
         if (!append_sessions_snapshot(event, sessions, subscription->session) ||
@@ -2514,7 +2514,7 @@ void service_extension_observers(extension::Runtime& extensions, Sessions& sessi
     try {
       std::string event;
       if (change == PaneObservationChange::closed || change == PaneObservationChange::process) {
-        if (!append_public(event, R"({"schema":"lemma.event/v1","sequence":)") ||
+        if (!append_public(event, R"({"schema":"frame.event/v1","sequence":)") ||
             !append_public_number(event, extensions.event_sequence(peer.owner)) ||
             !append_public(event, change == PaneObservationChange::closed
                                       ? R"(,"event":"pane.closed","pane":)"
@@ -2537,7 +2537,7 @@ void service_extension_observers(extension::Runtime& extensions, Sessions& sessi
           static_cast<void>(extensions.disconnect(peer.owner));
           return;
         }
-      } else if (!append_public(event, R"({"schema":"lemma.event/v1","sequence":)") ||
+      } else if (!append_public(event, R"({"schema":"frame.event/v1","sequence":)") ||
                  !append_public_number(event, extensions.event_sequence(peer.owner)) ||
                  !append_public(event, R"(,"event":"pane.terminal","session":)") ||
                  !append_public_id(event, session->id) || !append_public(event, R"(,"pane":)") ||
@@ -2570,4 +2570,4 @@ void service_extension_observers(extension::Runtime& extensions, Sessions& sessi
 // needed to return a wire-compatible capacity response. These responders do not consume setup
 // slots, so an attach peer can receive its framed rejection even while every setup slot is busy.
 
-} // namespace lemma::core::engine_detail
+} // namespace frame::core::engine_detail

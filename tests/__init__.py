@@ -1,1 +1,1 @@
-"""Lemma test support and process scenarios."""
+"""Frame test support and process scenarios."""

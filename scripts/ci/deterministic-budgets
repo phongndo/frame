@@ -3,8 +3,8 @@ set -euo pipefail
 
 readonly profile="${1:-debug}"
 readonly manifest="benchmarks/workloads.json"
-readonly binary="build/${profile}/lemma_steady_state_allocation_audit"
-readonly reactor_binary="build/${profile}/lemma_unit_tests"
+readonly binary="build/${profile}/frame_steady_state_allocation_audit"
+readonly reactor_binary="build/${profile}/frame_unit_tests"
 readonly raw="build/${profile}/steady-state-work-audit.json"
 readonly reactor_raw="build/${profile}/reactor-work-audit.json"
 readonly result="build/${profile}/deterministic-budget-results.json"

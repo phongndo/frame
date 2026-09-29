@@ -1,9 +1,9 @@
-#ifndef LEMMA_CORE_OUTER_ATTENTION_HPP
-#define LEMMA_CORE_OUTER_ATTENTION_HPP
+#ifndef FRAME_CORE_OUTER_ATTENTION_HPP
+#define FRAME_CORE_OUTER_ATTENTION_HPP
 
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,7 +14,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::core {
+namespace frame::core {
 
 // Child-controlled text is sanitized before entering the outer-terminal stream. C0, DEL, UTF-8
 // encoded C1 controls, and malformed UTF-8 bytes are dropped; the bounded result is truncated at a
@@ -171,6 +171,6 @@ using OuterNotificationBody = OuterText<limits::outer_notification_body_bytes_ma
                                              std::span<char> storage) noexcept
     -> std::optional<std::string_view>;
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_OUTER_ATTENTION_HPP
+#endif // FRAME_CORE_OUTER_ATTENTION_HPP

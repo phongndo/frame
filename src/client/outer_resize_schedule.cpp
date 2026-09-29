@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-namespace lemma::client {
+namespace frame::client {
 
 void OuterResizeSchedule::observe(const TimePoint now) noexcept {
   if (deadline_.has_value()) {
@@ -18,4 +18,4 @@ void OuterResizeSchedule::commit(const TimePoint now, const bool sent) noexcept 
   }
 }
 
-} // namespace lemma::client
+} // namespace frame::client

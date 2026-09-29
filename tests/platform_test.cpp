@@ -19,12 +19,12 @@
 #elifdef __linux__
 #include <pty.h>
 #else
-#error "lemma PTY tests require forkpty support"
+#error "frame PTY tests require forkpty support"
 #endif
 
 #include <gtest/gtest.h>
 
-namespace lemma::platform {
+namespace frame::platform {
 namespace {
 
 // GoogleTest assertions and explicit PTY child setup inflate the measured branch count.
@@ -80,7 +80,7 @@ TEST(PlatformPtyTest, UnenterableWorkingDirectoryUsesTheFallback) {
   int descriptor = -1;
 
   const auto child =
-      spawn_process(descriptor, "/nonexistent/lemma-directory", {}, EnvironmentMode::inherit,
+      spawn_process(descriptor, "/nonexistent/frame-directory", {}, EnvironmentMode::inherit,
                     std::as_bytes(std::span(command.data(), command.size())), {}, "/");
   ASSERT_GT(child, 0);
   ASSERT_GE(descriptor, 0);
@@ -108,7 +108,7 @@ TEST(PlatformPtyTest, UnenterableWorkingDirectoryUsesTheFallback) {
 
   // Without a fallback, an unenterable directory still fails the child.
   const auto failed =
-      spawn_process(descriptor, "/nonexistent/lemma-directory", {}, EnvironmentMode::inherit,
+      spawn_process(descriptor, "/nonexistent/frame-directory", {}, EnvironmentMode::inherit,
                     std::as_bytes(std::span(command.data(), command.size())));
   ASSERT_GT(failed, 0);
   ASSERT_EQ(::waitpid(failed, &status, 0), failed);
@@ -192,4 +192,4 @@ TEST(PlatformPtyTest, ReadsForegroundProcessName) {
 }
 
 } // namespace
-} // namespace lemma::platform
+} // namespace frame::platform

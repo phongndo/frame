@@ -1,7 +1,7 @@
-#ifndef LEMMA_CORE_CLIENT_FRAME_OUTPUT_HPP
-#define LEMMA_CORE_CLIENT_FRAME_OUTPUT_HPP
+#ifndef FRAME_CORE_CLIENT_FRAME_OUTPUT_HPP
+#define FRAME_CORE_CLIENT_FRAME_OUTPUT_HPP
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 #include "protocol/attachment.hpp"
 #include "render/frame_buffer.hpp"
 
@@ -13,7 +13,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::core {
+namespace frame::core {
 
 inline constexpr std::size_t attached_client_write_bytes_per_client_turn_max =
     std::size_t{64} * 1'024U;
@@ -59,7 +59,7 @@ public:
   }
   [[nodiscard]] auto offset() const noexcept -> std::size_t { return offset_; }
   [[nodiscard]] auto write_ready() const noexcept -> bool { return write_ready_; }
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   [[nodiscard]] auto trace_correlation() const noexcept -> std::uint64_t;
 #endif
   [[nodiscard]] auto deadline() const noexcept -> std::optional<TimePoint>;
@@ -98,7 +98,7 @@ private:
   TimePoint last_progress_at_;
   Source source_{Source::none};
   bool write_ready_{false};
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   std::uint64_t latency_trace_correlation_{0};
 #endif
 };
@@ -141,6 +141,6 @@ void flush_ready_client_frames(std::span<ClientFrameFlushTarget> targets, std::s
                                std::size_t& global_budget,
                                ClientFrameOutput::TimePoint now) noexcept;
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_CLIENT_FRAME_OUTPUT_HPP
+#endif // FRAME_CORE_CLIENT_FRAME_OUTPUT_HPP

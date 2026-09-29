@@ -1,7 +1,7 @@
 #include "api/json.hpp"
 #include "extension/client.hpp"
 #include "extension/protocol.hpp"
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 #include "render/status_line.hpp"
 #include "render/ui.hpp"
 #include "user/attention.hpp"
@@ -30,9 +30,9 @@
 #include <unistd.h>
 
 namespace {
-namespace api = lemma::api;
-namespace ext = lemma::extension;
-namespace render = lemma::render;
+namespace api = frame::api;
+namespace ext = frame::extension;
+namespace render = frame::render;
 using api::JsonValue;
 
 void report_status_error(const std::string_view context, const std::exception& error) {
@@ -78,7 +78,7 @@ void report_status_error(const std::string_view context, const std::exception& e
 
 [[nodiscard]] auto hello(const std::string_view session, const bool presentation) -> std::string {
   return std::string{
-             R"({"schema":"lemma.extension/v1","name":"lemma-ui","capabilities":["observe","proc","surface"],"events":{"schema":"lemma.events/v1","session":)"} +
+             R"({"schema":"frame.extension/v1","name":"frame-ui","capabilities":["observe","proc","surface"],"events":{"schema":"frame.events/v1","session":)"} +
          selector(session) + (presentation ? R"(,"presentation":true,"signals":true}})" : "}}");
 }
 
@@ -91,14 +91,14 @@ void report_status_error(const std::string_view context, const std::exception& e
   return result;
 }
 
-using Markers = std::array<lemma::user::Marker, render::status_tabs_max>;
+using Markers = std::array<frame::user::Marker, render::status_tabs_max>;
 
 struct Status final {
   ext::Client client;
   std::string session;
   std::string surface;
   JsonValue state;
-  lemma::user::TabAttention attention;
+  frame::user::TabAttention attention;
   std::optional<std::uint64_t> revision;
   Markers painted{};
   std::string prompt_text;
@@ -200,7 +200,7 @@ struct Status final {
   void paint() {
     const auto columns = static_cast<std::uint16_t>(number(state, "columns"));
     const auto rows = static_cast<std::uint16_t>(number(state, "rows"));
-    if (columns == 0 || rows < 2 || columns > lemma::limits::terminal_columns_hard_max) {
+    if (columns == 0 || rows < 2 || columns > frame::limits::terminal_columns_hard_max) {
       return;
     }
     if (surface.empty()) {
@@ -214,14 +214,14 @@ struct Status final {
     painted = markers();
     const auto status = projection(tabs, painted, context);
     prompting = status.prompting();
-    std::array<render::ui::Cell, lemma::limits::terminal_columns_hard_max> storage{};
+    std::array<render::ui::Cell, frame::limits::terminal_columns_hard_max> storage{};
     auto cells = std::span(storage).first(columns);
     std::uint16_t cursor = 0;
     if (!render::project_status_cells(status, {.columns = columns, .rows = rows}, cells, cursor)) {
       throw std::runtime_error("invalid status presentation");
     }
     std::string update =
-        R"({"schema":"lemma.surface-update/v1","surface":)" + ext::json_quote(surface) +
+        R"({"schema":"frame.surface-update/v1","surface":)" + ext::json_quote(surface) +
         R"(,"styles":[{}, {"bold":true},{"bold":true,"underline":true}],"rows":[{"row":0,"runs":[)";
     std::size_t column = 0;
     bool separator = false;
@@ -313,19 +313,19 @@ struct Status final {
     const auto listed =
         command(client, R"({"command":"pane.list","session":)" + selector(session) + '}');
     const auto& values = member(listed, "panes").array;
-    std::vector<lemma::user::PaneMember> panes;
+    std::vector<frame::user::PaneMember> panes;
     panes.reserve(values.size());
     for (const auto& value : values) {
       panes.push_back({.pane = text(value, "id"),
                        .tab = text(value, "tab"),
-                       .signals = lemma::user::decode_signals(member(value, "signals"))});
+                       .signals = frame::user::decode_signals(member(value, "signals"))});
     }
     attention.list(panes);
   }
 
   void signal(const JsonValue& document) {
     const auto pane = text(document, "pane");
-    const auto signals = lemma::user::decode_signals(member(document, "signals"));
+    const auto signals = frame::user::decode_signals(member(document, "signals"));
     if (!attention.signal(pane, signals)) {
       list_panes();
       static_cast<void>(attention.signal(pane, signals));
@@ -399,8 +399,8 @@ struct Status final {
 
 // Attention belongs to each live Session rather than its status connection, so a reattached
 // statusline marks what happened while detached. Sessions in the first discovery snapshot existed
-// before lemma-ui and take their first listing as seen; later Sessions are observed from creation.
-using RetainedAttention = std::map<std::string, lemma::user::TabAttention, std::less<>>;
+// before frame-ui and take their first listing as seen; later Sessions are observed from creation.
+using RetainedAttention = std::map<std::string, frame::user::TabAttention, std::less<>>;
 
 // Discovery observes bounded Session summaries; only attached Sessions own status Surfaces.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -414,8 +414,8 @@ void discover_statuses(const std::string_view endpoint, const JsonValue& documen
       if (!retained.contains(id) && std::ranges::none_of(statuses, [&](const auto& status) {
             return status->session == id;
           })) {
-        retained.emplace(id, discovered ? lemma::user::TabAttention::since_creation()
-                                        : lemma::user::TabAttention{});
+        retained.emplace(id, discovered ? frame::user::TabAttention::since_creation()
+                                        : frame::user::TabAttention{});
       }
     }
     discovered = true;
@@ -457,7 +457,7 @@ void discover_statuses(const std::string_view endpoint, const JsonValue& documen
 auto run_status(const std::string_view endpoint) -> int {
   ext::Client observer(
       endpoint,
-      R"({"schema":"lemma.extension/v1","name":"lemma-ui-discovery","capabilities":["observe"],"events":{"schema":"lemma.events/v1"}})");
+      R"({"schema":"frame.extension/v1","name":"frame-ui-discovery","capabilities":["observe"],"events":{"schema":"frame.events/v1"}})");
   std::vector<std::unique_ptr<Status>> statuses;
   RetainedAttention retained;
   bool discovered = false;
@@ -508,17 +508,17 @@ auto run_status(const std::string_view endpoint) -> int {
 int main(const int argc, char** argv) {
   try {
     const std::span arguments(argv, static_cast<std::size_t>(argc));
-    const char* const endpoint = std::getenv("LEMMA_EXTENSION_ENDPOINT");
+    const char* const endpoint = std::getenv("FRAME_EXTENSION_ENDPOINT");
     if (arguments.size() == 2 && std::string_view(arguments.back()) == "status" &&
         endpoint != nullptr) {
       return run_status(endpoint);
     }
-    const auto* context_text = std::getenv("LEMMA_COMMAND_CONTEXT");
+    const auto* context_text = std::getenv("FRAME_COMMAND_CONTEXT");
     if (arguments.size() == 2 && std::string_view(arguments.back()) == "sessions" &&
         context_text != nullptr) {
       const auto context = api::parse_json(context_text);
       if (context.value.has_value()) {
-        return lemma::user::run_session_manager(*context.value);
+        return frame::user::run_session_manager(*context.value);
       }
     }
     return 2;

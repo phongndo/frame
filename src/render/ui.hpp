@@ -1,14 +1,14 @@
-#ifndef LEMMA_RENDER_UI_HPP
-#define LEMMA_RENDER_UI_HPP
+#ifndef FRAME_RENDER_UI_HPP
+#define FRAME_RENDER_UI_HPP
 
-#include "lemma/geometry.hpp"
+#include "frame/geometry.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 
-namespace lemma::render::ui {
+namespace frame::render::ui {
 
 // Built-in status and rename text is validated before composition. One cell stores one UTF-8
 // scalar from that bounded text projection.
@@ -39,6 +39,6 @@ struct Cell final {
                                std::span<const Cell> cells, std::span<std::byte> output,
                                std::size_t& used) noexcept -> bool;
 
-} // namespace lemma::render::ui
+} // namespace frame::render::ui
 
-#endif // LEMMA_RENDER_UI_HPP
+#endif // FRAME_RENDER_UI_HPP

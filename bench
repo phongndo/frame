@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-PROFILE = os.environ.get("LEMMA_BENCH_PROFILE", "release")
+PROFILE = os.environ.get("FRAME_BENCH_PROFILE", "release")
 BUILD = ROOT / "build" / PROFILE
 
 
@@ -26,9 +26,9 @@ def configure_if_needed() -> None:
         [
             str(ROOT / "scripts" / "ci" / "configure"),
             PROFILE,
-            "-DLEMMA_BUILD_TESTS=OFF",
-            "-DLEMMA_BUILD_BENCHMARKS=ON",
-            "-DLEMMA_ENABLE_LATENCY_TRACE=OFF",
+            "-DFRAME_BUILD_TESTS=OFF",
+            "-DFRAME_BUILD_BENCHMARKS=ON",
+            "-DFRAME_ENABLE_LATENCY_TRACE=OFF",
         ]
     )
 
@@ -39,11 +39,11 @@ def build(*targets: str) -> None:
 
 
 def micro(filter_value: str | None = None) -> None:
-    build("lemma_benchmarks")
+    build("frame_benchmarks")
     manifest = json.loads((ROOT / "benchmarks" / "workloads.json").read_text())
     policy = manifest["sample_policies"]["smoke"]
     arguments = [
-        str(BUILD / "lemma_benchmarks"),
+        str(BUILD / "frame_benchmarks"),
         f"--benchmark_min_time={policy['micro_min_time_seconds']}s",
         f"--benchmark_min_warmup_time={policy['micro_warmup_seconds']}",
         f"--benchmark_repetitions={policy['micro_repetitions']}",
@@ -57,10 +57,10 @@ def micro(filter_value: str | None = None) -> None:
 
 def mux() -> None:
     build(
-        "lemma_test_server",
-        "lemma_test_cli",
-        "lemma_test_pty_peer",
-        "lemma_benchmark_probe",
+        "frame_test_server",
+        "frame_test_cli",
+        "frame_test_pty_peer",
+        "frame_benchmark_probe",
     )
     manifest = json.loads((ROOT / "benchmarks" / "workloads.json").read_text())
     repetitions = manifest["sample_policies"]["smoke"]["process_repetitions"]
@@ -71,19 +71,19 @@ def mux() -> None:
             "--mode",
             "interactive-output",
             "--multiplexer",
-            "lemma",
+            "frame",
             "--repetitions",
             str(repetitions),
             "--intent",
             "smoke",
             "--server",
-            str(BUILD / "lemma_test_server"),
+            str(BUILD / "frame_test_server"),
             "--cli",
-            str(BUILD / "lemma_test_cli"),
+            str(BUILD / "frame_test_cli"),
             "--peer",
-            str(BUILD / "lemma_test_pty_peer"),
+            str(BUILD / "frame_test_pty_peer"),
             "--probe",
-            str(BUILD / "lemma_benchmark_probe"),
+            str(BUILD / "frame_benchmark_probe"),
         ]
     )
 

@@ -12,7 +12,7 @@
 #include <string_view>
 #include <system_error>
 
-namespace lemma::client {
+namespace frame::client {
 namespace {
 
 [[nodiscard]] auto hex_component(const std::string_view text) noexcept
@@ -288,4 +288,4 @@ void HostTerminalThemeParser::finish() noexcept {
   return used;
 }
 
-} // namespace lemma::client
+} // namespace frame::client

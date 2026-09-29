@@ -1,7 +1,7 @@
-#ifndef LEMMA_GENERATIONAL_STORE_HPP
-#define LEMMA_GENERATIONAL_STORE_HPP
+#ifndef FRAME_GENERATIONAL_STORE_HPP
+#define FRAME_GENERATIONAL_STORE_HPP
 
-#include "lemma/assert.hpp"
+#include "frame/assert.hpp"
 
 #include <array>
 #include <cstddef>
@@ -12,7 +12,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace lemma {
+namespace frame {
 
 // A fixed-capacity owning slot map. IDs remain stable while a value is alive and stale IDs are
 // rejected after erase/reuse. The store itself performs no allocation; callers choose how values
@@ -118,7 +118,7 @@ public:
     // contains proved the ID slot is in range.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
     slots_[id.slot()].value.reset();
-    LEMMA_ASSERT(size_ > 0);
+    FRAME_ASSERT(size_ > 0);
     --size_;
     return true;
   }
@@ -141,6 +141,6 @@ private:
   std::size_t size_{0};
 };
 
-} // namespace lemma
+} // namespace frame
 
-#endif // LEMMA_GENERATIONAL_STORE_HPP
+#endif // FRAME_GENERATIONAL_STORE_HPP

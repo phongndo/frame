@@ -1,12 +1,12 @@
-#ifndef LEMMA_TERMINAL_FINGERPRINT_HPP
-#define LEMMA_TERMINAL_FINGERPRINT_HPP
+#ifndef FRAME_TERMINAL_FINGERPRINT_HPP
+#define FRAME_TERMINAL_FINGERPRINT_HPP
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 
-namespace lemma::vt::detail {
+namespace frame::vt::detail {
 
 using FingerprintLanes = std::array<std::uint64_t, 4>;
 
@@ -84,6 +84,6 @@ private:
   FingerprintLanes lanes_;
 };
 
-} // namespace lemma::vt::detail
+} // namespace frame::vt::detail
 
-#endif // LEMMA_TERMINAL_FINGERPRINT_HPP
+#endif // FRAME_TERMINAL_FINGERPRINT_HPP

@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <type_traits>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 [[nodiscard]] auto checked_placement(const std::optional<FloatPlacement> placement)
@@ -434,4 +434,4 @@ TEST(FloatLayerTest, OrdersBackToFrontWithinFixedCapacity) {
 }
 
 } // namespace
-} // namespace lemma::core
+} // namespace frame::core

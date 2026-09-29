@@ -31,7 +31,7 @@
         "CMAKE_C_FLAGS_DEV": "-O1 -g -fno-omit-frame-pointer -UNDEBUG",
         "CMAKE_CXX_FLAGS_DEV": "-O1 -g -fno-omit-frame-pointer -UNDEBUG",
         "CMAKE_MAP_IMPORTED_CONFIG_DEV": "Release",
-        "LEMMA_VALIDATE_GHOSTTY_EVERY_BUILD": "OFF"
+        "FRAME_VALIDATE_GHOSTTY_EVERY_BUILD": "OFF"
       }
     },
     {
@@ -67,7 +67,7 @@
       "name": "dev",
       "configurePreset": "dev",
       "targets": [
-        "lemma"
+        "frame"
       ]
     },
     {

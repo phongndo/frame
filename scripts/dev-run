@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and execute the current checkout's isolated development Lemma."""
+"""Build and execute the current checkout's isolated development Frame."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = "dev"
-CONFIGURE_CONTRACT = "lemma-dev-configure-v1"
+CONFIGURE_CONTRACT = "frame-dev-configure-v1"
 CONFIGURE_INPUTS = (
     "CMakePresets.json",
     "conan.lock",
@@ -27,9 +27,9 @@ CONFIGURE_INPUTS = (
 CONFIGURE_ENVIRONMENT = (
     "CC",
     "CXX",
-    "LEMMA_GHOSTTY_SOURCE_DIR",
-    "LEMMA_GHOSTTY_NIX_SOURCE_REV",
-    "LEMMA_GHOSTTY_ZIG_SYSTEM_DIR",
+    "FRAME_GHOSTTY_SOURCE_DIR",
+    "FRAME_GHOSTTY_NIX_SOURCE_REV",
+    "FRAME_GHOSTTY_ZIG_SYSTEM_DIR",
 )
 
 
@@ -40,7 +40,7 @@ def worktree_id(root: Path) -> str:
 
 def runtime_directory(root: Path, user_id: int | None = None) -> Path:
     uid = os.getuid() if user_id is None else user_id
-    return Path("/tmp") / f"lemma-dev-{uid}-{worktree_id(root)}"
+    return Path("/tmp") / f"frame-dev-{uid}-{worktree_id(root)}"
 
 
 def ensure_private_directory(path: Path) -> None:
@@ -81,9 +81,9 @@ def cache_is_development(cache: Path, root: Path) -> bool:
         return False
     required = (
         "CMAKE_BUILD_TYPE:STRING=Dev",
-        "LEMMA_BUILD_TESTS:BOOL=OFF",
-        "LEMMA_BUILD_BENCHMARKS:BOOL=OFF",
-        "LEMMA_VALIDATE_GHOSTTY_EVERY_BUILD:BOOL=OFF",
+        "FRAME_BUILD_TESTS:BOOL=OFF",
+        "FRAME_BUILD_BENCHMARKS:BOOL=OFF",
+        "FRAME_VALIDATE_GHOSTTY_EVERY_BUILD:BOOL=OFF",
         f"CMAKE_HOME_DIRECTORY:INTERNAL={root.resolve()}",
     )
     return all(value in configured for value in required)
@@ -91,7 +91,7 @@ def cache_is_development(cache: Path, root: Path) -> bool:
 
 def configuration_is_current(build: Path, root: Path, fingerprint: str) -> bool:
     try:
-        recorded = (build / ".lemma-configure-signature").read_text(encoding="ascii")
+        recorded = (build / ".frame-configure-signature").read_text(encoding="ascii")
     except OSError:
         return False
     return (
@@ -103,9 +103,9 @@ def configuration_is_current(build: Path, root: Path, fingerprint: str) -> bool:
 
 
 def write_signature(build: Path, fingerprint: str) -> None:
-    temporary = build / f".lemma-configure-signature.{os.getpid()}"
+    temporary = build / f".frame-configure-signature.{os.getpid()}"
     temporary.write_text(f"{fingerprint}\n", encoding="ascii")
-    temporary.replace(build / ".lemma-configure-signature")
+    temporary.replace(build / ".frame-configure-signature")
 
 
 def run_checked(
@@ -170,7 +170,7 @@ def stop_stale_daemon(runtime: Path, build_id: str) -> None:
     if recorded_daemon_build(runtime) == build_id:
         return
 
-    print("restarting stale development lemma daemon", file=sys.stderr, flush=True)
+    print("restarting stale development frame daemon", file=sys.stderr, flush=True)
     peer = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     peer.settimeout(2.0)
     try:
@@ -179,7 +179,7 @@ def stop_stale_daemon(runtime: Path, build_id: str) -> None:
         while peer.recv(4096):
             pass
     except OSError as error:
-        raise RuntimeError("failed to stop stale development lemma daemon") from error
+        raise RuntimeError("failed to stop stale development frame daemon") from error
     finally:
         peer.close()
 
@@ -188,7 +188,7 @@ def stop_stale_daemon(runtime: Path, build_id: str) -> None:
         if not socket_is_live(socket_path) and daemon_lock_is_released(runtime):
             return
         time.sleep(0.01)
-    raise RuntimeError("stale development lemma daemon did not stop")
+    raise RuntimeError("stale development frame daemon did not stop")
 
 
 def development_arguments(
@@ -230,8 +230,8 @@ def prepare(
                 [
                     str(root / "scripts" / "ci" / "configure"),
                     PROFILE,
-                    "-DLEMMA_BUILD_TESTS=OFF",
-                    "-DLEMMA_BUILD_BENCHMARKS=OFF",
+                    "-DFRAME_BUILD_TESTS=OFF",
+                    "-DFRAME_BUILD_BENCHMARKS=OFF",
                 ],
                 root,
                 environment,
@@ -239,11 +239,11 @@ def prepare(
             write_signature(build, fingerprint)
 
         run_checked(
-            ["cmake", "--build", str(build), "--target", "lemma"],
+            ["cmake", "--build", str(build), "--target", "frame"],
             root,
             environment,
         )
-        binary = build / "lemma"
+        binary = build / "frame"
         if not binary.is_file():
             raise RuntimeError(f"development build did not produce {binary}")
         build_id = binary_build_id(binary)
@@ -252,8 +252,8 @@ def prepare(
         os.close(lock_descriptor)
 
     execution_environment = dict(environment)
-    execution_environment["LEMMA_DEV_RUNTIME_DIR"] = str(runtime)
-    execution_environment["LEMMA_DEV_BUILD_ID"] = build_id
+    execution_environment["FRAME_DEV_RUNTIME_DIR"] = str(runtime)
+    execution_environment["FRAME_DEV_BUILD_ID"] = build_id
     execution_arguments = [str(binary), *arguments]
     return binary, execution_arguments, execution_environment
 
@@ -265,7 +265,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         binary, execution_arguments, environment = prepare(ROOT, forwarded, os.environ)
         os.execve(binary, execution_arguments, environment)
     except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
-        print(f"lemma development runner: {error}", file=sys.stderr)
+        print(f"frame development runner: {error}", file=sys.stderr)
         return 1
     return 1
 

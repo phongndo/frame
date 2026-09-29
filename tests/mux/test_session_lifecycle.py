@@ -3,12 +3,12 @@ from __future__ import annotations
 import shlex
 import unittest
 
-from tests.support.mux_harness import LemmaServer, process_exists, wait_for_process_exit
+from tests.support.mux_harness import FrameServer, process_exists, wait_for_process_exit
 
 
 class SessionLifecycleTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
 
     def test_output_while_detached_is_current_on_reattach(self) -> None:

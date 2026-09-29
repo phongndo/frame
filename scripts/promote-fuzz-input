@@ -11,10 +11,10 @@ readonly source_input="$2"
 name="$3"
 readonly regression="$4"
 case "${target}" in
-  attachment) binary=lemma_attachment_decoder_fuzz ;;
-  host-input) binary=lemma_host_input_parser_fuzz ;;
-  api) binary=lemma_api_json_fuzz ;;
-  extension) binary=lemma_extension_framing_fuzz ;;
+  attachment) binary=frame_attachment_decoder_fuzz ;;
+  host-input) binary=frame_host_input_parser_fuzz ;;
+  api) binary=frame_api_json_fuzz ;;
+  extension) binary=frame_extension_framing_fuzz ;;
   *)
     printf 'TARGET must be attachment, host-input, api, or extension\n' >&2
     exit 2
@@ -40,9 +40,9 @@ fi
 
 rm -rf third_party/ghostty/zig-out
 scripts/ci/configure sanitizers \
-  -DLEMMA_BUILD_TESTS=OFF \
-  -DLEMMA_BUILD_BENCHMARKS=OFF \
-  -DLEMMA_BUILD_FUZZERS=ON
+  -DFRAME_BUILD_TESTS=OFF \
+  -DFRAME_BUILD_BENCHMARKS=OFF \
+  -DFRAME_BUILD_FUZZERS=ON
 cmake --build --preset sanitizers --target "${binary}"
 if [[ "$(uname -s)" == Linux ]]; then
   "./build/sanitizers/${binary}" -runs=1 "${source_input}"

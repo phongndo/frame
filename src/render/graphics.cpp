@@ -1,6 +1,6 @@
 #include "render/graphics.hpp"
-#include "lemma/assert.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/assert.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "render/scene.hpp"
 
 #include <chrono>
@@ -20,7 +20,7 @@
 #include <limits>
 #include <new>
 
-namespace lemma::render {
+namespace frame::render {
 namespace {
 constexpr std::size_t image_limit = 256;
 constexpr std::size_t raster_bytes_limit = std::size_t{32} * 1024U * 1024U;
@@ -118,14 +118,14 @@ public:
     return true;
   }
   void text(const std::string_view value) noexcept {
-    LEMMA_ASSERT(value.size() <= output_.size() - used_);
+    FRAME_ASSERT(value.size() <= output_.size() - used_);
     std::memcpy(output_.subspan(used_).data(), value.data(), value.size());
     used_ += value.size();
   }
   template <typename T> void number(const T value) noexcept {
     std::array<char, 32> buffer{};
     const auto encoded = std::to_chars(buffer.begin(), buffer.end(), value);
-    LEMMA_ASSERT(encoded.ec == std::errc{});
+    FRAME_ASSERT(encoded.ec == std::errc{});
     text({buffer.data(), static_cast<std::size_t>(encoded.ptr - buffer.data())});
   }
   void erase(const std::uint32_t id, const bool data) noexcept {
@@ -656,14 +656,14 @@ auto GraphicsProjection::append(const Scene scene, const std::uint16_t status_ro
     if (!writer.room(64)) {
       return finish();
     }
-    // Lemma owns the alternate screen. Keep invisible references while replacing visible images.
+    // Frame owns the alternate screen. Keep invisible references while replacing visible images.
     writer.text("\x1b_Ga=d,d=a,q=2\x1b\\");
     state.clear_cursor = image_limit;
   }
   for (; state.place_cursor < state.plan_size; ++state.place_cursor) {
     const auto& placed = state.plan.at(state.place_cursor);
     const auto* item = state.resident(placed.key);
-    LEMMA_ASSERT(item != nullptr);
+    FRAME_ASSERT(item != nullptr);
     if (!item->complete) {
       continue;
     }
@@ -674,7 +674,7 @@ auto GraphicsProjection::append(const Scene scene, const std::uint16_t status_ro
   }
   const auto upload_and_place = [&](Resident& item) {
     const auto* image = state.image(item.key);
-    LEMMA_ASSERT(image != nullptr);
+    FRAME_ASSERT(image != nullptr);
     if (image->pixels.empty()) {
       state.pending = false;
       return false;
@@ -715,4 +715,4 @@ auto GraphicsProjection::append(const Scene scene, const std::uint16_t status_ro
   state.pending = state.place_cursor < state.plan_size;
   return finish();
 }
-} // namespace lemma::render
+} // namespace frame::render

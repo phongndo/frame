@@ -13,7 +13,7 @@
 #include <string_view>
 #include <utility>
 
-namespace lemma::app {
+namespace frame::app {
 namespace {
 
 [[nodiscard]] auto read_bounded_stream(std::istream& stream) -> std::optional<std::string> {
@@ -49,7 +49,7 @@ auto run_proc_document(const daemon::RuntimeEndpoint& endpoint, const std::strin
     const auto document = read_proc(source);
     if (!document.has_value()) {
       constexpr std::string_view error =
-          R"({"schema":"lemma.proc-result/v1","ok":false,"error":{"reason":"read_failed"},"results":[]}
+          R"({"schema":"frame.proc-result/v1","ok":false,"error":{"reason":"read_failed"},"results":[]}
 )";
       std::cout << error;
       return 2;
@@ -60,4 +60,4 @@ auto run_proc_document(const daemon::RuntimeEndpoint& endpoint, const std::strin
   }
 }
 
-} // namespace lemma::app
+} // namespace frame::app

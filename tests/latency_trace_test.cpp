@@ -8,7 +8,7 @@
 #include <string>
 #include <string_view>
 
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -19,11 +19,11 @@
 
 #include <gtest/gtest.h>
 
-namespace lemma::diagnostic {
+namespace frame::diagnostic {
 namespace {
 
 TEST(LatencyTraceTest, DerivesSameNonzeroTokenAcrossFragmentedMarker) {
-  constexpr std::string_view marker = "__LEMMA_OUTPUT_0007_ABCDEF__";
+  constexpr std::string_view marker = "__FRAME_OUTPUT_0007_ABCDEF__";
   const auto bytes = std::as_bytes(std::span(marker));
 
   const auto complete = latency_trace_marker_token(bytes);
@@ -46,20 +46,20 @@ TEST(LatencyTraceTest, DerivesSameNonzeroTokenAcrossFragmentedMarker) {
 TEST(LatencyTraceTest, IgnoresOrdinaryOutputAndRecoversAfterOversizedCandidate) {
   LatencyTraceMarkerMatcher matcher;
   std::array<std::byte, 160> oversized{};
-  constexpr std::string_view prefix = "__LEMMA_";
+  constexpr std::string_view prefix = "__FRAME_";
   std::ranges::copy(std::as_bytes(std::span(prefix)), oversized.begin());
   std::ranges::fill(std::span(oversized).subspan(prefix.size()), std::byte{'x'});
 
   EXPECT_EQ(matcher.observe(oversized), 0U);
-  constexpr std::string_view marker = "__LEMMA_IDLE_0001_QWERTY__";
+  constexpr std::string_view marker = "__FRAME_IDLE_0001_QWERTY__";
   EXPECT_NE(matcher.observe(std::as_bytes(std::span(marker))), 0U);
 }
 
 // Assertion macros inflate the two bounded fixture/split loops.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(LatencyTraceTest, RecognizesCurrentProbeMarkersAtEveryByteBoundary) {
-  for (const auto marker : {std::string_view{"__LEMMA_OUTPUT_0000_AAAAAA__"},
-                            std::string_view{"__LEMMA_OUTPUT_9999_YYYYJP__"}}) {
+  for (const auto marker : {std::string_view{"__FRAME_OUTPUT_0000_AAAAAA__"},
+                            std::string_view{"__FRAME_OUTPUT_9999_YYYYJP__"}}) {
     const auto bytes = std::as_bytes(std::span(marker));
     const auto expected = latency_trace_marker_token(bytes);
     ASSERT_NE(expected, 0U);
@@ -71,7 +71,7 @@ TEST(LatencyTraceTest, RecognizesCurrentProbeMarkersAtEveryByteBoundary) {
   }
 }
 
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
 
 struct TestTraceHeader final {
   std::uint64_t magic;
@@ -100,10 +100,10 @@ static_assert(sizeof(TestTraceEvent) == 40);
 
 TEST(LatencyTraceTest, CorrelatesOneExactReservedEventWithoutReorderingLaterEvents) {
   const auto directory = std::filesystem::temp_directory_path() /
-                         ("lemma-latency-trace-test-" + std::to_string(::getpid()));
+                         ("frame-latency-trace-test-" + std::to_string(::getpid()));
   ASSERT_TRUE(std::filesystem::create_directory(directory));
   const auto directory_text = directory.string();
-  ASSERT_EQ(::setenv("LEMMA_LATENCY_TRACE", directory_text.c_str(), 1), 0);
+  ASSERT_EQ(::setenv("FRAME_LATENCY_TRACE", directory_text.c_str(), 1), 0);
 
   set_latency_trace_role(LatencyTraceRole::attached_client);
   set_latency_trace_correlation(77);
@@ -147,4 +147,4 @@ TEST(LatencyTraceTest, CorrelatesOneExactReservedEventWithoutReorderingLaterEven
 #endif
 
 } // namespace
-} // namespace lemma::diagnostic
+} // namespace frame::diagnostic

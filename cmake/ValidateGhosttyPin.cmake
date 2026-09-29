@@ -60,7 +60,7 @@ endif()
 if(NOT DEFINED GHOSTTY_GIT_EXECUTABLE)
   message(FATAL_ERROR "a non-Nix Ghostty source requires Git validation")
 endif()
-# An uninitialized submodule is an empty directory. Git then walks up to Lemma and
+# An uninitialized submodule is an empty directory. Git then walks up to Frame and
 # reports the parent HEAD, which looks like a pin mismatch instead of a missing checkout.
 if(NOT EXISTS "${GHOSTTY_SOURCE_DIR}/.git" OR NOT EXISTS "${GHOSTTY_SOURCE_DIR}/build.zig")
   message(FATAL_ERROR

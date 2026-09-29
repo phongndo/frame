@@ -1,5 +1,5 @@
 {
-  description = "lemma C++23 development environment";
+  description = "frame C++23 development environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -49,7 +49,7 @@
       mkGhosttyDeps = pkgs: zigPackage:
         pkgs.callPackage "${ghosttySource}/build.zig.zon.nix" {
           zig_0_16 = zigPackage;
-          name = "lemma-ghostty-zig-dependencies-${builtins.substring 0 12 ghosttySource.rev}";
+          name = "frame-ghostty-zig-dependencies-${builtins.substring 0 12 ghosttySource.rev}";
           # Zig's build runner requires real dependency directories rather than symlinks.
           linkFarm = name: entries:
             pkgs.runCommand name { } ''
@@ -76,9 +76,9 @@
             doCheck = false;
           };
           ghosttyDeps = mkGhosttyDeps pkgs zigPackage;
-          mkLemma = buildType:
+          mkFrame = buildType:
             llvm.stdenv.mkDerivation {
-              pname = "lemma";
+              pname = "frame";
               version = "0.1.0";
               src = self;
 
@@ -101,49 +101,49 @@
               cmakeFlags = [
                 "-DCMAKE_BUILD_TYPE=${buildType}"
                 "-DCMAKE_CXX_SCAN_FOR_MODULES=OFF"
-                "-DLEMMA_BUILD_TESTS=OFF"
-                "-DLEMMA_BUILD_BENCHMARKS=OFF"
-                "-DLEMMA_GHOSTTY_SOURCE_DIR=${ghosttySource}"
-                "-DLEMMA_GHOSTTY_NIX_SOURCE_REV=${ghosttyPin}"
-                "-DLEMMA_GHOSTTY_ZIG_SYSTEM_DIR=${ghosttyDeps}"
-                "-DLEMMA_GHOSTTY_ZIG_TARGET=${zigTarget}"
+                "-DFRAME_BUILD_TESTS=OFF"
+                "-DFRAME_BUILD_BENCHMARKS=OFF"
+                "-DFRAME_GHOSTTY_SOURCE_DIR=${ghosttySource}"
+                "-DFRAME_GHOSTTY_NIX_SOURCE_REV=${ghosttyPin}"
+                "-DFRAME_GHOSTTY_ZIG_SYSTEM_DIR=${ghosttyDeps}"
+                "-DFRAME_GHOSTTY_ZIG_TARGET=${zigTarget}"
               ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-                "-DLEMMA_GHOSTTY_ZIG_LIBC=../.lemma-zig-libc.txt"
+                "-DFRAME_GHOSTTY_ZIG_LIBC=../.frame-zig-libc.txt"
               ];
 
               preConfigure = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
                 mkdir -p "$TMPDIR/zig-global-cache"
-                ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-global-cache" zig libc > .lemma-zig-libc.txt
+                ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-global-cache" zig libc > .frame-zig-libc.txt
               '';
 
               doInstallCheck = true;
               installCheckPhase = ''
-                "$out/bin/lemma" --version | grep -q '^lemma '
+                "$out/bin/frame" --version | grep -q '^frame '
               '';
 
               meta = {
                 description = "Self-hosted terminal multiplexer";
-                homepage = "https://github.com/phongndo/lemma";
+                homepage = "https://github.com/phongndo/frame";
                 license = pkgs.lib.licenses.mit;
-                mainProgram = "lemma";
+                mainProgram = "frame";
                 platforms = systems;
               };
             };
         in
         rec {
-          lemma = mkLemma "Release";
-          default = lemma;
+          frame = mkFrame "Release";
+          default = frame;
         }
       );
 
       apps = forAllSystems (
         system:
         rec {
-          lemma = {
+          frame = {
             type = "app";
-            program = "${self.packages.${system}.lemma}/bin/lemma";
+            program = "${self.packages.${system}.frame}/bin/frame";
           };
-          default = lemma;
+          default = frame;
         }
       );
 
@@ -157,14 +157,14 @@
           darwinTools = llvm.clang-tools;
           zigPackage = zig.packages.${system}."0.16.0";
           ghosttyDeps = mkGhosttyDeps pkgs zigPackage;
-          devLemma = pkgs.writeShellScriptBin "lemma" ''
+          devFrame = pkgs.writeShellScriptBin "frame" ''
             root="$(${pkgs.git}/bin/git rev-parse --show-toplevel)" || {
-              echo "lemma: not inside a Lemma checkout" >&2
+              echo "frame: not inside a Frame checkout" >&2
               exit 1
             }
             runner="$root/scripts/dev-run"
             if [[ ! -x "$runner" ]]; then
-              echo "lemma: $root does not contain scripts/dev-run" >&2
+              echo "frame: $root does not contain scripts/dev-run" >&2
               exit 1
             fi
             exec "$runner" "$@"
@@ -263,7 +263,7 @@
               linuxClangTidy
             ];
           projectPackages = compilerPackages ++ [
-            devLemma
+            devFrame
             pkgs.ccache
             pkgs.cmake
             pkgs.conan
@@ -291,13 +291,13 @@
           ];
           shellEnvironment = {
             CMAKE_GENERATOR = "Ninja";
-            LEMMA_GHOSTTY_SOURCE_DIR = "${ghosttySource}";
-            LEMMA_GHOSTTY_NIX_SOURCE_REV = ghosttyPin;
-            LEMMA_GHOSTTY_ZIG_SYSTEM_DIR = "${ghosttyDeps}";
+            FRAME_GHOSTTY_SOURCE_DIR = "${ghosttySource}";
+            FRAME_GHOSTTY_NIX_SOURCE_REV = ghosttyPin;
+            FRAME_GHOSTTY_ZIG_SYSTEM_DIR = "${ghosttyDeps}";
             shellHook =
               if isDarwin then
                 ''
-                  export PATH="${devLemma}/bin:${darwinClang}/bin:${darwinClangxx}/bin:${darwinXcrun}/bin:$PATH"
+                  export PATH="${devFrame}/bin:${darwinClang}/bin:${darwinClangxx}/bin:${darwinXcrun}/bin:$PATH"
                   export CC=/usr/bin/clang
                   export CXX=/usr/bin/clang++
                   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
@@ -305,7 +305,7 @@
                 ''
               else
                 ''
-                  export PATH="${devLemma}/bin:${linuxClangd}/bin:${linuxClangTidy}/bin:$PATH"
+                  export PATH="${devFrame}/bin:${linuxClangd}/bin:${linuxClangTidy}/bin:$PATH"
                   export CC="${llvm.clang}/bin/clang"
                   export CXX="${llvm.clang}/bin/clang++"
                 '';

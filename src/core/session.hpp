@@ -1,12 +1,12 @@
-#ifndef LEMMA_CORE_SESSION_HPP
-#define LEMMA_CORE_SESSION_HPP
+#ifndef FRAME_CORE_SESSION_HPP
+#define FRAME_CORE_SESSION_HPP
 
 #include "core/command_history.hpp"
 #include "core/float_layer.hpp"
 #include "core/layout.hpp"
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <array>
 #include <cstddef>
@@ -18,7 +18,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::core {
+namespace frame::core {
 
 inline constexpr std::size_t panes_per_session_max = pane_layout_panes_max;
 inline constexpr std::size_t tabs_per_session_max =
@@ -402,6 +402,6 @@ struct Session {
   bool theme_bound{false};
 };
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_SESSION_HPP
+#endif // FRAME_CORE_SESSION_HPP

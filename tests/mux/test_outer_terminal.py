@@ -15,7 +15,7 @@ from pathlib import Path
 
 from tests.support.mux_harness import (
     Client,
-    LemmaServer,
+    FrameServer,
     Session,
     process_exists,
     wait_until,
@@ -40,8 +40,8 @@ while True:
 
 class OuterTitleMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment(
-            config_text='require("lemma").setup({})\\n'
+        self.server = FrameServer.from_environment(
+            config_text='require("frame").setup({})\\n'
         )
         self.addCleanup(self.server.close)
 
@@ -172,8 +172,8 @@ class OuterTitleMuxTest(unittest.TestCase):
         client.expect_raw(b"\x1b]2;" + prefix + "é".encode() * visible + b"\x1b\\")
 
         # Disabling the option restores the saved title and saves it again for detach.
-        config = Path(self.server.environment["XDG_CONFIG_HOME"]) / "lemma/init.lua"
-        config.write_text('require("lemma").setup({ ui = { outer_title = false } })\n')
+        config = Path(self.server.environment["XDG_CONFIG_HOME"]) / "frame/init.lua"
+        config.write_text('require("frame").setup({ ui = { outer_title = false } })\n')
         self.server.require_command("config", "reload")
         client.expect_raw(b"\x1b[23;2t\x1b[22;2t")
         client.send("third\r")
@@ -239,8 +239,8 @@ sys.stdin.readline()
 
 class OuterAttentionMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment(
-            config_text='require("lemma").setup({ ui = { outer_progress = true } })\n'
+        self.server = FrameServer.from_environment(
+            config_text='require("frame").setup({ ui = { outer_progress = true } })\n'
         )
         self.addCleanup(self.server.close)
         self.emitted: dict[str, int] = {}
@@ -292,8 +292,8 @@ class OuterAttentionMuxTest(unittest.TestCase):
         return document["results"][0]["result"]["pane"]
 
     def reload(self, ui: str) -> None:
-        config = Path(self.server.environment["XDG_CONFIG_HOME"]) / "lemma/init.lua"
-        config.write_text(f'require("lemma").setup({{ ui = {{ {ui} }} }})\n')
+        config = Path(self.server.environment["XDG_CONFIG_HOME"]) / "frame/init.lua"
+        config.write_text(f'require("frame").setup({{ ui = {{ {ui} }} }})\n')
         self.server.require_command("config", "reload")
 
     @staticmethod
@@ -593,7 +593,7 @@ class OuterAttentionMuxTest(unittest.TestCase):
         def expect_link(uri: bytes, text: bytes) -> bytes:
             # The link opens with a Pane-scoped ID, may restyle, and closes after its text.
             pattern = re.compile(
-                rb"\x1b\]8;id=(lemma-\d+);"
+                rb"\x1b\]8;id=(frame-\d+);"
                 + re.escape(uri)
                 + rb"\x1b\\(?:\x1b\[[0-9;:]*m)*"
                 + re.escape(text)

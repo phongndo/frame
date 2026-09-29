@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_entrypoint() -> dict[str, Any]:
-    return runpy.run_path(str(ROOT / "test"), run_name="lemma_test_entrypoint")
+    return runpy.run_path(str(ROOT / "test"), run_name="frame_test_entrypoint")
 
 
 class TestEntrypointContractTest(unittest.TestCase):
@@ -21,7 +21,7 @@ class TestEntrypointContractTest(unittest.TestCase):
             build = Path(temporary)
             (build / "build.ninja").touch()
             (build / "CMakeCache.txt").write_text(
-                "LEMMA_BUILD_TESTS:BOOL=OFF\n", encoding="utf-8"
+                "FRAME_BUILD_TESTS:BOOL=OFF\n", encoding="utf-8"
             )
             calls: list[list[str]] = []
             configure.__globals__["BUILD"] = build
@@ -31,7 +31,7 @@ class TestEntrypointContractTest(unittest.TestCase):
 
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], str(ROOT / "scripts" / "ci" / "configure"))
-        self.assertIn("-DLEMMA_BUILD_TESTS=ON", calls[0])
+        self.assertIn("-DFRAME_BUILD_TESTS=ON", calls[0])
 
     def test_reuses_a_test_enabled_ninja_cache(self) -> None:
         entrypoint = load_entrypoint()
@@ -40,7 +40,7 @@ class TestEntrypointContractTest(unittest.TestCase):
             build = Path(temporary)
             (build / "build.ninja").touch()
             (build / "CMakeCache.txt").write_text(
-                "LEMMA_BUILD_TESTS:BOOL=ON\n", encoding="utf-8"
+                "FRAME_BUILD_TESTS:BOOL=ON\n", encoding="utf-8"
             )
             calls: list[list[str]] = []
             configure.__globals__["BUILD"] = build

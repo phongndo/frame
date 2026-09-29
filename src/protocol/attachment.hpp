@@ -1,7 +1,7 @@
-#ifndef LEMMA_PROTOCOL_ATTACHMENT_HPP
-#define LEMMA_PROTOCOL_ATTACHMENT_HPP
+#ifndef FRAME_PROTOCOL_ATTACHMENT_HPP
+#define FRAME_PROTOCOL_ATTACHMENT_HPP
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,7 +14,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::protocol {
+namespace frame::protocol {
 
 inline constexpr std::size_t input_bytes_max = std::size_t{4} * 1'024U;
 inline constexpr std::size_t legacy_input_message_bytes_max = input_bytes_max * 2U;
@@ -33,7 +33,7 @@ inline constexpr std::size_t environment_bytes_max = limits::environment_bytes_m
 inline constexpr std::size_t environment_entries_max = limits::environment_entries_max;
 inline constexpr std::size_t command_bytes_max = limits::command_bytes_hard_max;
 inline constexpr std::size_t command_arguments_max = limits::command_arguments_hard_max;
-inline constexpr std::string_view shutdown_response = "lemma daemon stopped\n";
+inline constexpr std::string_view shutdown_response = "frame daemon stopped\n";
 
 struct Dimensions final {
   std::uint16_t columns{80};
@@ -652,6 +652,6 @@ private:
   bool expect_hello_{true};
 };
 
-} // namespace lemma::protocol
+} // namespace frame::protocol
 
-#endif // LEMMA_PROTOCOL_ATTACHMENT_HPP
+#endif // FRAME_PROTOCOL_ATTACHMENT_HPP

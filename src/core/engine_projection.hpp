@@ -1,5 +1,5 @@
-#ifndef LEMMA_CORE_ENGINE_PROJECTION_HPP
-#define LEMMA_CORE_ENGINE_PROJECTION_HPP
+#ifndef FRAME_CORE_ENGINE_PROJECTION_HPP
+#define FRAME_CORE_ENGINE_PROJECTION_HPP
 
 #include "api/command.hpp"
 #include "core/client_frame_output.hpp"
@@ -8,8 +8,8 @@
 #include "core/engine_state.hpp"
 #include "core/session.hpp"
 #include "extension/runtime.hpp"
-#include "lemma/command.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/command.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,7 +20,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::core::engine_detail {
+namespace frame::core::engine_detail {
 
 [[nodiscard]] constexpr auto clipboard_base64_bytes(const std::size_t bytes) noexcept
     -> std::size_t {
@@ -113,6 +113,6 @@ void service_extension_observers(extension::Runtime& extensions, Sessions& sessi
                                  PaneRuntimeStore& runtimes, PublicScratch& scratch_owner,
                                  ExtensionObservations& observations, std::size_t& cursor) noexcept;
 
-} // namespace lemma::core::engine_detail
+} // namespace frame::core::engine_detail
 
-#endif // LEMMA_CORE_ENGINE_PROJECTION_HPP
+#endif // FRAME_CORE_ENGINE_PROJECTION_HPP

@@ -1,10 +1,10 @@
-#include "lemma/terminal/terminal.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <gtest/gtest.h>
 
 #include <string_view>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace {
 
 TEST(GhosttyDependencyIntegrityTest, PinnedBuildInfoMatchesProductionContract) {
@@ -28,4 +28,4 @@ TEST(GhosttyDependencyIntegrityTest, PinnedBuildInfoMatchesProductionContract) {
 }
 
 } // namespace
-} // namespace lemma::vt
+} // namespace frame::vt

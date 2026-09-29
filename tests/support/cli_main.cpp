@@ -40,8 +40,8 @@ namespace {
 }
 
 [[nodiscard]] auto attach_handshake(const int connection, const std::string_view session,
-                                    const lemma::protocol::Dimensions dimensions) noexcept -> bool {
-  namespace protocol = lemma::protocol;
+                                    const frame::protocol::Dimensions dimensions) noexcept -> bool {
+  namespace protocol = frame::protocol;
   protocol::ServerDecoder decoder;
   if (!decoder.prepare().has_value() ||
       !send_all(connection, protocol::encode_client_hello(session, dimensions).bytes())) {
@@ -65,9 +65,9 @@ namespace {
 
 // COUNT alternating cell-size/resize pairs back to back, followed by one input byte `K`.
 [[nodiscard]] auto encode_burst(const std::uint32_t count,
-                                const lemma::protocol::Dimensions dimensions,
+                                const frame::protocol::Dimensions dimensions,
                                 std::uint32_t& sequence) -> std::vector<std::byte> {
-  namespace protocol = lemma::protocol;
+  namespace protocol = frame::protocol;
   std::vector<std::byte> burst;
   const auto append = [&](const std::span<const std::byte> bytes) {
     burst.insert(burst.end(), bytes.begin(), bytes.end());
@@ -128,11 +128,11 @@ namespace {
 }
 
 // Attaches like a client whose geometry messages outran the daemon.
-[[nodiscard]] auto geometry_burst(const lemma::daemon::RuntimeEndpoint& endpoint,
+[[nodiscard]] auto geometry_burst(const frame::daemon::RuntimeEndpoint& endpoint,
                                   const std::string_view session, const std::uint32_t count)
     -> int {
-  constexpr lemma::protocol::Dimensions initial{.columns = 100, .rows = 30};
-  const int connection = lemma::daemon::open_server_connection(endpoint);
+  constexpr frame::protocol::Dimensions initial{.columns = 100, .rows = 30};
+  const int connection = frame::daemon::open_server_connection(endpoint);
   if (connection < 0) {
     return 1;
   }
@@ -140,7 +140,7 @@ namespace {
   const bool succeeded =
       attach_handshake(connection, session, initial) &&
       deliver_until_stdin_closes(connection, encode_burst(count, initial, sequence)) &&
-      send_all(connection, lemma::protocol::encode_detach(sequence).bytes());
+      send_all(connection, frame::protocol::encode_detach(sequence).bytes());
   static_cast<void>(::close(connection));
   return succeeded ? 0 : 1;
 }
@@ -154,7 +154,7 @@ int main(const int argc, char** argv) {
       return 2;
     }
     const auto endpoint =
-        lemma::daemon::RuntimeEndpoint::create(std::string_view(arguments.subspan<1, 1>().front()));
+        frame::daemon::RuntimeEndpoint::create(std::string_view(arguments.subspan<1, 1>().front()));
     if (!endpoint.has_value()) {
       return 2;
     }
@@ -173,11 +173,11 @@ int main(const int argc, char** argv) {
     if (app_arguments.size() > 1U) {
       const std::string_view command(std::span(app_arguments).subspan(1, 1).front());
       if (command == "tab" || command == "pane" || command == "shutdown" || command == "demo") {
-        return lemma::app::run_legacy(*endpoint, static_cast<int>(app_arguments.size()),
+        return frame::app::run_legacy(*endpoint, static_cast<int>(app_arguments.size()),
                                       app_arguments.data());
       }
     }
-    return lemma::app::run(*endpoint, static_cast<int>(app_arguments.size()), app_arguments.data());
+    return frame::app::run(*endpoint, static_cast<int>(app_arguments.size()), app_arguments.data());
   } catch (...) {
     return 2;
   }

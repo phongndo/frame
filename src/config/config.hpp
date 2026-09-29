@@ -1,5 +1,5 @@
-#ifndef LEMMA_CONFIG_CONFIG_HPP
-#define LEMMA_CONFIG_CONFIG_HPP
+#ifndef FRAME_CONFIG_CONFIG_HPP
+#define FRAME_CONFIG_CONFIG_HPP
 
 #include "api/json.hpp"
 #include "input/input_router.hpp"
@@ -14,9 +14,9 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::config {
+namespace frame::config {
 
-inline constexpr std::string_view configuration_schema = "lemma.config/v1";
+inline constexpr std::string_view configuration_schema = "frame.config/v1";
 inline constexpr std::size_t configuration_document_bytes_max = std::size_t{64} * 1'024U;
 inline constexpr std::size_t configuration_path_bytes_max = 4'096;
 inline constexpr std::size_t default_program_bytes_max = 4'096;
@@ -158,6 +158,6 @@ private:
 [[nodiscard]] auto compile(const Configuration& configuration) noexcept
     -> std::expected<Generation, Error>;
 
-} // namespace lemma::config
+} // namespace frame::config
 
-#endif // LEMMA_CONFIG_CONFIG_HPP
+#endif // FRAME_CONFIG_CONFIG_HPP

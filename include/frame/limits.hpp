@@ -1,11 +1,11 @@
-#ifndef LEMMA_LIMITS_HPP
-#define LEMMA_LIMITS_HPP
+#ifndef FRAME_LIMITS_HPP
+#define FRAME_LIMITS_HPP
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 
-namespace lemma::limits {
+namespace frame::limits {
 
 inline constexpr std::uint32_t sessions_hard_max = 64;
 inline constexpr std::uint32_t tabs_hard_max = 1'024;
@@ -161,6 +161,6 @@ inline constexpr auto scrollback_compression_idle_delay = std::chrono::seconds{1
 static_assert(terminal_scrollback_bytes_default <= terminal_scrollback_bytes_hard_max);
 static_assert(terminal_scrollback_bytes_aggregate_max >= terminal_scrollback_bytes_hard_max);
 
-} // namespace lemma::limits
+} // namespace frame::limits
 
-#endif // LEMMA_LIMITS_HPP
+#endif // FRAME_LIMITS_HPP

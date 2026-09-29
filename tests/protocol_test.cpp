@@ -1,6 +1,6 @@
 #include "protocol/attachment.hpp"
 
-#include "lemma/id.hpp"
+#include "frame/id.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,7 +11,7 @@
 
 #include <gtest/gtest.h>
 
-namespace lemma::protocol {
+namespace frame::protocol {
 namespace {
 
 // Assertions above each access make optional test failures explicit.
@@ -560,4 +560,4 @@ TEST(ProtocolTest, BoundedControlContextSizeUsesStableBigEndianBoundaries) {
 // NOLINTEND(bugprone-unchecked-optional-access)
 
 } // namespace
-} // namespace lemma::protocol
+} // namespace frame::protocol

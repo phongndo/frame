@@ -13,7 +13,7 @@ namespace {
 struct Transcript final {
   std::uint64_t hash{14'695'981'039'346'656'037ULL};
   std::size_t events{0};
-  std::optional<lemma::client::HostInputKind> streaming_kind;
+  std::optional<frame::client::HostInputKind> streaming_kind;
 
   void mix(const std::uint64_t value) noexcept {
     hash ^= value;
@@ -26,9 +26,9 @@ struct Transcript final {
     }
   }
 
-  void event(const lemma::client::HostInputEvent& value,
+  void event(const frame::client::HostInputEvent& value,
              const std::span<const std::byte> output) noexcept {
-    using lemma::client::HostInputKind;
+    using frame::client::HostInputKind;
     const bool streaming = value.kind == HostInputKind::ordinary ||
                            value.kind == HostInputKind::paste ||
                            value.kind == HostInputKind::terminal_reply_stream;
@@ -85,19 +85,19 @@ struct Transcript final {
 };
 
 [[nodiscard]] auto parse_transcript(const std::span<const std::byte> input,
-                                    lemma::protocol::Dimensions geometry,
+                                    frame::protocol::Dimensions geometry,
                                     const std::size_t chunk_max) -> std::optional<Transcript> {
-  lemma::client::HostInputParser parser;
+  frame::client::HostInputParser parser;
   if (!parser.prepare().has_value()) {
     return std::nullopt;
   }
   // Runtime-sized bounded fuzz output cannot use std::array.
   // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
   auto output =
-      std::make_unique_for_overwrite<std::byte[]>(lemma::client::host_input_output_bytes_max);
+      std::make_unique_for_overwrite<std::byte[]>(frame::client::host_input_output_bytes_max);
   // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
   Transcript transcript;
-  const auto output_span = std::span(output.get(), lemma::client::host_input_output_bytes_max);
+  const auto output_span = std::span(output.get(), frame::client::host_input_output_bytes_max);
   std::size_t offset = 0;
   while (offset < input.size()) {
     const auto copied = std::min(chunk_max, input.size() - offset);
@@ -108,7 +108,7 @@ struct Transcript final {
     const auto bytes = output_span.first(parsed->bytes);
     for (const auto& event : std::span(parsed->events).first(parsed->event_count)) {
       transcript.event(event, bytes);
-      if (event.kind == lemma::client::HostInputKind::window_size) {
+      if (event.kind == frame::client::HostInputKind::window_size) {
         geometry = {.columns = event.window_size.columns, .rows = event.window_size.rows};
       }
     }
@@ -133,13 +133,13 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
 // NOLINTNEXTLINE(readability-identifier-naming)
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* const data, const std::size_t size) {
-  if (data == nullptr || size < 3 || size > lemma::protocol::input_message_bytes_max) {
+  if (data == nullptr || size < 3 || size > frame::protocol::input_message_bytes_max) {
     return 0;
   }
   const auto source = std::span(data, size);
   const auto input = std::as_bytes(source).subspan(3);
   const auto chunk_max = 1U + (static_cast<std::size_t>(source.front()) % 128U);
-  const lemma::protocol::Dimensions geometry{
+  const frame::protocol::Dimensions geometry{
       .columns = static_cast<std::uint16_t>(1U + (source.subspan(1, 1).front() % 250U)),
       .rows = static_cast<std::uint16_t>(1U + (source.subspan(2, 1).front() % 100U)),
   };

@@ -1,5 +1,5 @@
 #include "clipboard/png_file.hpp"
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 #include "platform/io.hpp"
 
 #include <algorithm>
@@ -24,7 +24,7 @@
 extern char** environ; // NOLINT(readability-redundant-declaration)
 #endif
 
-namespace lemma::clipboard {
+namespace frame::clipboard {
 namespace {
 auto spawn(const std::string& helper, const int child, const int parent) noexcept -> bool {
   posix_spawn_file_actions_t actions{};
@@ -91,7 +91,7 @@ auto PngFile::start(const std::span<const std::byte> png, const Clock::time_poin
       return nullptr;
     }
     helper.resize(slash + 1U);
-    helper += "lemma-clipboard-host";
+    helper += "frame-clipboard-host";
     auto result = std::make_unique<PngFile>();
     result->png_.assign(png.begin(), png.end());
     result->response_.reserve(4096);
@@ -182,4 +182,4 @@ void PngFile::advance(const Clock::time_point now) noexcept {
     finish();
   }
 }
-} // namespace lemma::clipboard
+} // namespace frame::clipboard

@@ -1,5 +1,5 @@
-#ifndef LEMMA_RENDER_GRAPHICS_HPP
-#define LEMMA_RENDER_GRAPHICS_HPP
+#ifndef FRAME_RENDER_GRAPHICS_HPP
+#define FRAME_RENDER_GRAPHICS_HPP
 #include "render/scene.hpp"
 #include <chrono>
 #include <cstddef>
@@ -9,7 +9,7 @@
 #include <optional>
 #include <span>
 
-namespace lemma::render {
+namespace frame::render {
 enum class GraphicsError : std::uint8_t { terminal, capacity, allocation };
 // Attachment-owned presentation cache. Canonical pixels/placements stay in Terminal; only image
 // generations, upload progress, and clipped presentation geometry survive a composition call.
@@ -35,5 +35,5 @@ private:
   struct State;
   std::unique_ptr<State> state_;
 };
-} // namespace lemma::render
+} // namespace frame::render
 #endif

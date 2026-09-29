@@ -1,5 +1,5 @@
-#ifndef LEMMA_EXTENSION_LUA_HOST_HPP
-#define LEMMA_EXTENSION_LUA_HOST_HPP
+#ifndef FRAME_EXTENSION_LUA_HOST_HPP
+#define FRAME_EXTENSION_LUA_HOST_HPP
 
 #include "config/config.hpp"
 #include "extension/commands.hpp"
@@ -14,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-namespace lemma::extension {
+namespace frame::extension {
 
 enum class ConfigurationStatus : std::uint8_t {
   absent,
@@ -59,7 +59,7 @@ struct ConfigurationLoad final {
   ConfigurationStatus status{ConfigurationStatus::absent};
 };
 
-// An omitted path discovers $XDG_CONFIG_HOME/lemma/init.lua (or ~/.config/lemma/init.lua).
+// An omitted path discovers $XDG_CONFIG_HOME/frame/init.lua (or ~/.config/frame/init.lua).
 // A discovered missing file is not an error; an explicit missing path is.
 [[nodiscard]] auto load_configuration(std::optional<std::string_view> path = std::nullopt) noexcept
     -> ConfigurationLoad;
@@ -92,6 +92,6 @@ private:
   bool finished_{false};
 };
 
-} // namespace lemma::extension
+} // namespace frame::extension
 
-#endif // LEMMA_EXTENSION_LUA_HOST_HPP
+#endif // FRAME_EXTENSION_LUA_HOST_HPP

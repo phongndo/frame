@@ -1,7 +1,7 @@
 #include "core/input.hpp"
 
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "protocol/attachment.hpp"
 
 #include <array>
@@ -13,7 +13,7 @@
 
 #include <gtest/gtest.h>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 void write_terminal(vt::Terminal& terminal, const std::string_view bytes) noexcept {
@@ -237,4 +237,4 @@ TEST(CoreInputTest, SuppliesTextForControlKeys) {
 }
 
 } // namespace
-} // namespace lemma::core
+} // namespace frame::core

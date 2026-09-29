@@ -1,13 +1,13 @@
-#ifndef LEMMA_ID_HPP
-#define LEMMA_ID_HPP
+#ifndef FRAME_ID_HPP
+#define FRAME_ID_HPP
 
-#include "lemma/assert.hpp"
+#include "frame/assert.hpp"
 
 #include <cstdint>
 #include <limits>
 #include <optional>
 
-namespace lemma {
+namespace frame {
 
 template <typename Tag> class GenerationalId final {
 public:
@@ -24,7 +24,7 @@ public:
   [[nodiscard]] static constexpr GenerationalId
   from_parts(const std::uint32_t slot, const std::uint32_t generation) noexcept {
     const std::optional<GenerationalId> id = try_from_parts(slot, generation);
-    LEMMA_ASSERT(id.has_value());
+    FRAME_ASSERT(id.has_value());
     return *id;
   }
 
@@ -63,6 +63,6 @@ using ConnectionId = GenerationalId<ConnectionIdTag>;
 using ExtensionGenerationId = GenerationalId<ExtensionGenerationIdTag>;
 using SurfaceId = GenerationalId<SurfaceIdTag>;
 
-} // namespace lemma
+} // namespace frame
 
-#endif // LEMMA_ID_HPP
+#endif // FRAME_ID_HPP

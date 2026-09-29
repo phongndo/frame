@@ -1,8 +1,8 @@
 #include "random.hpp"
 #include "terminal_trace.hpp"
 
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "render/pane_composition.hpp"
 
 #include <gtest/gtest.h>
@@ -25,7 +25,7 @@
 #include <string_view>
 #include <utility>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 namespace {
 
 constexpr std::size_t snapshot_bytes_max = std::size_t{256} * 1'024U;
@@ -334,7 +334,7 @@ private:
     operation.argument_1 = requested.rows;
     operation.argument_2 = static_cast<std::uint16_t>(requested.cell_width_px);
 
-    if (std::getenv("LEMMA_SIM_TRACE") != nullptr) {
+    if (std::getenv("FRAME_SIM_TRACE") != nullptr) {
       const auto inspection = canonical_.inspection();
       std::cerr << "next " << operation;
       if (inspection.has_value()) {
@@ -895,7 +895,7 @@ private:
                                          << *trace;
     }
     trace->complete_last(world->state_hash());
-    if (std::getenv("LEMMA_SIM_TRACE") != nullptr) {
+    if (std::getenv("FRAME_SIM_TRACE") != nullptr) {
       std::cerr << index << ' ' << operation << '\n';
     }
   }
@@ -1034,14 +1034,14 @@ TEST(TerminalSimulationTest, GeneratedHistoriesPreserveFragmentationAndProjectio
 
   std::uint64_t configured_seed = 0;
   std::uint64_t configured_operations = terminal_default_operations;
-  const bool has_seed = std::getenv("LEMMA_SIM_SEED") != nullptr;
+  const bool has_seed = std::getenv("FRAME_SIM_SEED") != nullptr;
   if (has_seed) {
-    ASSERT_TRUE(parse_environment_integer("LEMMA_SIM_SEED", configured_seed))
-        << "LEMMA_SIM_SEED must be an integer accepted by strtoull";
+    ASSERT_TRUE(parse_environment_integer("FRAME_SIM_SEED", configured_seed))
+        << "FRAME_SIM_SEED must be an integer accepted by strtoull";
   }
-  if (std::getenv("LEMMA_SIM_OPERATIONS") != nullptr) {
-    ASSERT_TRUE(parse_environment_integer("LEMMA_SIM_OPERATIONS", configured_operations))
-        << "LEMMA_SIM_OPERATIONS must be an integer accepted by strtoull";
+  if (std::getenv("FRAME_SIM_OPERATIONS") != nullptr) {
+    ASSERT_TRUE(parse_environment_integer("FRAME_SIM_OPERATIONS", configured_operations))
+        << "FRAME_SIM_OPERATIONS must be an integer accepted by strtoull";
   }
   ASSERT_GT(configured_operations, 0U);
   ASSERT_LE(configured_operations, terminal_trace_operations_max);
@@ -1069,4 +1069,4 @@ TEST(TerminalSimulationTest, GeneratedHistoriesPreserveFragmentationAndProjectio
 }
 
 } // namespace
-} // namespace lemma::test::sim
+} // namespace frame::test::sim

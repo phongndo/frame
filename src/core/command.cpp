@@ -1,6 +1,6 @@
-#include "lemma/command.hpp"
+#include "frame/command.hpp"
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -9,7 +9,7 @@
 #include <string_view>
 #include <variant>
 
-namespace lemma {
+namespace frame {
 namespace {
 
 [[nodiscard]] constexpr auto valid_kind(const CommandKind kind) noexcept -> bool {
@@ -218,4 +218,4 @@ auto CommandDispatcher::dispatch(const Command& command) const noexcept -> Comma
   return complete(executor_(context_, command));
 }
 
-} // namespace lemma
+} // namespace frame

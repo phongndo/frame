@@ -2,8 +2,8 @@
 set -euo pipefail
 
 scripts/ci/configure debug \
-  -DLEMMA_BUILD_TESTS=ON \
-  -DLEMMA_BUILD_BENCHMARKS=OFF
-cmake --build --preset debug --target lemma lemma_fast_test_binaries
+  -DFRAME_BUILD_TESTS=ON \
+  -DFRAME_BUILD_BENCHMARKS=OFF
+cmake --build --preset debug --target frame frame_fast_test_binaries
 scripts/ci/test debug
-./build/debug/lemma --help >/dev/null
+./build/debug/frame --help >/dev/null

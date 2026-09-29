@@ -3,10 +3,10 @@
 #include "core/float_layer.hpp"
 #include "core/layout.hpp"
 #include "core/session.hpp"
-#include "lemma/assert.hpp"
-#include "lemma/command.hpp"
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
+#include "frame/assert.hpp"
+#include "frame/command.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
 
 #include <algorithm>
 #include <array>
@@ -20,7 +20,7 @@
 #include <utility>
 #include <variant>
 
-namespace lemma::core {
+namespace frame::core {
 
 // Transition values intentionally rely on default member values for effects and created IDs that
 // do not apply to a particular operation.
@@ -258,12 +258,12 @@ void commit_projection(Session& session, const LayoutProjection& projection,
     }
     const auto pane_id = std::span(projection.panes).subspan(index, 1).front();
     auto* const pane = pane_for_projection(session, staged, pane_id);
-    LEMMA_ASSERT(pane != nullptr);
+    FRAME_ASSERT(pane != nullptr);
     pane->rectangle = std::span(projection.rectangles).subspan(index, 1).front();
   }
   for (std::size_t index = 0; index < floats.size; ++index) {
     auto* const pane = find_pane(session, std::span(floats.panes).subspan(index, 1).front());
-    LEMMA_ASSERT(pane != nullptr);
+    FRAME_ASSERT(pane != nullptr);
     pane->rectangle = std::span(floats.rectangles).subspan(index, 1).front();
   }
 }
@@ -382,7 +382,7 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
   }
   std::span(session.tabs).subspan(id.slot(), 1).front().tab.reset();
   const bool erased = session.tab_order.erase(id);
-  LEMMA_ASSERT(erased);
+  FRAME_ASSERT(erased);
 
   SessionTransition transition{
       .result = {.status = CommandStatus::applied},
@@ -407,9 +407,9 @@ void reset_removed_tab_attachment(Session& session, const TabId tab) noexcept {
   }
   const auto next_position = std::min(*removed_position, session.tab_order.size() - 1U);
   const auto selected_id = session.tab_order.at(next_position);
-  LEMMA_ASSERT(selected_id.has_value());
+  FRAME_ASSERT(selected_id.has_value());
   auto* const selected = find_tab(session, *selected_id);
-  LEMMA_ASSERT(selected != nullptr);
+  FRAME_ASSERT(selected != nullptr);
   session.active_tab = *selected_id;
   session.previous_tab = *selected_id;
   const auto fitted = fit_tab(session, runtime, *selected, true);
@@ -440,14 +440,14 @@ void reset_removed_pane_attachment(Session& session, const Tab& tab, const PaneI
   runtime.retire(runtime.context, session.id, pane_id);
   std::span(session.panes).subspan(pane_id.slot(), 1).front().pane.reset();
   const bool erased = tab.floats.erase(pane_id);
-  LEMMA_ASSERT(erased);
+  FRAME_ASSERT(erased);
   const auto previous = tab.previous_pane;
   if (was_focused && find_pane(session, tab, previous) != nullptr) {
     if (!tab.is_float(previous)) {
       tab.focus_tiled(previous);
     } else if (tab.float_presentable(previous)) {
       const bool focused = tab.focus_float(previous);
-      LEMMA_ASSERT(focused);
+      FRAME_ASSERT(focused);
     }
   }
   if (find_pane(session, tab, tab.previous_pane) == nullptr) {
@@ -534,7 +534,7 @@ void reset_removed_pane_attachment(Session& session, const Tab& tab, const PaneI
   }
   const auto previous = tab.focused_pane();
   const bool focused = tab.focus_float(target);
-  LEMMA_ASSERT(focused);
+  FRAME_ASSERT(focused);
   tab.previous_pane = previous;
   return {.result = {.status = CommandStatus::applied},
           .change = {.invalidate_terminal = target,
@@ -1115,7 +1115,7 @@ auto SessionMachine::dispatch(const Command& command) noexcept -> SessionTransit
       return {.result = {.status = CommandStatus::conflict}, .handled = true};
     }
     const bool renamed = session_.rename(name->view());
-    LEMMA_ASSERT(renamed);
+    FRAME_ASSERT(renamed);
     session_.attachment.rename_prompt = {};
     return finish({.result = {.status = CommandStatus::applied},
                    .change = {.frame_requested = true, .status_changed = true},
@@ -1141,7 +1141,7 @@ auto SessionMachine::dispatch(const Command& command) noexcept -> SessionTransit
     const auto position = command.kind == CommandKind::next_tab ? (*current + 1U) % count
                                                                 : (*current + count - 1U) % count;
     const auto selected = session_.tab_order.at(position);
-    LEMMA_ASSERT(selected.has_value());
+    FRAME_ASSERT(selected.has_value());
     return finish(select_tab_transition(session_, options_.runtime, *selected));
   }
   if (command.kind == CommandKind::close_tab) {
@@ -1162,7 +1162,7 @@ auto SessionMachine::dispatch(const Command& command) noexcept -> SessionTransit
       return {.result = {.status = CommandStatus::no_effect}, .handled = true};
     }
     const bool renamed = tab->set_title_override(title->view());
-    LEMMA_ASSERT(renamed);
+    FRAME_ASSERT(renamed);
     if (session_.attachment.rename_prompt.kind == RenamePromptKind::tab &&
         session_.attachment.rename_prompt.tab == tab->id) {
       session_.attachment.rename_prompt = {};
@@ -1440,11 +1440,11 @@ auto SessionMachine::float_pane(const TabId tab_id, const FloatPaneOptions& opti
   tab->set_floats_visible(true);
   if (options.focus_created) {
     const bool focused = tab->focus_float(pane_id);
-    LEMMA_ASSERT(focused);
+    FRAME_ASSERT(focused);
     tab->previous_pane = previous;
   } else if (had_float_focus) {
     const bool refocused = tab->focus_float(previous);
-    LEMMA_ASSERT(refocused);
+    FRAME_ASSERT(refocused);
   }
   return finish({.result = {.status = CommandStatus::applied},
                  .change = {.invalidate_terminal = options.focus_created ? pane_id : PaneId{},
@@ -1489,7 +1489,7 @@ auto SessionMachine::place_float(const TabId tab_id, const PaneId pane_id,
     return finish(effect_failure_transition(resized));
   }
   const bool placed = tab->floats.place(pane_id, placement);
-  LEMMA_ASSERT(placed);
+  FRAME_ASSERT(placed);
   pane->rectangle = target;
   return finish({.result = {.status = CommandStatus::applied},
                  .change = {.frame_requested = true, .force_full_frame = true},
@@ -1851,4 +1851,4 @@ auto session_state_hash(const Session& session) noexcept -> std::uint64_t {
 #endif
 #endif
 
-} // namespace lemma::core
+} // namespace frame::core

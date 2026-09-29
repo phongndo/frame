@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A one-invocation Session/Tab/Pane picker using only Proc and Surface records.
 
-Register this program with lemma.command.register(..., {argv={...}}). It deliberately
+Register this program with frame.command.register(..., {argv={...}}). It deliberately
 has no screen subscription, timer while idle, terminal emulator, or daemon-side UI logic.
 """
 
@@ -12,7 +12,7 @@ import time
 from collections import deque
 from typing import Any
 
-from lemma_client import UPDATE, Client, command_context
+from frame_client import UPDATE, Client, command_context
 
 
 def row_text(text: str, columns: int) -> str:
@@ -71,7 +71,7 @@ class Picker:
         )
 
     def paint(self) -> None:
-        rows = [("Sessions", "Tabs", "Panes")[self.level] + " - Lemma picker"]
+        rows = [("Sessions", "Tabs", "Panes")[self.level] + " - Frame picker"]
         visible = max(0, self.rows - 2)
         start = max(0, self.selected - visible + 1)
         for index, item in enumerate(self.entries[start : start + visible], start):
@@ -83,7 +83,7 @@ class Picker:
         self.peer.send(
             UPDATE,
             {
-                "schema": "lemma.surface-update/v1",
+                "schema": "frame.surface-update/v1",
                 "surface": self.surface,
                 "styles": [{}, {"inverse": True}],
                 "rows": [

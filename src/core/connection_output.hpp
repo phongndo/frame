@@ -1,7 +1,7 @@
-#ifndef LEMMA_CORE_CONNECTION_OUTPUT_HPP
-#define LEMMA_CORE_CONNECTION_OUTPUT_HPP
+#ifndef FRAME_CORE_CONNECTION_OUTPUT_HPP
+#define FRAME_CORE_CONNECTION_OUTPUT_HPP
 
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,7 +14,7 @@
 #include <string_view>
 #include <system_error>
 
-namespace lemma::core {
+namespace frame::core {
 
 class ConnectionOutput final {
 public:
@@ -146,6 +146,6 @@ flush_connection_output(Output& output, std::size_t& global_budget,
   return output.busy() ? ConnectionFlushStatus::pending : ConnectionFlushStatus::drained;
 }
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_CONNECTION_OUTPUT_HPP
+#endif // FRAME_CORE_CONNECTION_OUTPUT_HPP

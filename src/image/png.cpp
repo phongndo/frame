@@ -5,7 +5,7 @@
 #include <png.h>
 #include <span>
 
-namespace lemma::image {
+namespace frame::image {
 namespace {
 struct Image final {
   png_image value{};
@@ -40,4 +40,4 @@ auto decode_png(const std::span<const std::byte> encoded, const Allocate allocat
   }
   return Size{.width = width, .height = height};
 }
-} // namespace lemma::image
+} // namespace frame::image

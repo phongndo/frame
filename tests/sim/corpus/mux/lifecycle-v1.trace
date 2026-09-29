@@ -1,4 +1,4 @@
-lemma-mux-trace-v1
+frame-mux-trace-v1
 # corpus-kind: characterization
 # description: initial lifecycle, stale-identity, and Runtime-fault coverage
 # source-trace: generated seed corpus introduced with deterministic mux simulation

@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tools import benchmark_lemma_skill as benchmark
+from tools import benchmark_frame_skill as benchmark
 
 
 class AgentSkillBenchmarkTest(unittest.TestCase):
@@ -22,7 +22,7 @@ class AgentSkillBenchmarkTest(unittest.TestCase):
                     {
                         "type": "toolCall",
                         "name": "read",
-                        "arguments": {"path": "/tmp/skill/lemma/SKILL.md"},
+                        "arguments": {"path": "/tmp/skill/frame/SKILL.md"},
                     }
                 ],
                 "usage": {
@@ -59,29 +59,29 @@ class AgentSkillBenchmarkTest(unittest.TestCase):
             self.assertLessEqual(len(name), 32)
             self.assertRegex(name, r"^[A-Za-z0-9_][A-Za-z0-9_-]*$")
 
-    def test_run_environment_removes_inherited_lemma_targets(self) -> None:
+    def test_run_environment_removes_inherited_frame_targets(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            command = root / "bin" / "lemma"
+            command = root / "bin" / "frame"
             subject = benchmark.Subject(
                 binary=command,
                 command=command,
-                skill=root / "skill" / "lemma" / "SKILL.md",
+                skill=root / "skill" / "frame" / "SKILL.md",
                 binary_sha256="0" * 64,
                 skill_sha256="1" * 64,
             )
             inherited = {
-                "LEMMA_SESSION_ID": "9:9",
-                "LEMMA_SESSION_NAME": "user-session",
-                "LEMMA_TAB_ID": "9:8",
-                "LEMMA_PANE_ID": "9:7",
+                "FRAME_SESSION_ID": "9:9",
+                "FRAME_SESSION_NAME": "user-session",
+                "FRAME_TAB_ID": "9:8",
+                "FRAME_PANE_ID": "9:7",
             }
             with mock.patch.dict(os.environ, inherited, clear=False):
                 environment = benchmark.run_environment(subject, root / "runtime", None)
 
         for name in inherited:
             self.assertNotIn(name, environment)
-        self.assertEqual(environment["LEMMA_DEV_RUNTIME_DIR"], str(root / "runtime"))
+        self.assertEqual(environment["FRAME_DEV_RUNTIME_DIR"], str(root / "runtime"))
 
     def test_shutdown_runtime_stops_a_live_isolated_daemon(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -114,7 +114,7 @@ class AgentSkillBenchmarkTest(unittest.TestCase):
 
     def test_cold_job_scoring_requires_observed_output_and_bounded_wait(self) -> None:
         procedure = (
-            "lemma proc --stdin <<'EOF'\n"
+            "frame proc --stdin <<'EOF'\n"
             '{"commands":['
             '{"id":"job","command":"session.start"},'
             '{"command":"pane.wait","pane":{"result":"job"},'
@@ -129,7 +129,7 @@ class AgentSkillBenchmarkTest(unittest.TestCase):
             tool_calls=[{"name": "bash", "arguments": {"command": procedure}}],
             tool_results=[
                 '{"state":"exited","code":7,'
-                '"capture":{"text":"__LEMMA_BENCH_COLD_FAILURE__"}}'
+                '"capture":{"text":"__FRAME_BENCH_COLD_FAILURE__"}}'
             ],
         )
         with tempfile.TemporaryDirectory() as temporary:

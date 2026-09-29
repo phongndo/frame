@@ -10,12 +10,12 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from tests.support.mux_harness import LemmaServer
+from tests.support.mux_harness import FrameServer
 
 
 class AgentInterfaceMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
 
     def json_command(
@@ -29,7 +29,7 @@ class AgentInterfaceMuxTest(unittest.TestCase):
                 f"command {result.arguments!r} returned invalid JSON with status "
                 f"{result.status}:\n{result.output}\n{self.server.logs()}\n{error}"
             )
-        if unwrap and document.get("schema") == "lemma.proc-result/v1":
+        if unwrap and document.get("schema") == "frame.proc-result/v1":
             results = document.get("results", [])
             if results:
                 return result.status, results[0]["result"]
@@ -60,7 +60,7 @@ class AgentInterfaceMuxTest(unittest.TestCase):
     def test_root_help_prioritizes_daily_commands(self) -> None:
         help_result = self.server.command("--help")
         self.assertEqual(help_result.status, 0, help_result.output)
-        self.assertIn("Usage:\n  lemma [command] [options]\n", help_result.output)
+        self.assertIn("Usage:\n  frame [command] [options]\n", help_result.output)
         self.assertEqual(
             [line for line in help_result.output.splitlines() if line.endswith(":")],
             ["Usage:", "Basic:", "Resources:", "Automation:", "Other:"],
@@ -88,12 +88,12 @@ class AgentInterfaceMuxTest(unittest.TestCase):
         )
         self.assertIn("Send text or key presses to a pane's running program", basic)
         self.assertIn("Print text from a pane's screen or scrollback", basic)
-        self.assertIn("Running lemma without a command creates", help_result.output)
-        self.assertNotIn("lemma inspect", help_result.output)
+        self.assertIn("Running frame without a command creates", help_result.output)
+        self.assertNotIn("frame inspect", help_result.output)
 
         removed = self.server.command("inspect", "missing")
         self.assertEqual(removed.status, 2, removed.output)
-        self.assertIn("invalid lemma command or arguments: inspect", removed.output)
+        self.assertIn("invalid frame command or arguments: inspect", removed.output)
 
     def public_command(
         self, *arguments: str, environment: dict[str, str] | None = None
@@ -121,17 +121,17 @@ class AgentInterfaceMuxTest(unittest.TestCase):
             with self.subTest(command=name):
                 result = self.server.command(name, "--help")
                 self.assertEqual(result.status, 0, result.output)
-                self.assertIn(f"Usage:\n  lemma {name} ", result.output)
+                self.assertIn(f"Usage:\n  frame {name} ", result.output)
                 self.assertIn("Example", result.output)
                 self.assertIn("--json", result.output)
-                self.assertIn("Outside Lemma, provide --session", result.output)
-                self.assertNotIn("lemma proc pane", result.output)
+                self.assertIn("Outside Frame, provide --session", result.output)
+                self.assertNotIn("frame proc pane", result.output)
                 self.assertEqual(
                     self.server.command("help", name).output, result.output
                 )
         send = self.server.command("send", "--help").output
         self.assertIn("launch a process directly or press Enter automatically", send)
-        self.assertIn("lemma send --paste 'just test' --key enter", send)
+        self.assertIn("frame send --paste 'just test' --key enter", send)
         capture = self.server.command("capture", "--help").output
         self.assertIn("text, not an image screenshot", capture)
         wait = self.server.command("wait", "--help").output
@@ -140,10 +140,10 @@ class AgentInterfaceMuxTest(unittest.TestCase):
             self.assertIn("Usage:", self.server.command(name, "--help").output)
         self.assertIn("--cwd", self.server.command("start", "--help").output)
         self.assertIn(
-            "lemma pane capture", self.server.command("help", "pane", "capture").output
+            "frame pane capture", self.server.command("help", "pane", "capture").output
         )
         self.assertIn(
-            "lemma proc pane capture",
+            "frame proc pane capture",
             self.server.command("proc", "pane", "capture", "--help").output,
         )
         self.assertIn(
@@ -204,7 +204,7 @@ class AgentInterfaceMuxTest(unittest.TestCase):
             unwrap=False,
         )
         self.assertEqual(status, 0, structured)
-        self.assertEqual(structured["schema"], "lemma.proc-result/v1")
+        self.assertEqual(structured["schema"], "frame.proc-result/v1")
         self.assertEqual(len(structured["results"]), 1)
         self.assertEqual(
             capture.stdout, structured["results"][0]["result"]["capture"]["text"]
@@ -300,7 +300,7 @@ class AgentInterfaceMuxTest(unittest.TestCase):
                 result = self.public_command(*arguments)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertEqual(result.stdout, "")
-                self.assertIn("invalid lemma", result.stderr)
+                self.assertIn("invalid frame", result.stderr)
         capture = self.public_command("capture", *target)
         self.assertNotIn("must-not-be-sent", capture.stdout)
         for name in ("capture", "wait", "send", "focus"):
@@ -317,19 +317,19 @@ class AgentInterfaceMuxTest(unittest.TestCase):
         status, result = self.json_command("proc", "--file", str(example), unwrap=False)
         self.assertEqual(status, 0, result)
         self.assertTrue(result["ok"], result)
-        self.assertEqual(result["schema"], "lemma.proc-result/v1")
+        self.assertEqual(result["schema"], "frame.proc-result/v1")
         self.assertEqual(
             [entry["result"]["status"] for entry in result["results"]],
             ["applied"] * 4,
         )
         self.assertIn(
-            "hello from Lemma", result["results"][2]["result"]["capture"]["text"]
+            "hello from Frame", result["results"][2]["result"]["capture"]["text"]
         )
 
     def test_coding_agent_skill_is_valid_and_teaches_a_safe_job_workflow(self) -> None:
         result = self.server.command("skill")
         self.assertEqual(result.status, 0, result.output)
-        self.assertTrue(result.output.startswith("---\nname: lemma\ndescription:"))
+        self.assertTrue(result.output.startswith("---\nname: frame\ndescription:"))
         self.assertIn("license: MIT\n", result.output)
         normalized = " ".join(result.output.split())
         self.assertIn("Use **closed-loop control**", normalized)
@@ -345,7 +345,7 @@ class AgentInterfaceMuxTest(unittest.TestCase):
             .split("\n```", maxsplit=1)[0]
         )
         procedure = json.loads(example)
-        self.assertEqual(procedure["schema"], "lemma.proc/v1")
+        self.assertEqual(procedure["schema"], "frame.proc/v1")
         self.assertEqual(procedure["on_error"], "continue")
         self.assertEqual(
             [command["command"] for command in procedure["commands"]],
@@ -663,9 +663,9 @@ class AgentInterfaceMuxTest(unittest.TestCase):
         )
         self.assertEqual(status, 0, started)
         environment = self.server.environment | {
-            "LEMMA_SESSION_ID": started["session"]["id"],
-            "LEMMA_TAB_ID": started["tab"],
-            "LEMMA_PANE_ID": started["pane"],
+            "FRAME_SESSION_ID": started["session"]["id"],
+            "FRAME_TAB_ID": started["tab"],
+            "FRAME_PANE_ID": started["pane"],
         }
         completed = subprocess.run(
             [
@@ -717,7 +717,7 @@ class AgentInterfaceMuxTest(unittest.TestCase):
         connection.sendall(
             json.dumps(
                 {
-                    "schema": "lemma.proc/v1",
+                    "schema": "frame.proc/v1",
                     "commands": [
                         {
                             "command": "pane.wait",
@@ -734,7 +734,7 @@ class AgentInterfaceMuxTest(unittest.TestCase):
         waited = json.loads(stream.readline())
         self.assertEqual(waited["results"][0]["result"]["status"], "applied")
         connection.sendall(
-            b'{"schema":"lemma.proc/v1","commands":[{"command":"session.inspect",'
+            b'{"schema":"frame.proc/v1","commands":[{"command":"session.inspect",'
             b'"session":{"name":"persistent-wait"}}]}\n'
         )
         inspected = json.loads(stream.readline())
@@ -1004,7 +1004,7 @@ class AgentInterfaceMuxTest(unittest.TestCase):
                 env=self.server.environment,
                 input=json.dumps(
                     {
-                        "schema": "lemma.proc/v1",
+                        "schema": "frame.proc/v1",
                         "commands": [
                             {
                                 "command": "pane.input",
@@ -1064,20 +1064,20 @@ class AgentInterfaceMuxTest(unittest.TestCase):
             connection.settimeout(2.0)
             connection.connect(str(self.server.socket_path))
             connection.sendall(
-                b'{"schema":"lemma.action/v1","action":"daemon.inspect"}\n'
+                b'{"schema":"frame.action/v1","action":"daemon.inspect"}\n'
             )
             response = json.loads(connection.makefile("r", encoding="utf-8").readline())
-        self.assertEqual(response["schema"], "lemma.proc-result/v1")
+        self.assertEqual(response["schema"], "frame.proc-result/v1")
         self.assertEqual(response["error"]["reason"], "invalid_schema")
 
         for name, document in (
             (
                 "legacy-action-proc.json",
-                '{"schema":"lemma.proc/v1","actions":[{"action":"daemon.inspect"}]}',
+                '{"schema":"frame.proc/v1","actions":[{"action":"daemon.inspect"}]}',
             ),
             (
                 "legacy-op-proc.json",
-                '{"schema":"lemma.proc/v1","ops":[{"op":"daemon.inspect"}]}',
+                '{"schema":"frame.proc/v1","ops":[{"op":"daemon.inspect"}]}',
             ),
         ):
             legacy = self.server.root / name
@@ -1098,11 +1098,11 @@ class AgentInterfaceMuxTest(unittest.TestCase):
             unwrap=False,
         )
         self.assertEqual(status, 0, started)
-        self.assertEqual(started["schema"], "lemma.proc-result/v1")
+        self.assertEqual(started["schema"], "frame.proc-result/v1")
         self.assertTrue(started["ok"])
         self.assertEqual(len(started["results"]), 1)
         nested = started["results"][0]["result"]
-        self.assertEqual(nested["schema"], "lemma.command-result/v1")
+        self.assertEqual(nested["schema"], "frame.command-result/v1")
         self.assertEqual(nested["command"], "session.start")
         self.assertEqual(nested["status"], "applied")
 
@@ -1110,11 +1110,11 @@ class AgentInterfaceMuxTest(unittest.TestCase):
             "proc", "session", "inspect", "--session", "direct-proc"
         )
         self.assertEqual(status, 0, inspected)
-        self.assertEqual(inspected["schema"], "lemma.command-result/v1")
+        self.assertEqual(inspected["schema"], "frame.command-result/v1")
         self.assertEqual(inspected["session"]["name"], "direct-proc")
 
         empty = self.server.root / "empty-proc.json"
-        empty.write_text('{"schema":"lemma.proc/v1","commands":[]}')
+        empty.write_text('{"schema":"frame.proc/v1","commands":[]}')
         status, rejected = self.json_command("proc", "--file", str(empty))
         self.assertEqual(status, 2, rejected)
         self.assertEqual(rejected["error"]["reason"], "invalid_document")
@@ -1125,7 +1125,7 @@ class AgentInterfaceMuxTest(unittest.TestCase):
         )
         request = json.dumps(
             {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "on_error": "continue",
                 "commands": [
                     {
@@ -1172,7 +1172,7 @@ class AgentInterfaceMuxTest(unittest.TestCase):
         proc.write_text(
             json.dumps(
                 {
-                    "schema": "lemma.proc/v1",
+                    "schema": "frame.proc/v1",
                     "commands": [
                         {
                             "id": "root",
@@ -1219,7 +1219,7 @@ class AgentInterfaceMuxTest(unittest.TestCase):
         proc.write_text(
             json.dumps(
                 {
-                    "schema": "lemma.proc/v1",
+                    "schema": "frame.proc/v1",
                     "on_error": "continue",
                     "commands": [
                         {

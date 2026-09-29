@@ -157,7 +157,7 @@ local full = new Mapping<String, Step | Group> {
 
   ["build-test"] {
     glob = buildImpact
-    check = "scripts/ci/configure debug -DLEMMA_BUILD_TESTS=ON -DLEMMA_BUILD_BENCHMARKS=ON && cmake --build --preset debug && scripts/ci/test debug"
+    check = "scripts/ci/configure debug -DFRAME_BUILD_TESTS=ON -DFRAME_BUILD_BENCHMARKS=ON && cmake --build --preset debug && scripts/ci/test debug"
     exclusive = true
   }
 

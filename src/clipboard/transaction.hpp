@@ -1,7 +1,7 @@
-#ifndef LEMMA_CLIPBOARD_TRANSACTION_HPP
-#define LEMMA_CLIPBOARD_TRANSACTION_HPP
+#ifndef FRAME_CLIPBOARD_TRANSACTION_HPP
+#define FRAME_CLIPBOARD_TRANSACTION_HPP
 
-#include "lemma/terminal/terminal.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <array>
 #include <chrono>
@@ -13,7 +13,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::clipboard {
+namespace frame::clipboard {
 // One outer-terminal transaction, owned by an attachment. No clipboard cache or background work.
 // The reactor owns pane/request identity and cancels this state when that ownership changes.
 class Transaction final {
@@ -78,5 +78,5 @@ private:
   bool started_{false};
   bool done_{false};
 };
-} // namespace lemma::clipboard
+} // namespace frame::clipboard
 #endif

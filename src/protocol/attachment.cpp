@@ -1,6 +1,6 @@
 #include "protocol/attachment.hpp"
 
-#include "lemma/assert.hpp"
+#include "frame/assert.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,7 +19,7 @@
 // Fixed wire offsets are checked against compile-time-sized headers and validated payload bounds.
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 
-namespace lemma::protocol {
+namespace frame::protocol {
 namespace {
 
 void encode_u16(const std::uint16_t value, const std::span<std::byte, 2> output) noexcept {
@@ -342,8 +342,8 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
 [[nodiscard]] auto encode_session_header(const ControlCommand command,
                                          const std::string_view session) noexcept
     -> std::array<std::byte, 2> {
-  LEMMA_ASSERT(!session.empty());
-  LEMMA_ASSERT(session.size() <= session_name_bytes_max);
+  FRAME_ASSERT(!session.empty());
+  FRAME_ASSERT(session.size() <= session_name_bytes_max);
   return {wire_byte(command), static_cast<std::byte>(session.size())};
 }
 
@@ -357,7 +357,7 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
 
 [[nodiscard]] auto encode_bounded_size(const std::size_t size) noexcept
     -> std::array<std::byte, 2> {
-  LEMMA_ASSERT(size <= std::numeric_limits<std::uint16_t>::max());
+  FRAME_ASSERT(size <= std::numeric_limits<std::uint16_t>::max());
   std::array<std::byte, 2> encoded{};
   encode_u16(static_cast<std::uint16_t>(size), encoded);
   return encoded;
@@ -380,7 +380,7 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
                                  const std::uint32_t payload_bytes, const std::uint32_t sequence,
                                  const ProtocolVersion version) noexcept
     -> std::array<std::byte, attach_header_bytes> {
-  LEMMA_ASSERT(sequence != 0);
+  FRAME_ASSERT(sequence != 0);
   std::array<std::byte, attach_header_bytes> header{};
   std::ranges::copy(attach_magic, header.begin());
   header[4] = static_cast<std::byte>(version.major);
@@ -396,8 +396,8 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
                                        const std::uint32_t sequence, const ProtocolVersion version,
                                        const std::optional<HostTerminalTheme>& host_theme) noexcept
     -> SmallMessage {
-  LEMMA_ASSERT(session.size() <= session_name_bytes_max);
-  LEMMA_ASSERT(!host_theme.has_value() || !host_theme->empty());
+  FRAME_ASSERT(session.size() <= session_name_bytes_max);
+  FRAME_ASSERT(!host_theme.has_value() || !host_theme->empty());
   SmallMessage message;
   const auto theme_bytes = host_theme.has_value() ? host_theme_wire_bytes : 0U;
   const auto payload_bytes = static_cast<std::uint32_t>(6U + theme_bytes + session.size());
@@ -420,7 +420,7 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
 
 [[nodiscard]] auto encode_daemon_hello(const Dimensions dimensions,
                                        const std::uint32_t sequence) noexcept -> SmallMessage {
-  LEMMA_ASSERT(valid_dimensions(dimensions));
+  FRAME_ASSERT(valid_dimensions(dimensions));
   SmallMessage message;
   copy_header(encode_header(MessageKind::hello, 0, 4, sequence), message.storage_, message.size_);
   const auto encoded = encode_dimensions(dimensions);
@@ -432,8 +432,8 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
 [[nodiscard]] auto encode_input_header(const std::size_t bytes,
                                        const std::uint32_t sequence) noexcept
     -> std::array<std::byte, attach_header_bytes> {
-  LEMMA_ASSERT(bytes > 0);
-  LEMMA_ASSERT(bytes <= legacy_input_message_bytes_max);
+  FRAME_ASSERT(bytes > 0);
+  FRAME_ASSERT(bytes <= legacy_input_message_bytes_max);
   return encode_header(MessageKind::input, 0, static_cast<std::uint32_t>(bytes), sequence);
 }
 
@@ -448,7 +448,7 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
 
 [[nodiscard]] auto encode_cell_size(const CellSize size, const std::uint32_t sequence) noexcept
     -> SmallMessage {
-  LEMMA_ASSERT(size.width > 0 && size.width <= 500 && size.height > 0 && size.height <= 200);
+  FRAME_ASSERT(size.width > 0 && size.width <= 500 && size.height > 0 && size.height <= 200);
   SmallMessage message;
   copy_header(encode_header(MessageKind::cell_size, 0, 4, sequence), message.storage_,
               message.size_);
@@ -461,21 +461,21 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
 [[nodiscard]] auto encode_terminal_reply_header(const std::size_t bytes,
                                                 const std::uint32_t sequence) noexcept
     -> std::array<std::byte, attach_header_bytes> {
-  LEMMA_ASSERT(bytes > 0 && bytes <= terminal_reply_bytes_max);
+  FRAME_ASSERT(bytes > 0 && bytes <= terminal_reply_bytes_max);
   return encode_header(MessageKind::terminal_reply, 0, static_cast<std::uint32_t>(bytes), sequence);
 }
 
 [[nodiscard]] auto encode_paste_header(const std::size_t bytes,
                                        const std::uint32_t sequence) noexcept
     -> std::array<std::byte, attach_header_bytes> {
-  LEMMA_ASSERT(bytes > 0);
-  LEMMA_ASSERT(bytes <= input_message_bytes_max);
+  FRAME_ASSERT(bytes > 0);
+  FRAME_ASSERT(bytes <= input_message_bytes_max);
   return encode_header(MessageKind::paste, 0, static_cast<std::uint32_t>(bytes), sequence);
 }
 
 [[nodiscard]] auto encode_key(const KeyInput& key, const std::span<const std::byte> text,
                               const std::uint32_t sequence) noexcept -> SmallMessage {
-  LEMMA_ASSERT(text.size() <= key_input_text_bytes_max);
+  FRAME_ASSERT(text.size() <= key_input_text_bytes_max);
   const auto payload_size = key_input_wire_fixed_bytes + text.size();
   SmallMessage message;
   copy_header(
@@ -504,9 +504,9 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
 
 [[nodiscard]] auto encode_mouse(const MouseInput& mouse, const std::uint32_t sequence) noexcept
     -> SmallMessage {
-  LEMMA_ASSERT(valid_dimensions(mouse.geometry));
-  LEMMA_ASSERT(mouse.column < mouse.geometry.columns);
-  LEMMA_ASSERT(mouse.row < mouse.geometry.rows);
+  FRAME_ASSERT(valid_dimensions(mouse.geometry));
+  FRAME_ASSERT(mouse.column < mouse.geometry.columns);
+  FRAME_ASSERT(mouse.row < mouse.geometry.rows);
   SmallMessage message;
   copy_header(encode_header(MessageKind::mouse, 0, mouse_input_wire_bytes, sequence),
               message.storage_, message.size_);
@@ -525,7 +525,7 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
 
 [[nodiscard]] auto encode_resize(const Dimensions dimensions, const std::uint32_t sequence) noexcept
     -> SmallMessage {
-  LEMMA_ASSERT(valid_dimensions(dimensions));
+  FRAME_ASSERT(valid_dimensions(dimensions));
   SmallMessage message;
   copy_header(encode_header(MessageKind::resize, 0, 4, sequence), message.storage_, message.size_);
   const auto encoded = encode_dimensions(dimensions);
@@ -542,7 +542,7 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
 
 [[nodiscard]] auto encode_pane_command(const PaneCommand command,
                                        const std::uint32_t sequence) noexcept -> SmallMessage {
-  LEMMA_ASSERT(command != PaneCommand::none);
+  FRAME_ASSERT(command != PaneCommand::none);
   SmallMessage message;
   copy_header(encode_header(MessageKind::pane_command, 0, 1, sequence), message.storage_,
               message.size_);
@@ -553,7 +553,7 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
 
 [[nodiscard]] auto encode_host_theme_update(const HostTerminalTheme& theme,
                                             const std::uint32_t sequence) noexcept -> SmallMessage {
-  LEMMA_ASSERT(!theme.empty());
+  FRAME_ASSERT(!theme.empty());
   SmallMessage message;
   copy_header(encode_header(MessageKind::host_theme, 0, host_theme_wire_bytes, sequence),
               message.storage_, message.size_);
@@ -568,9 +568,9 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
                                               const std::uint32_t full_redraw_generation,
                                               const bool full_redraw) noexcept
     -> std::array<std::byte, attach_header_bytes + render_generation_bytes> {
-  LEMMA_ASSERT(ansi_bytes > 0);
-  LEMMA_ASSERT(ansi_bytes <= render_ansi_bytes_max);
-  LEMMA_ASSERT(full_redraw_generation > 0);
+  FRAME_ASSERT(ansi_bytes > 0);
+  FRAME_ASSERT(ansi_bytes <= render_ansi_bytes_max);
+  FRAME_ASSERT(full_redraw_generation > 0);
   std::array<std::byte, attach_header_bytes + render_generation_bytes> encoded{};
   const auto header =
       encode_header(MessageKind::render_frame, full_redraw ? render_full_redraw_flag : 0,
@@ -584,8 +584,8 @@ void copy_header(const std::array<std::byte, attach_header_bytes>& header,
 [[nodiscard]] auto encode_disconnect(const DisconnectReason reason,
                                      const std::string_view diagnostic,
                                      const std::uint32_t sequence) noexcept -> SmallMessage {
-  LEMMA_ASSERT(disconnect_reason(static_cast<std::byte>(reason)).has_value());
-  LEMMA_ASSERT(diagnostic.size() <= diagnostic_bytes_max);
+  FRAME_ASSERT(disconnect_reason(static_cast<std::byte>(reason)).has_value());
+  FRAME_ASSERT(diagnostic.size() <= diagnostic_bytes_max);
   SmallMessage message;
   const auto payload_bytes = static_cast<std::uint32_t>(1U + diagnostic.size());
   copy_header(encode_header(MessageKind::disconnect, 0, payload_bytes, sequence), message.storage_,
@@ -654,8 +654,8 @@ void ClientDecoder::release() noexcept {
 }
 
 [[nodiscard]] auto ClientDecoder::writable_bytes() noexcept -> std::span<std::byte> {
-  LEMMA_ASSERT(prepared_);
-  LEMMA_ASSERT(pending_size_ == 0);
+  FRAME_ASSERT(prepared_);
+  FRAME_ASSERT(pending_size_ == 0);
   return mutable_storage().subspan(used_);
 }
 
@@ -675,7 +675,7 @@ void ClientDecoder::release() noexcept {
   if (used_ == 0) {
     return std::optional<ClientMessage>{};
   }
-  LEMMA_ASSERT(prepared_);
+  FRAME_ASSERT(prepared_);
   const auto buffered = mutable_storage().first(used_);
   const auto decoded = decode_envelope(buffered, expected_sequence_);
   if (!decoded.has_value()) {
@@ -774,7 +774,7 @@ void ClientDecoder::release() noexcept {
     return std::unexpected(DecodeError::oversized);
   }
   if (packet_size > mutable_storage().size()) {
-    LEMMA_ASSERT(expanded_storage_ == nullptr);
+    FRAME_ASSERT(expanded_storage_ == nullptr);
     try {
       // Allocated only after a valid live paste envelope exceeds the ordinary input bound.
       // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
@@ -989,7 +989,7 @@ void ClientDecoder::release() noexcept {
         .sequence = envelope.sequence,
     };
   }
-  LEMMA_ASSERT(envelope.kind == MessageKind::detach);
+  FRAME_ASSERT(envelope.kind == MessageKind::detach);
   return ClientMessage{
       .kind = ClientMessageKind::detach,
       .dimensions = {},
@@ -1002,8 +1002,8 @@ void ClientDecoder::release() noexcept {
 }
 
 void ClientDecoder::consume() noexcept {
-  LEMMA_ASSERT(prepared_);
-  LEMMA_ASSERT(pending_size_ > 0 && pending_size_ <= used_);
+  FRAME_ASSERT(prepared_);
+  FRAME_ASSERT(pending_size_ > 0 && pending_size_ <= used_);
   auto active_storage = mutable_storage();
   std::memmove(active_storage.data(), active_storage.subspan(pending_size_).data(),
                used_ - pending_size_);
@@ -1021,7 +1021,7 @@ void ClientDecoder::consume() noexcept {
 }
 
 void ClientDecoder::reset(const std::uint32_t expected_sequence, const bool expect_hello) noexcept {
-  LEMMA_ASSERT(expected_sequence != 0);
+  FRAME_ASSERT(expected_sequence != 0);
   used_ = 0;
   pending_size_ = 0;
   expected_sequence_ = expected_sequence;
@@ -1043,7 +1043,7 @@ void ClientDecoder::reset(const std::uint32_t expected_sequence, const bool expe
 }
 
 [[nodiscard]] auto ServerDecoder::writable_bytes() noexcept -> std::span<std::byte> {
-  LEMMA_ASSERT(pending_size_ == 0);
+  FRAME_ASSERT(pending_size_ == 0);
   return storage_ == nullptr
              ? std::span<std::byte>{}
              : std::span<std::byte>(storage_.get(), server_decoder_bytes_max).subspan(used_);
@@ -1064,7 +1064,7 @@ void ClientDecoder::reset(const std::uint32_t expected_sequence, const bool expe
   if (used_ == 0) {
     return std::optional<ServerMessage>{};
   }
-  LEMMA_ASSERT(storage_ != nullptr);
+  FRAME_ASSERT(storage_ != nullptr);
   const auto buffered = std::span<const std::byte>(storage_.get(), used_);
   const auto decoded = decode_envelope(buffered, expected_sequence_);
   if (!decoded.has_value()) {
@@ -1181,8 +1181,8 @@ void ClientDecoder::reset(const std::uint32_t expected_sequence, const bool expe
 }
 
 void ServerDecoder::consume() noexcept {
-  LEMMA_ASSERT(storage_ != nullptr);
-  LEMMA_ASSERT(pending_size_ > 0 && pending_size_ <= used_);
+  FRAME_ASSERT(storage_ != nullptr);
+  FRAME_ASSERT(pending_size_ > 0 && pending_size_ <= used_);
   std::memmove(storage_.get(), std::span(storage_.get(), used_).subspan(pending_size_).data(),
                used_ - pending_size_);
   used_ -= pending_size_;
@@ -1199,7 +1199,7 @@ void ServerDecoder::consume() noexcept {
 }
 
 void ServerDecoder::reset(const std::uint32_t expected_sequence, const bool expect_hello) noexcept {
-  LEMMA_ASSERT(expected_sequence != 0);
+  FRAME_ASSERT(expected_sequence != 0);
   used_ = 0;
   pending_size_ = 0;
   expected_sequence_ = expected_sequence;
@@ -1209,6 +1209,6 @@ void ServerDecoder::reset(const std::uint32_t expected_sequence, const bool expe
   expect_hello_ = expect_hello;
 }
 
-} // namespace lemma::protocol
+} // namespace frame::protocol
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)

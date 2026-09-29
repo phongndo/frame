@@ -1,9 +1,9 @@
 {
-  "schema": "lemma.proc/v1",
+  "schema": "frame.proc/v1",
   "on_error": "continue",
   "commands": [
     {"id":"job", "command":"session.start", "name":"example-job",
-     "hold":true, "argv":["echo", "hello from Lemma"]},
+     "hold":true, "argv":["echo", "hello from Frame"]},
     {"command":"pane.wait", "pane":{"result":"job"},
      "exit_code":0, "timeout_ms":5000},
     {"command":"pane.capture", "pane":{"result":"job"},

@@ -1,6 +1,6 @@
-# Using Lemma
+# Using Frame
 
-Lemma is currently a development project. Run it from a checkout rather than treating it as a
+Frame is currently a development project. Run it from a checkout rather than treating it as a
 stable installed tool.
 
 ## Build and run
@@ -13,22 +13,22 @@ just run
 just run split --right
 
 # Equivalent convenience command inside the development shell:
-lemma
-lemma split --right
+frame
+frame split --right
 ```
 
-`just run [args...]` is the canonical development entry point; the shell's `lemma` alias uses the
-same runner. For bare `lemma`, `lemma new`, and `lemma start`, it supplies the invocation directory
+`just run [args...]` is the canonical development entry point; the shell's `frame` alias uses the
+same runner. For bare `frame`, `frame new`, and `frame start`, it supplies the invocation directory
 when `--cwd` is omitted. See [Development](development.md#workflow) for build profiles and caching.
 
 Each checkout or git worktree receives a stable private development runtime namespace. Rebuilding
 the binary automatically replaces an older daemon in that namespace, so development commands do
-not connect to an installed Lemma daemon or to another worktree. Release builds remain explicit for
+not connect to an installed Frame daemon or to another worktree. Release builds remain explicit for
 packaging and production behavior:
 
 ```sh
-nix build .#lemma
-nix run .#lemma
+nix build .#frame
+nix run .#frame
 ```
 
 The Nix shell supplies the pinned Ghostty source. A non-Nix build must initialize it first:
@@ -44,13 +44,13 @@ defaults, and Lua commands. Start with its [complete example](configuration.md#a
 without changing a daemon:
 
 ```sh
-lemma config check
-lemma config check ./init.lua
+frame config check
+frame config check ./init.lua
 ```
 
 ## Sessions, tabs, and panes
 
-Lemma's hierarchy is:
+Frame's hierarchy is:
 
 ```text
 Session -> Tab -> Pane
@@ -61,26 +61,26 @@ Session starts the daemon. The daemon exits when its final Session ends. Detachi
 pane processes running; killing the daemon does not.
 
 ```sh
-lemma                              # create a numbered Session and attach
-lemma new [NAME]                   # create a Session and attach
-lemma start [NAME]                 # create a detached Session
-lemma attach [NAME]
-lemma list                         # alias: lemma ls
-lemma rename OLD NEW
-lemma kill NAME
+frame                              # create a numbered Session and attach
+frame new [NAME]                   # create a Session and attach
+frame start [NAME]                 # create a detached Session
+frame attach [NAME]
+frame list                         # alias: frame ls
+frame rename OLD NEW
+frame kill NAME
 ```
 
 An omitted `attach` target selects the most recently active detached Session. Creation accepts an
 initial directory, an exit policy, and an exact command:
 
 ```sh
-lemma new work --cwd "$PWD"
-lemma start tests -- just test
-lemma new report --hold -- ./produce-report
+frame new work --cwd "$PWD"
+frame start tests -- just test
+frame new report --hold -- ./produce-report
 ```
 
 Arguments after `--` execute directly without shell interpretation. When `--cwd` or an exact
-command is omitted, the configured launch default applies; without configuration Lemma uses the
+command is omitted, the configured launch default applies; without configuration Frame uses the
 account home and login shell. A split or new Tab without `--cwd`, from any frontend, instead starts
 in the directory its source Pane (the split Pane, or the active Tab's focused Pane) last reported
 with OSC 7, when that report names a directory on the daemon's host that its user can enter. If
@@ -88,21 +88,21 @@ the directory becomes unenterable before the process starts, it uses the launch 
 normally keep running without `--hold`; `--hold` retains the Pane and its terminal after the
 process exits.
 
-`lemma --help` groups commands under **Basic**, **Resources**, **Automation**, and **Other**.
-Use `lemma COMMAND --help` (or `lemma help COMMAND`) for behavior, options, and examples.
+`frame --help` groups commands under **Basic**, **Resources**, **Automation**, and **Other**.
+Use `frame COMMAND --help` (or `frame help COMMAND`) for behavior, options, and examples.
 
 Basic pane commands are available directly:
 
 ```sh
-lemma split --right                         # open another terminal beside this pane
-lemma send --paste 'just test' --key enter   # type into the running program and press Enter
-lemma wait --contains 'Ready' --timeout 10s  # wait for matching terminal content
-lemma capture                              # print the current screen as text
-lemma capture --source recent --lines 100   # include bounded scrollback
-lemma focus --pane 1:1
-lemma zoom --on                             # fill the tab with this pane; --off restores it
-lemma resize right 5                        # move the divider five cells to the right
-lemma swap --pane 0:1 1:1
+frame split --right                         # open another terminal beside this pane
+frame send --paste 'just test' --key enter   # type into the running program and press Enter
+frame wait --contains 'Ready' --timeout 10s  # wait for matching terminal content
+frame capture                              # print the current screen as text
+frame capture --source recent --lines 100   # include bounded scrollback
+frame focus --pane 1:1
+frame zoom --on                             # fill the tab with this pane; --off restores it
+frame resize right 5                        # move the divider five cells to the right
+frame swap --pane 0:1 1:1
 ```
 
 `send` sends one ordered batch of text, paste, or key presses to an existing Pane; it does not launch
@@ -115,8 +115,8 @@ and exits 1 unless that code is 0.
 Terminal conditions can match existing state; use `--after-generation` when newer state is required.
 Waiting for an entire Session or Tab to end is not supported.
 
-Inside a Lemma pane, omitted command targets resolve from the current Session and Pane IDs. Outside
-Lemma, provide `--session NAME|ID` and `--pane ID` (or a positional Pane ID). Explicit selectors
+Inside a Frame pane, omitted command targets resolve from the current Session and Pane IDs. Outside
+Frame, provide `--session NAME|ID` and `--pane ID` (or a positional Pane ID). Explicit selectors
 can address another resource; Pane IDs are Session-scoped.
 
 `split` prints the new Pane ID, `capture` prints captured text, and the other basic pane commands
@@ -128,13 +128,13 @@ stdout is a terminal or a pipe.
 The complete structured interface is also available through resource commands:
 
 ```sh
-lemma tab new --session work --title tests -- just test
-lemma pane split --session work --pane 0:1 --right
-lemma pane capture --session work --pane 0:1
-lemma pane --help
+frame tab new --session work --title tests -- just test
+frame pane split --session work --pane 0:1 --right
+frame pane capture --session work --pane 0:1
+frame pane --help
 ```
 
-Resource commands and their `lemma proc DOMAIN COMMAND` forms print the same Proc envelope with one
+Resource commands and their `frame proc DOMAIN COMMAND` forms print the same Proc envelope with one
 nested Command result. The basic verbs use that same execution path; `send` maps to `pane.input`.
 The interactive `:` prompt continues to use the resource grammar described below.
 
@@ -197,7 +197,7 @@ and `j`/Down, PageUp/PageDown,
 Command history is separately limited to 16 entries and is memory-only by default. See
 [`history.file`](configuration.md#api) for persistence and failure behavior.
 
-The grammar is the human, mutating subset of `lemma proc`: omit `proc` and omit selectors for the
+The grammar is the human, mutating subset of `frame proc`: omit `proc` and omit selectors for the
 current Session, Tab, and Pane. Quotes and backslashes group literal text without shell expansion.
 For example:
 
@@ -234,7 +234,7 @@ output. Application clipboard access is separate and denied by default; see the
 
 ### Application clipboard
 
-When application access is enabled, Lemma preserves the requested terminal protocol: OSC 52 for
+When application access is enabled, Frame preserves the requested terminal protocol: OSC 52 for
 plain text, or Kitty's OSC 5522 for MIME data. It does not translate a text request into a protocol
 the outer terminal may not support or call an OS clipboard utility. In Ghostty 1.3.1, text works
 through OSC 52; PNG clipboard access requires an OSC 5522-capable outer terminal such as Kitty.
@@ -252,7 +252,7 @@ available, subject to their usual permissions.
 With an outer terminal supporting Kitty's OSC 5522 clipboard protocol:
 
 ```sh
-lemma paste-image --session work --pane 0:1
+frame paste-image --session work --pane 0:1
 ```
 
 The native command prompt also accepts `paste-image`. This explicit user action reads `image/png`,
@@ -261,10 +261,10 @@ shell-quoted path plus a space. It neither sends image bytes as keyboard input n
 The target must remain the attached Session's focused Pane. Clipboard refusal, invalid PNG data,
 ownership changes, or file errors fail the operation rather than falling back to text paste.
 
-Files are saved under `$XDG_CACHE_HOME/lemma/clipboard`, or `$HOME/.cache/lemma/clipboard` when
+Files are saved under `$XDG_CACHE_HOME/frame/clipboard`, or `$HOME/.cache/frame/clipboard` when
 `XDG_CACHE_HOME` is unset. The directory is owner-only and files have mode `0600`. Saved files
 persist until you remove them; they are not extension resources or automatically deleted on detach.
-The adjacent `lemma-clipboard-host` executable must accompany the installation. This is a terminal
+The adjacent `frame-clipboard-host` executable must accompany the installation. This is a terminal
 protocol bridge, not an OS clipboard utility or an OSC 52 image-read fallback. The outer terminal's
 own consent policy still applies. Transfers are limited to 1 MiB and time out after 30 seconds;
 PNG validation/file creation has a separate 10-second deadline.
@@ -274,30 +274,30 @@ PNG validation/file creation has a separate 10-second deadline.
 Use one Proc for one or more ordered Commands and Events for an observation stream:
 
 ```sh
-lemma send --json --session work --pane 0:1 --paste 'just test' --key enter
-lemma wait --json --session work --pane 0:1 --until-prompt --timeout 2m
-lemma proc --file proc.json
-lemma events --session work --pane 0:1 --screen
-lemma events --signals                     # bells, notifications, progress, command state
-lemma api schema --json
+frame send --json --session work --pane 0:1 --paste 'just test' --key enter
+frame wait --json --session work --pane 0:1 --until-prompt --timeout 2m
+frame proc --file proc.json
+frame events --session work --pane 0:1 --screen
+frame events --signals                     # bells, notifications, progress, command state
+frame api schema --json
 ```
 
-See [Automation API](api.md) for the control model. `lemma skill` prints a version-matched,
+See [Automation API](api.md) for the control model. `frame skill` prints a version-matched,
 Agent Skills-compatible `SKILL.md` intended for coding agents. Save it under a directory named
-`lemma` in the skill location used by the agent host. For example, Pi discovers the shared location
+`frame` in the skill location used by the agent host. For example, Pi discovers the shared location
 below:
 
 ```sh
-mkdir -p ~/.agents/skills/lemma
-lemma skill > ~/.agents/skills/lemma/SKILL.md
+mkdir -p ~/.agents/skills/frame
+frame skill > ~/.agents/skills/frame/SKILL.md
 ```
 
-Repeat the export after updating Lemma so the installed guide stays matched to the binary.
+Repeat the export after updating Frame so the installed guide stays matched to the binary.
 
 ## Terminal compatibility
 
-Panes use `TERM=lemma` and `COLORTERM=truecolor`. Lemma builds a dedicated
-[terminfo entry](../terminfo/lemma.terminfo) with `tic -x` and installs it under `share/terminfo`.
+Panes use `TERM=frame` and `COLORTERM=truecolor`. Frame builds a dedicated
+[terminfo entry](../terminfo/frame.terminfo) with `tic -x` and installs it under `share/terminfo`.
 It describes the virtual terminal inside a Pane, not the outer terminal. `TERMINFO` in each child
 points to that entry, including when running directly from a build tree. Keep the resources with
 the executable when relocating an installation; copying only the binary is insufficient.
@@ -308,19 +308,19 @@ keeps its cursor shape and color capabilities, and omits the clipboard-write cap
 reset selects a steady block, independent of the outer terminal's configured default. Ghostty's
 terminal-name query reports the same identity as `TERM`.
 
-An SSH destination also needs the entry to run terminfo-based applications under `TERM=lemma`.
+An SSH destination also needs the entry to run terminfo-based applications under `TERM=frame`.
 Install it on that destination rather than setting `TERM` to the outer terminal's name. For example,
-from a Lemma pane, `infocmp -x lemma | ssh HOST 'tic -x -'` installs it in the remote user's database.
-This does not install a remote Lemma daemon.
+from a Frame pane, `infocmp -x frame | ssh HOST 'tic -x -'` installs it in the remote user's database.
+This does not install a remote Frame daemon.
 
 ### Window geometry and input
 
-Lemma requests in-band size reports (mode 2048) from supporting outer terminals. These carry both
+Frame requests in-band size reports (mode 2048) from supporting outer terminals. These carry both
 rows/columns and pixel dimensions, and take precedence over stale or pixel-less PTY proxy reports.
-Other terminals use the PTY window size. Lemma restores the parent's reporting mode on exit.
+Other terminals use the PTY window size. Frame restores the parent's reporting mode on exit.
 Font-size changes update Pane pixel geometry even when the character grid stays unchanged.
 
-Lemma keeps outer focus reporting (mode 1004) enabled while attached and disables it on exit. A Pane
+Frame keeps outer focus reporting (mode 1004) enabled while attached and disables it on exit. A Pane
 that enables focus reporting receives `CSI I` when it becomes focused and `CSI O` when it stops
 being focused. A Pane is focused while it is the focused Pane of the active Tab in an attached
 Session and the outer terminal has focus; Pane focus changes, Tab and Session switches, detach,
@@ -335,13 +335,13 @@ of Escape-key timing; progress does not renew it. Bracketed paste remains opaque
 
 ### Window title
 
-While attached, Lemma sets the outer terminal's window title with OSC 2 to `SESSION: LABEL`.
+While attached, Frame sets the outer terminal's window title with OSC 2 to `SESSION: LABEL`.
 `LABEL` is the active Tab's explicit name, else the focused Pane's terminal title (OSC 0/2), else
 its process name. The title follows Pane, Tab, and Session switches and is sent only when it
 changes. Control characters and malformed UTF-8 are removed, and the title is truncated to 256
-bytes at a character boundary. Lemma saves the user's title with XTWINOPS `CSI 22;2 t` on attach
+bytes at a character boundary. Frame saves the user's title with XTWINOPS `CSI 22;2 t` on attach
 and restores it with `CSI 23;2 t` on detach or exit; outer terminals without a title stack keep
-Lemma's last title. Set [`ui.outer_title`](configuration.md#api) to `false` to leave the title
+Frame's last title. Set [`ui.outer_title`](configuration.md#api) to `false` to leave the title
 unchanged; disabling it by reload restores the saved title.
 
 ### Attention and directory
@@ -383,7 +383,7 @@ does not replay earlier bells or notifications, which remain available as
 
 OSC 8 hyperlinks written in a Pane, such as those from `ls --hyperlink`, GCC diagnostics, `git`,
 `delta`, or `rg --hyperlink-format`, stay clickable in an outer terminal that supports OSC 8, such
-as Ghostty, Kitty, WezTerm, or iTerm2. Lemma re-emits each link with the Pane's text, so links
+as Ghostty, Kitty, WezTerm, or iTerm2. Frame re-emits each link with the Pane's text, so links
 survive redraws, scrolling, layout changes, and reattach. Outer terminals without OSC 8 ignore them.
 
 - **Identity.** Each link carries an ID scoped to its Pane in place of the application's own `id`,
@@ -392,7 +392,7 @@ survive redraws, scrolling, layout changes, and reattach. Outer terminals withou
 - **URIs.** A link is forwarded only if its URI is at most 2 KiB of printable ASCII (bytes 32-126,
   as OSC 8 requires; other characters must be percent-encoded) and begins with a scheme such as
   `https:` or `file:`. Any other link is dropped rather than altered, and its text is shown unlinked.
-  Lemma does not restrict schemes further: opening a link, including any confirmation, follows the
+  Frame does not restrict schemes further: opening a link, including any confirmation, follows the
   outer terminal's policy, as when the application runs there directly.
 - **Bound.** Presenting a Pane spends at most 32 bytes of link sequences per Pane cell. Links beyond
   that allowance are shown unlinked until their cells change.
@@ -401,7 +401,7 @@ Set [`ui.outer_hyperlinks`](configuration.md#api) to `false` to present Pane tex
 
 ### Kitty graphics
 
-Lemma retains Kitty images and placements in the daemon's native terminal state; it does not pass
+Frame retains Kitty images and placements in the daemon's native terminal state; it does not pass
 application graphics escape sequences through to the outer terminal. PNG, RGB/RGBA, multipart
 uploads, Unicode placeholders, relative placements, and animation are projected into Pane geometry.
 The outer terminal must support Kitty graphics. Pixel cell dimensions come from its window-size
@@ -415,7 +415,7 @@ Pane presentation retains finished images; a covering Surface suppresses those f
 the Pane can be presented again.
 
 Kitty 0.48.2 on Linux with software rendering can leave a new image invisible under a steady cursor
-until text redraws, including after reattach. This was also reproduced without Lemma. Lemma preserves
+until text redraws, including after reattach. This was also reproduced without Frame. Frame preserves
 the native cursor mode rather than changing it to hide the outer renderer's behavior.
 
 Per-Pane image storage is bounded to 8 MiB. PNGs must be at most 4096×4096 and decode within that

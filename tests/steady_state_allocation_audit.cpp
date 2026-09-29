@@ -2,9 +2,9 @@
 #include "core/client_frame_output.hpp"
 #include "extension/protocol.hpp"
 #include "extension/runtime.hpp"
+#include "frame/id.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "input/input_router.hpp"
-#include "lemma/id.hpp"
-#include "lemma/terminal/terminal.hpp"
 #include "platform/readiness.hpp"
 #include "render/frame_buffer.hpp"
 
@@ -67,8 +67,8 @@ struct WriteAudit final {
 };
 
 [[nodiscard]] auto audited_write(void* const context,
-                                 const lemma::core::ClientFrameBytes bytes) noexcept
-    -> lemma::core::ClientFrameWriteAttempt {
+                                 const frame::core::ClientFrameBytes bytes) noexcept
+    -> frame::core::ClientFrameWriteAttempt {
   auto& audit = *static_cast<WriteAudit*>(context);
   audit.bytes += bytes.size();
   ++audit.attempts;
@@ -76,24 +76,24 @@ struct WriteAudit final {
   return {.bytes = static_cast<std::ptrdiff_t>(bytes.size())};
 }
 
-[[nodiscard]] auto write_and_compose(lemma::vt::Terminal& terminal,
-                                     lemma::render::FrameBuffer& frame,
+[[nodiscard]] auto write_and_compose(frame::vt::Terminal& terminal,
+                                     frame::render::FrameBuffer& frame,
                                      const std::string_view text) noexcept -> std::size_t {
   const auto input = std::as_bytes(std::span(text.data(), text.size()));
   const auto damage = terminal.write_and_report_damage(input);
   if (!damage.has_value()) {
     return 0;
   }
-  const auto composition = lemma::render::compose_retained_single_pane(terminal, frame, false);
+  const auto composition = frame::render::compose_retained_single_pane(terminal, frame, false);
   return composition.has_value() ? composition->bytes : 0;
 }
 
 // Alternates width and height so audited resizes exercise both the presented cell-hash shadow and
 // the row-hash storage at capacities retained from warmup.
 [[nodiscard]] constexpr auto audited_resize(const std::size_t iteration) noexcept
-    -> lemma::vt::TerminalSize {
-  return iteration % 2U == 0 ? lemma::vt::TerminalSize{.columns = 100, .rows = 24}
-                             : lemma::vt::TerminalSize{.columns = 80, .rows = 30};
+    -> frame::vt::TerminalSize {
+  return iteration % 2U == 0 ? frame::vt::TerminalSize{.columns = 100, .rows = 24}
+                             : frame::vt::TerminalSize{.columns = 80, .rows = 30};
 }
 
 } // namespace
@@ -133,41 +133,41 @@ int main() {
   constexpr std::string_view first = "\x1B[12;1H\x1B[1;32msteady-state alpha \xE2\x98\x83\x1B[0m";
   constexpr std::string_view second = "\x1B[12;1H\x1B[1;34msteady-state beta  \xE2\x98\x83\x1B[0m";
 
-  lemma::input::InputRouter input_router(lemma::input::default_input_map());
-  auto extension_runtime = std::make_unique<lemma::extension::Runtime>();
+  frame::input::InputRouter input_router(frame::input::default_input_map());
+  auto extension_runtime = std::make_unique<frame::extension::Runtime>();
   std::array<int, 2> extension_sockets{-1, -1};
   if (::socketpair(AF_UNIX, SOCK_STREAM, 0, extension_sockets.data()) != 0) {
     return 2;
   }
-  const auto extension_session = lemma::SessionId::from_parts(0, 1);
-  const auto extension_attachment = lemma::AttachmentId::from_parts(0, 1);
+  const auto extension_session = frame::SessionId::from_parts(0, 1);
+  const auto extension_attachment = frame::AttachmentId::from_parts(0, 1);
   const auto extension_owner = extension_runtime->admit(
-      lemma::extension::FramedPeer(std::exchange(extension_sockets.front(), -1)),
-      lemma::extension::Hello{.name = "allocation-audit",
+      frame::extension::FramedPeer(std::exchange(extension_sockets.front(), -1)),
+      frame::extension::Hello{.name = "allocation-audit",
                               .subscription = {},
-                              .capabilities = lemma::extension::capability_surface},
+                              .capabilities = frame::extension::capability_surface},
       extension_session, extension_attachment, {});
   if (!extension_owner.has_value()) {
     return 2;
   }
   const auto extension_surface = extension_runtime->create_surface(
       *extension_owner,
-      lemma::api::SurfacePlacement{.kind = lemma::api::SurfacePlacementKind::overlay,
+      frame::api::SurfacePlacement{.kind = frame::api::SurfacePlacementKind::overlay,
                                    .column = 0,
                                    .row = 0,
                                    .columns = 8,
                                    .rows = 1},
       true, true, {.columns = 80, .rows = 24});
-  if (extension_surface.status != lemma::extension::SurfaceOperationStatus::applied) {
+  if (extension_surface.status != frame::extension::SurfaceOperationStatus::applied) {
     return 2;
   }
-  const auto surface_update = std::string(R"({"schema":"lemma.surface-update/v1","surface":")") +
+  const auto surface_update = std::string(R"({"schema":"frame.surface-update/v1","surface":")") +
                               std::to_string(extension_surface.surface.slot()) + ":" +
                               std::to_string(extension_surface.surface.generation()) +
                               R"(","rows":[{"row":0,"runs":[{"column":0,"text":"idle"}]}]})";
   if (extension_runtime
           ->apply_surface_update(*extension_owner, std::as_bytes(std::span(surface_update)))
-          .status != lemma::extension::SurfaceOperationStatus::applied) {
+          .status != frame::extension::SurfaceOperationStatus::applied) {
     return 2;
   }
   std::array<std::byte, std::size_t{16} * 1'024U> extension_output{};
@@ -180,32 +180,32 @@ int main() {
   if (extension_runtime->output_bytes(*extension_owner) != 0) {
     return 2;
   }
-  std::array<lemma::extension::PeerView, lemma::limits::extension_sessions_hard_max>
+  std::array<frame::extension::PeerView, frame::limits::extension_sessions_hard_max>
       extension_peers{};
-  std::array<lemma::render::GridSurface, lemma::limits::extension_surfaces_hard_max>
+  std::array<frame::render::GridSurface, frame::limits::extension_surfaces_hard_max>
       extension_surfaces{};
   constexpr std::array routed_input{std::byte{'a'}};
-  auto terminal_result = lemma::vt::Terminal::create({});
+  auto terminal_result = frame::vt::Terminal::create({});
   if (!terminal_result.has_value()) {
     return 2;
   }
   auto terminal = std::move(*terminal_result);
-  lemma::render::FrameBuffer frame;
+  frame::render::FrameBuffer frame;
   if (!frame.prepare({.columns = 80, .rows = 24}) ||
-      !lemma::render::compose_retained_single_pane(terminal, frame, true).has_value()) {
+      !frame::render::compose_retained_single_pane(terminal, frame, true).has_value()) {
     return 2;
   }
-  auto resize_terminal_result = lemma::vt::Terminal::create({});
+  auto resize_terminal_result = frame::vt::Terminal::create({});
   if (!resize_terminal_result.has_value()) {
     return 2;
   }
   auto resize_terminal = std::move(*resize_terminal_result);
   // Present the resized terminal so its lazily allocated cell-hash shadow exists; audited resizes
   // must then reuse it rather than skip it.
-  lemma::render::FrameBuffer resize_frame;
+  frame::render::FrameBuffer resize_frame;
   if (!resize_frame.prepare({.columns = 100, .rows = 30}) ||
       !resize_terminal.resize({.columns = 81, .rows = 24}).has_value() ||
-      !lemma::render::compose_retained_single_pane(resize_terminal, resize_frame, true)
+      !frame::render::compose_retained_single_pane(resize_terminal, resize_frame, true)
            .has_value()) {
     return 2;
   }
@@ -214,16 +214,16 @@ int main() {
     const auto bytes = write_and_compose(terminal, frame, iteration % 2U == 0 ? first : second);
     if (routed.consumed != routed_input.size() || bytes == 0 ||
         !resize_terminal.resize(audited_resize(iteration)).has_value() ||
-        !lemma::render::compose_retained_single_pane(resize_terminal, resize_frame, true)
+        !frame::render::compose_retained_single_pane(resize_terminal, resize_frame, true)
              .has_value()) {
       return 2;
     }
   }
 
-  lemma::platform::Readiness readiness{1};
+  frame::platform::Readiness readiness{1};
   std::array<pollfd, 1> readiness_descriptors{
       {{.fd = extension_sockets.back(), .events = POLLOUT, .revents = 0}}};
-  constexpr std::array<lemma::platform::ReadinessIdentity, 1> readiness_identities{
+  constexpr std::array<frame::platform::ReadinessIdentity, 1> readiness_identities{
       {{.domain = 1, .owner = 0, .generation = 1}}};
   if (readiness.wait(readiness_descriptors, readiness_identities, 0) != 1) {
     return 2;
@@ -270,25 +270,25 @@ int main() {
     ++extension_accounting_scans;
     composed_frame_bytes += frame_bytes;
     maximum_frame_bytes = std::max(maximum_frame_bytes, frame_bytes);
-    lemma::core::ClientFrameOutput output;
-    constexpr auto now = lemma::core::ClientFrameOutput::TimePoint{};
+    frame::core::ClientFrameOutput output;
+    constexpr auto now = frame::core::ClientFrameOutput::TimePoint{};
     if (!output.queue_frame(frame_bytes, 2, 1, false, now)) {
       audit_enabled.store(false, std::memory_order_release);
       return 2;
     }
     frame_messages_queued += output.queued_message_count();
     maximum_queued_messages = std::max(maximum_queued_messages, output.queued_message_count());
-    lemma::core::ClientFrameFlushTarget target{
+    frame::core::ClientFrameFlushTarget target{
         .descriptor = 7,
         .frame = &frame,
         .output = &output,
         .write = &audited_write,
         .context = &write_audit,
     };
-    std::size_t budget = lemma::core::attached_client_write_bytes_per_turn_max;
+    std::size_t budget = frame::core::attached_client_write_bytes_per_turn_max;
     ++flush_calls;
-    if (lemma::core::flush_client_frame(target, budget, now) !=
-        lemma::core::ClientFrameFlushStatus::drained) {
+    if (frame::core::flush_client_frame(target, budget, now) !=
+        frame::core::ClientFrameFlushStatus::drained) {
       audit_enabled.store(false, std::memory_order_release);
       return 2;
     }

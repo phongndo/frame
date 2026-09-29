@@ -28,13 +28,13 @@ namespace {
   return result + '"';
 }
 [[nodiscard]] auto chord(const char* text) -> std::string {
-  const auto value = lemma::config::parse_key(text);
+  const auto value = frame::config::parse_key(text);
   if (!value.has_value()) {
     throw std::runtime_error("invalid default key");
   }
   return "InputChord{.code=" + std::to_string(value->code) +
          ",.modifiers=" + std::to_string(value->modifiers) +
-         ",.kind=ChordKind::" + (value->kind == lemma::input::ChordKind::byte ? "byte}" : "key}");
+         ",.kind=ChordKind::" + (value->kind == frame::input::ChordKind::byte ? "byte}" : "key}");
 }
 [[nodiscard]] auto output(lua_State* state) -> std::string& {
   return *static_cast<std::string*>(lua_touserdata(state, lua_upvalueindex(1)));
@@ -57,12 +57,12 @@ namespace {
     call = "set(" + context + ',' + key + ",InputCommand::" + action +
            ",CommandContextDisposition::" + luaL_optstring(state, 4, "retain") + ')';
   }
-  output(state) += "  LEMMA_ASSERT(" + call + ");\n";
+  output(state) += "  FRAME_ASSERT(" + call + ");\n";
   return 0;
 }
 [[nodiscard]] auto context(lua_State* state) -> int {
   output(state) +=
-      "  LEMMA_ASSERT(set_context(ConfiguredInputContext::" +
+      "  FRAME_ASSERT(set_context(ConfiguredInputContext::" +
       std::string(luaL_checkstring(state, 1)) + ",{.label=" + quote(luaL_checkstring(state, 2)) +
       ",.lifetime=ContextLifetime::" + luaL_checkstring(state, 3) +
       ",.unbound=UnboundBehavior::" + luaL_checkstring(state, 4) +
@@ -70,7 +70,7 @@ namespace {
   return 0;
 }
 [[nodiscard]] auto prefix(lua_State* state) -> int {
-  output(state) += "  LEMMA_ASSERT(set_prefix(" + chord(luaL_checkstring(state, 1)) + "));\n";
+  output(state) += "  FRAME_ASSERT(set_prefix(" + chord(luaL_checkstring(state, 1)) + "));\n";
   return 0;
 }
 void install(lua_State* state, const char* name, lua_CFunction function, std::string& target) {

@@ -1,5 +1,5 @@
+#include "frame/limits.hpp"
 #include "image/png.hpp"
-#include "lemma/limits.hpp"
 #include "platform/io.hpp"
 
 #include <array>
@@ -118,14 +118,14 @@ auto run() -> int {
       return 1;
     }
     const auto size = static_cast<std::size_t>(count);
-    if (size > lemma::limits::clipboard_decoded_bytes_max - input.size()) {
+    if (size > frame::limits::clipboard_decoded_bytes_max - input.size()) {
       return 1;
     }
     const auto received = std::span(chunk).first(size);
     input.insert(input.end(), received.begin(), received.end());
   }
   std::vector<std::byte> pixels;
-  if (!lemma::image::decode_png(input, allocate, &pixels)) {
+  if (!frame::image::decode_png(input, allocate, &pixels)) {
     return 1;
   }
   const auto* cache = std::getenv("XDG_CACHE_HOME");
@@ -142,7 +142,7 @@ auto run() -> int {
     return 1;
   }
   std::error_code error;
-  root /= "lemma";
+  root /= "frame";
   std::filesystem::create_directories(root, error);
   if (error) {
     return 1;
@@ -173,7 +173,7 @@ auto run() -> int {
   }
   path = temporary + ".png";
   const std::string response = std::string(1, '\1') + path + '\0';
-  if (response.size() > 4096U || !lemma::platform::write_all(file, input)) {
+  if (response.size() > 4096U || !frame::platform::write_all(file, input)) {
     return 1;
   }
   const bool closed = ::close(file) == 0;
@@ -190,8 +190,8 @@ auto run() -> int {
   // Nonblocking, terminated publication cannot expose a truncated path as success. Once the
   // complete record is sent, cancellation must not remove the published file.
   SignalBlock publication(cancellations);
-  if (!publication.active || !lemma::platform::set_nonblocking(channel) ||
-      !lemma::platform::send_text(channel, response)) {
+  if (!publication.active || !frame::platform::set_nonblocking(channel) ||
+      !frame::platform::send_text(channel, response)) {
     return 1;
   }
   pending_path.store(nullptr, std::memory_order_release);

@@ -1,7 +1,7 @@
 #include "render/status_line.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/limits.hpp"
+#include "frame/assert.hpp"
+#include "frame/limits.hpp"
 #include "render/scene.hpp"
 #include "render/ui.hpp"
 
@@ -17,7 +17,7 @@
 #include <string_view>
 #include <system_error>
 
-namespace lemma::render {
+namespace frame::render {
 namespace {
 
 constexpr std::size_t status_title_columns_max = 16;
@@ -212,13 +212,13 @@ struct PromptField final {
 };
 
 void append_label_character(StatusLabel& label, const char character) noexcept {
-  LEMMA_ASSERT(label.size < label.text.size());
+  FRAME_ASSERT(label.size < label.text.size());
   std::span(label.text).subspan(label.size, 1).front() = character;
   ++label.size;
 }
 
 void append_label_text(StatusLabel& label, const std::string_view text) noexcept {
-  LEMMA_ASSERT(text.size() <= label.text.size() - label.size);
+  FRAME_ASSERT(text.size() <= label.text.size() - label.size);
   std::memcpy(std::span(label.text).subspan(label.size).data(), text.data(), text.size());
   label.size += text.size();
 }
@@ -945,4 +945,4 @@ auto project_status_cells(const StatusLine status, const Viewport viewport,
   return std::nullopt;
 }
 
-} // namespace lemma::render
+} // namespace frame::render

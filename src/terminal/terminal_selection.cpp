@@ -1,8 +1,8 @@
 #include "terminal/terminal_impl.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/assert.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,7 +15,7 @@
 #include <string_view>
 #include <utility>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace {
 
 [[nodiscard]] auto formatter_format(const ScreenFormat format) noexcept -> GhosttyFormatterFormat {
@@ -166,7 +166,7 @@ format_selection_buffer(const GhosttyTerminal terminal, const GhosttySelection& 
   if (result != GHOSTTY_SUCCESS) {
     return std::unexpected(detail::map_error(result));
   }
-  LEMMA_ASSERT(bytes_written <= output.size());
+  FRAME_ASSERT(bytes_written <= output.size());
   return bytes_written;
 }
 
@@ -791,8 +791,8 @@ struct SearchTextCursor final {
 
 auto Terminal::format_screen(const ScreenFormat format, const std::span<std::byte> output,
                              const bool unwrap) noexcept -> std::expected<std::size_t, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   GhosttyFormatterTerminalOptions options{};
   options.size = sizeof(options);
@@ -822,7 +822,7 @@ auto Terminal::format_screen(const ScreenFormat format, const std::span<std::byt
   if (result != GHOSTTY_SUCCESS) {
     return std::unexpected(detail::map_error(result));
   }
-  LEMMA_ASSERT(bytes_written <= output.size());
+  FRAME_ASSERT(bytes_written <= output.size());
   return bytes_written;
 }
 
@@ -831,8 +831,8 @@ auto Terminal::format_screen(const ScreenFormat format, const std::span<std::byt
 auto Terminal::format_visible_tail(const ScreenFormat format, const std::size_t rows,
                                    const std::span<std::byte> output, const bool unwrap) noexcept
     -> std::expected<std::size_t, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   const auto terminal_size = size();
   if (rows == 0 || terminal_size.columns == 0 || terminal_size.rows == 0) {
     return std::unexpected(Error::invalid_options);
@@ -875,8 +875,8 @@ auto Terminal::format_visible_tail(const ScreenFormat format, const std::size_t 
 auto Terminal::format_recent(const ScreenFormat format, const std::size_t rows,
                              const std::span<std::byte> output, const bool unwrap) noexcept
     -> std::expected<std::size_t, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   if (rows == 0) {
     return std::unexpected(Error::invalid_options);
   }
@@ -934,8 +934,8 @@ auto Terminal::format_recent(const ScreenFormat format, const std::size_t rows,
 auto Terminal::format_last_command(const ScreenFormat format, const std::span<std::byte> output,
                                    const bool unwrap) noexcept
     -> std::expected<std::size_t, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   const auto available = total_rows(impl_->terminal);
   if (!available.has_value() || *available == 0) {
     return std::unexpected(available.has_value() ? Error::invalid_state : available.error());
@@ -993,8 +993,8 @@ auto Terminal::format_last_command(const ScreenFormat format, const std::span<st
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 auto Terminal::selection_gesture(const SelectionGestureEvent& event) noexcept
     -> std::expected<SelectionGestureResult, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   if (event.cell_width == 0 || event.screen_height == 0 ||
       ((!event.has_point) && (event.phase == SelectionGesturePhase::press ||
@@ -1159,14 +1159,14 @@ auto Terminal::selection_gesture(const SelectionGestureEvent& event) noexcept
 }
 
 void Terminal::reset_selection_gesture() noexcept {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   ghostty_selection_gesture_reset(impl_->selection_gesture, impl_->terminal);
 }
 
 auto Terminal::select(const SelectionUnit unit, const TerminalPoint point) noexcept
     -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   GhosttySelection selection = GHOSTTY_INIT_SIZED(GhosttySelection);
   GhosttyResult result = GHOSTTY_INVALID_VALUE;
@@ -1226,7 +1226,7 @@ auto Terminal::select(const SelectionUnit unit, const TerminalPoint point) noexc
 
 auto Terminal::selection_adjust(const SelectionAdjustment adjustment, const bool extend) noexcept
     -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   const auto current = active_selection(impl_->terminal);
   if (!current.has_value()) {
     return std::unexpected(current.error());
@@ -1273,7 +1273,7 @@ auto Terminal::selection_adjust(const SelectionAdjustment adjustment, const bool
 }
 
 auto Terminal::selection_set_unit(const SelectionUnit unit) noexcept -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   const auto endpoint = selection_endpoint(PointSpace::screen);
   if (!endpoint.has_value()) {
     return std::unexpected(endpoint.error());
@@ -1296,7 +1296,7 @@ auto Terminal::selection_set_unit(const SelectionUnit unit) noexcept -> std::exp
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 auto Terminal::selection_normalize_unit(const SelectionUnit unit) noexcept
     -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   const auto current = active_selection(impl_->terminal);
   if (!current.has_value()) {
     return std::unexpected(current.error());
@@ -1344,7 +1344,7 @@ auto Terminal::selection_normalize_unit(const SelectionUnit unit) noexcept
 }
 
 auto Terminal::swap_selection_endpoints() noexcept -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   const auto current = active_selection(impl_->terminal);
   if (!current.has_value()) {
     return std::unexpected(current.error());
@@ -1362,7 +1362,7 @@ auto Terminal::swap_selection_endpoints() noexcept -> std::expected<bool, Error>
 }
 
 auto Terminal::collapse_selection_to_endpoint() noexcept -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   const auto current = active_selection(impl_->terminal);
   if (!current.has_value()) {
     return std::unexpected(current.error());
@@ -1381,7 +1381,7 @@ auto Terminal::collapse_selection_to_endpoint() noexcept -> std::expected<bool, 
 }
 
 auto Terminal::selection_active() const noexcept -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   const auto selection = active_selection(impl_->terminal);
   if (!selection.has_value()) {
     return std::unexpected(selection.error());
@@ -1391,7 +1391,7 @@ auto Terminal::selection_active() const noexcept -> std::expected<bool, Error> {
 
 auto Terminal::selection_endpoint(const PointSpace space) const noexcept
     -> std::expected<std::optional<TerminalPoint>, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   const auto selection = active_selection(impl_->terminal);
   if (!selection.has_value()) {
     return std::unexpected(selection.error());
@@ -1414,7 +1414,7 @@ auto Terminal::selection_endpoint(const PointSpace space) const noexcept
 
 auto Terminal::selection_range(const PointSpace space) const noexcept
     -> std::expected<std::optional<SelectionRange>, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   const auto selection = active_selection(impl_->terminal);
   if (!selection.has_value()) {
     return std::unexpected(selection.error());
@@ -1432,7 +1432,7 @@ auto Terminal::selection_range(const PointSpace space) const noexcept
 }
 
 auto Terminal::checkpoint_selection() noexcept -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   const auto current = active_selection(impl_->terminal);
   if (!current.has_value()) {
     return std::unexpected(current.error());
@@ -1470,7 +1470,7 @@ auto Terminal::checkpoint_selection() noexcept -> std::expected<bool, Error> {
 
 auto Terminal::selection_checkpoint_endpoint(const PointSpace space) const noexcept
     -> std::expected<std::optional<TerminalPoint>, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   if (impl_->selection_checkpoint_end == nullptr) {
     return std::optional<TerminalPoint>{};
   }
@@ -1490,7 +1490,7 @@ auto Terminal::selection_checkpoint_endpoint(const PointSpace space) const noexc
 }
 
 auto Terminal::restore_selection_checkpoint() noexcept -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   if (impl_->selection_checkpoint_start == nullptr || impl_->selection_checkpoint_end == nullptr) {
     return false;
   }
@@ -1515,7 +1515,7 @@ auto Terminal::restore_selection_checkpoint() noexcept -> std::expected<bool, Er
 }
 
 void Terminal::clear_selection_checkpoint() noexcept {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   ghostty_tracked_grid_ref_free(impl_->selection_checkpoint_start);
   ghostty_tracked_grid_ref_free(impl_->selection_checkpoint_end);
   impl_->selection_checkpoint_start = nullptr;
@@ -1524,7 +1524,7 @@ void Terminal::clear_selection_checkpoint() noexcept {
 }
 
 auto Terminal::refresh_selection() noexcept -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   const auto selection = active_selection(impl_->terminal);
   if (!selection.has_value()) {
     return std::unexpected(selection.error());
@@ -1553,14 +1553,14 @@ auto Terminal::refresh_selection() noexcept -> std::expected<bool, Error> {
 }
 
 void Terminal::clear_selection() noexcept {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   static_cast<void>(ghostty_terminal_set(impl_->terminal, GHOSTTY_TERMINAL_OPT_SELECTION, nullptr));
 }
 
 auto Terminal::format_selection(const ScreenFormat format,
                                 const std::span<std::byte> output) noexcept
     -> std::expected<std::size_t, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   if (output.size() > limits::selection_format_bytes_max) {
     return std::unexpected(Error::limit_exceeded);
   }
@@ -1579,12 +1579,12 @@ auto Terminal::format_selection(const ScreenFormat format,
   if (result != GHOSTTY_SUCCESS) {
     return std::unexpected(detail::map_error(result));
   }
-  LEMMA_ASSERT(written <= output.size());
+  FRAME_ASSERT(written <= output.size());
   return written;
 }
 
 void Terminal::scroll_viewport(const ViewportScroll behavior, const std::int64_t value) noexcept {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   GhosttyTerminalScrollViewport scroll{};
   switch (behavior) {
   case ViewportScroll::top:
@@ -1608,7 +1608,7 @@ void Terminal::scroll_viewport(const ViewportScroll behavior, const std::int64_t
 }
 
 auto Terminal::scroll_viewport_to_bottom() noexcept -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   bool active = true;
   const auto result =
       ghostty_terminal_get(impl_->terminal, GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE, &active);
@@ -1623,7 +1623,7 @@ auto Terminal::scroll_viewport_to_bottom() noexcept -> std::expected<bool, Error
 }
 
 auto Terminal::viewport_state() const noexcept -> std::expected<ViewportState, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   GhosttyTerminalScrollbar scrollbar{};
   bool active = true;
   const std::array keys{GHOSTTY_TERMINAL_DATA_SCROLLBAR, GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE};
@@ -1643,7 +1643,7 @@ auto Terminal::viewport_state() const noexcept -> std::expected<ViewportState, E
 }
 
 auto Terminal::scroll_selection_into_view() noexcept -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   const auto selection = active_selection(impl_->terminal);
   const auto viewport = viewport_state();
   if (!selection.has_value() || !viewport.has_value()) {
@@ -1669,7 +1669,7 @@ auto Terminal::scroll_selection_into_view() noexcept -> std::expected<bool, Erro
 }
 
 auto Terminal::compression_activity() const noexcept -> std::expected<std::uint64_t, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   std::uint64_t activity = 0;
   const auto result = ghostty_terminal_compression_activity(impl_->terminal, &activity);
   if (result != GHOSTTY_SUCCESS) {
@@ -1679,7 +1679,7 @@ auto Terminal::compression_activity() const noexcept -> std::expected<std::uint6
 }
 
 auto Terminal::compress_scrollback() noexcept -> std::expected<CompressionResult, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   GhosttyTerminalCompressionResult compression = GHOSTTY_TERMINAL_COMPRESSION_RESULT_COMPLETE;
   const auto result = ghostty_terminal_compress(
       impl_->terminal, GHOSTTY_TERMINAL_COMPRESSION_MODE_INCREMENTAL, &compression);
@@ -1706,7 +1706,7 @@ auto Terminal::search_literal_step(const std::string_view query, const SearchDir
                                    const std::size_t work_limit,
                                    const std::optional<TerminalPoint> stop_before) const noexcept
     -> std::expected<SearchStepResult, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   if (query.empty() || query.size() > limits::search_query_bytes_max || work_limit == 0 ||
       work_limit > limits::search_candidates_per_step) {
     return std::unexpected(Error::invalid_options);
@@ -1851,7 +1851,7 @@ auto Terminal::search_literal_step(const std::string_view query, const SearchDir
 
 auto Terminal::select_search_match(const SearchMatch& match) noexcept
     -> std::expected<void, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   if (match.start.space != PointSpace::screen || match.end.space != PointSpace::screen) {
     return std::unexpected(Error::invalid_options);
   }
@@ -1866,4 +1866,4 @@ auto Terminal::select_search_match(const SearchMatch& match) noexcept
   return install_selection(impl_->terminal, selection);
 }
 
-} // namespace lemma::vt
+} // namespace frame::vt

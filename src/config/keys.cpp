@@ -5,7 +5,7 @@
 #include <optional>
 #include <string_view>
 
-namespace lemma::config {
+namespace frame::config {
 namespace {
 using input::PhysicalKey;
 // NOLINTNEXTLINE(bugprone-exception-escape,readability-function-cognitive-complexity)
@@ -132,4 +132,4 @@ auto parse_key(std::string_view value) noexcept -> std::optional<InputChord> {
   return key.has_value() ? std::optional{InputChord::key(*key, modifiers)} : std::nullopt;
 }
 
-} // namespace lemma::config
+} // namespace frame::config

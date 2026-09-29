@@ -44,12 +44,12 @@ output="$(cd "${output}" && pwd)"
 readonly output
 readonly policy="${root}/benchmarks/performance_hosts.json"
 readonly manifest="${root}/benchmarks/workloads.json"
-readonly shared_peer="${root}/build/release/lemma_test_pty_peer"
-readonly shared_probe="${root}/build/release/lemma_benchmark_probe"
+readonly shared_peer="${root}/build/release/frame_test_pty_peer"
+readonly shared_probe="${root}/build/release/frame_benchmark_probe"
 
-exec 9>"${TMPDIR:-/tmp}/lemma-performance.lock"
+exec 9>"${TMPDIR:-/tmp}/frame-performance.lock"
 if ! flock -n 9; then
-  printf 'another Lemma performance run owns this host\n' >&2
+  printf 'another Frame performance run owns this host\n' >&2
   exit 2
 fi
 
@@ -85,7 +85,7 @@ capture() {
   local dependency_environment
   dependency_environment="$(nix develop "${source_root}#benchmarks" --command python3 -c '
 import os
-for key in ("LEMMA_GHOSTTY_SOURCE_DIR", "LEMMA_GHOSTTY_NIX_SOURCE_REV", "LEMMA_GHOSTTY_ZIG_SYSTEM_DIR"):
+for key in ("FRAME_GHOSTTY_SOURCE_DIR", "FRAME_GHOSTTY_NIX_SOURCE_REV", "FRAME_GHOSTTY_ZIG_SYSTEM_DIR"):
     value = os.environ[key]
     if not value or "\n" in value:
         raise SystemExit(f"invalid dependency environment: {key}")
@@ -97,11 +97,11 @@ for key in ("LEMMA_GHOSTTY_SOURCE_DIR", "LEMMA_GHOSTTY_NIX_SOURCE_REV", "LEMMA_G
     cd "${source_root}"
     taskset -c "${affinity}" \
       nix develop "${root}#benchmarks" --command \
-      env "${ghostty_environment[@]}" LEMMA_BENCHMARK_HARNESS_ROOT="${root}" \
-      LEMMA_BENCHMARK_MANIFEST="${manifest}" \
-      LEMMA_BENCHMARK_PEER="${shared_peer}" \
-      LEMMA_BENCHMARK_PROBE="${shared_probe}" \
-      LEMMA_BENCH_COOLDOWN_SECONDS="${LEMMA_BENCH_COOLDOWN_SECONDS:-30}" \
+      env "${ghostty_environment[@]}" FRAME_BENCHMARK_HARNESS_ROOT="${root}" \
+      FRAME_BENCHMARK_MANIFEST="${manifest}" \
+      FRAME_BENCHMARK_PEER="${shared_peer}" \
+      FRAME_BENCHMARK_PROBE="${shared_probe}" \
+      FRAME_BENCH_COOLDOWN_SECONDS="${FRAME_BENCH_COOLDOWN_SECONDS:-30}" \
       "${root}/scripts/ci/regression-capture" "${destination}"
   )
 }
@@ -110,16 +110,16 @@ if [[ "${command}" == gate ]]; then
   readonly baseline="${argument:-HEAD}"
   baseline_revision="$(git rev-parse --verify "${baseline}^{commit}")"
   readonly baseline_revision
-  baseline_tree="$(mktemp -d "${TMPDIR:-/tmp}/lemma-performance-baseline.XXXXXX")"
+  baseline_tree="$(mktemp -d "${TMPDIR:-/tmp}/frame-performance-baseline.XXXXXX")"
   rmdir "${baseline_tree}"
   git worktree add --quiet --detach "${baseline_tree}" "${baseline_revision}"
   taskset -c "${affinity}" nix develop "${root}#benchmarks" --command \
     "${root}/scripts/ci/configure" release \
-    -DLEMMA_BUILD_TESTS=OFF \
-    -DLEMMA_BUILD_BENCHMARKS=ON \
-    -DLEMMA_ENABLE_LATENCY_TRACE=OFF
+    -DFRAME_BUILD_TESTS=OFF \
+    -DFRAME_BUILD_BENCHMARKS=ON \
+    -DFRAME_ENABLE_LATENCY_TRACE=OFF
   taskset -c "${affinity}" nix develop "${root}#benchmarks" --command \
-    cmake --build --preset release --target lemma_test_pty_peer lemma_benchmark_probe
+    cmake --build --preset release --target frame_test_pty_peer frame_benchmark_probe
   printf 'performance gate on %s CPUs=%s baseline=%s\n' \
     "$(hostname)" "${affinity}" "${baseline_revision}"
   capture "${baseline_tree}" "${output}/baseline"
@@ -141,12 +141,12 @@ elif [[ "${command}" == calibrate ]]; then
 else
   taskset -c "${affinity}" nix develop "${root}#benchmarks" --command \
     "${root}/scripts/ci/configure" release \
-    -DLEMMA_BUILD_TESTS=ON \
-    -DLEMMA_BUILD_BENCHMARKS=ON \
-    -DLEMMA_ENABLE_LATENCY_TRACE=OFF
+    -DFRAME_BUILD_TESTS=ON \
+    -DFRAME_BUILD_BENCHMARKS=ON \
+    -DFRAME_ENABLE_LATENCY_TRACE=OFF
   taskset -c "${affinity}" nix develop "${root}#benchmarks" --command \
     cmake --build --preset release --target \
-    lemma_test_server lemma_test_cli lemma_test_pty_peer lemma_benchmark_probe
+    frame_test_server frame_test_cli frame_test_pty_peer frame_benchmark_probe
   taskset -c "${affinity}" nix develop "${root}#benchmarks" --command \
     python3 benchmarks/extension_performance.py \
     --manifest "${manifest}" \

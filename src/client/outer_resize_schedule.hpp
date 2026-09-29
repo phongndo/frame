@@ -1,10 +1,10 @@
-#ifndef LEMMA_CLIENT_OUTER_RESIZE_SCHEDULE_HPP
-#define LEMMA_CLIENT_OUTER_RESIZE_SCHEDULE_HPP
+#ifndef FRAME_CLIENT_OUTER_RESIZE_SCHEDULE_HPP
+#define FRAME_CLIENT_OUTER_RESIZE_SCHEDULE_HPP
 
 #include <chrono>
 #include <optional>
 
-namespace lemma::client {
+namespace frame::client {
 
 // Paces outer-terminal geometry commits. A change after a quiet interval commits immediately.
 // Changes observed within one interval of the previously sent geometry coalesce into a single
@@ -38,6 +38,6 @@ private:
   std::optional<TimePoint> last_sent_;
 };
 
-} // namespace lemma::client
+} // namespace frame::client
 
-#endif // LEMMA_CLIENT_OUTER_RESIZE_SCHEDULE_HPP
+#endif // FRAME_CLIENT_OUTER_RESIZE_SCHEDULE_HPP

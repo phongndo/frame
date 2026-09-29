@@ -1,1 +1,1 @@
-{"schema":"lemma.proc/v1","commands":[{"command":"session.inspect","session":{"name":"world"}},{"command":"pane.wait","pane":{"result":"root"},"contains":"ready"}]}
+{"schema":"frame.proc/v1","commands":[{"command":"session.inspect","session":{"name":"world"}},{"command":"pane.wait","pane":{"result":"root"},"contains":"ready"}]}

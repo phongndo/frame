@@ -1,9 +1,9 @@
-#ifndef LEMMA_EXTENSION_COMMANDS_HPP
-#define LEMMA_EXTENSION_COMMANDS_HPP
+#ifndef FRAME_EXTENSION_COMMANDS_HPP
+#define FRAME_EXTENSION_COMMANDS_HPP
 
 #include "api/json.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <array>
 #include <chrono>
@@ -15,7 +15,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::extension {
+namespace frame::extension {
 
 inline constexpr std::size_t commands_max = limits::hosted_commands_hard_max;
 inline constexpr std::size_t invocations_max = 8;
@@ -116,6 +116,6 @@ private:
   int listener_;
 };
 
-} // namespace lemma::extension
+} // namespace frame::extension
 
-#endif // LEMMA_EXTENSION_COMMANDS_HPP
+#endif // FRAME_EXTENSION_COMMANDS_HPP

@@ -49,7 +49,7 @@ def listing(pane: str, **layer: Any) -> dict[str, Any]:
 
 def result(command: str, **fields: Any) -> dict[str, Any]:
     return {
-        "schema": "lemma.command-result/v1",
+        "schema": "frame.command-result/v1",
         "command": command,
         "status": "applied",
         "session": SESSION,
@@ -73,7 +73,7 @@ TAB_STATE: dict[str, Any] = {
     "floats": {"visible": True, "panes": ["1:1"]},
 }
 REQUEST: dict[str, Any] = {
-    "schema": "lemma.proc/v1",
+    "schema": "frame.proc/v1",
     "on_error": "continue",
     "commands": [
         {
@@ -114,7 +114,7 @@ REQUEST: dict[str, Any] = {
     ],
 }
 RESULT: dict[str, Any] = {
-    "schema": "lemma.proc-result/v1",
+    "schema": "frame.proc-result/v1",
     "ok": False,
     "results": [
         {
@@ -142,7 +142,7 @@ class FloatingPaneSchemaTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         schema = json.loads(
-            (ROOT / "schema/lemma-api-v1.schema.json").read_text(encoding="utf-8")
+            (ROOT / "schema/frame-api-v1.schema.json").read_text(encoding="utf-8")
         )
         Draft202012Validator.check_schema(schema)
         cls.validator = Draft202012Validator(schema, registry=Registry())

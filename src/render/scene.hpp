@@ -1,21 +1,21 @@
-#ifndef LEMMA_RENDER_SCENE_HPP
-#define LEMMA_RENDER_SCENE_HPP
+#ifndef FRAME_RENDER_SCENE_HPP
+#define FRAME_RENDER_SCENE_HPP
 
-#include "lemma/geometry.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/geometry.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "render/grid.hpp"
 
 #include <cstdint>
 #include <span>
 
-namespace lemma::render {
+namespace frame::render {
 
 struct Viewport final {
   std::uint16_t columns{0};
   std::uint16_t rows{0};
 };
 
-using PaneRectangle = lemma::PaneRectangle;
+using PaneRectangle = frame::PaneRectangle;
 
 struct PaneSurface final {
   vt::Terminal* terminal{nullptr};
@@ -46,6 +46,6 @@ struct Scene final {
   std::span<const GridSurface> grids;
 };
 
-} // namespace lemma::render
+} // namespace frame::render
 
-#endif // LEMMA_RENDER_SCENE_HPP
+#endif // FRAME_RENDER_SCENE_HPP

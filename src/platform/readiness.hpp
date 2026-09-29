@@ -1,5 +1,5 @@
-#ifndef LEMMA_PLATFORM_READINESS_HPP
-#define LEMMA_PLATFORM_READINESS_HPP
+#ifndef FRAME_PLATFORM_READINESS_HPP
+#define FRAME_PLATFORM_READINESS_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -8,7 +8,7 @@
 
 #include <poll.h>
 
-namespace lemma::platform {
+namespace frame::platform {
 
 // Equal identities mean the same open-file lifetime, even if the descriptor list is reordered.
 // Use existing owner generations, not an fd number. A zero domain opts out of retained watches.
@@ -44,6 +44,6 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-} // namespace lemma::platform
+} // namespace frame::platform
 
-#endif // LEMMA_PLATFORM_READINESS_HPP
+#endif // FRAME_PLATFORM_READINESS_HPP

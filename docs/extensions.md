@@ -9,9 +9,9 @@ Extensions are external programs that compose three primitives:
 | Surface | Present extension-owned state as a retained Grid |
 
 ```text
-Lemma state -> Event -> extension state -> Surface update -> native Scene -> user
+Frame state -> Event -> extension state -> Surface update -> native Scene -> user
                   ^             |                                           |
-                  |             +-> Proc -> Lemma state                      |
+                  |             +-> Proc -> Frame state                      |
                   +---------------- owned interaction Event <---------------+
 ```
 
@@ -29,7 +29,7 @@ below. Both paths use the same public protocol, capabilities, ownership, and res
 
 ## Shipped user layer
 
-Lemma installs `lemma-ui` beside the main executable. Its statusline and session manager speak the
+Frame installs `frame-ui` beside the main executable. Its statusline and session manager speak the
 public framed protocol; they have no private access to Core. The statusline owns a nonfocusable
 one-row top dock, renders tab labels and native editor state, and implements tab click/drag behavior.
 The session manager opens with `C-b s` or `session.manager` in the command line. The **Session**
@@ -103,11 +103,11 @@ Tab shows an error first, then paused progress, then the first listed Pane's pro
 do not fit, the `…` on each side is followed by the most urgent hidden marker: `x`, then `!`,
 then `%`.
 
-Seen state belongs to each Session for as long as `lemma-ui` runs, so it survives detach and a
+Seen state belongs to each Session for as long as `frame-ui` runs, so it survives detach and a
 reattached statusline marks what happened in between. Signals in Sessions that already existed
-when `lemma-ui` started count as seen when it first lists their Panes. Sessions created later, such
+when `frame-ui` started count as seen when it first lists their Panes. Sessions created later, such
 as background agents started detached, and Panes created later count every signal since their
-creation. Restarting `lemma-ui` resets this baseline. Markers follow their Panes and disappear
+creation. Restarting `frame-ui` resets this baseline. Markers follow their Panes and disappear
 when those Panes close.
 
 ## Managed programs
@@ -115,17 +115,17 @@ when those Panes close.
 Declare a program in `init.lua` using an exact argv array:
 
 ```lua
-local lemma = require("lemma")
-lemma.extension.set("sidebar", { "/absolute/path/to/my-sidebar", "--compact" })
-lemma.extension.set("statusline", false) -- remove the shipped statusline
+local frame = require("frame")
+frame.extension.set("sidebar", { "/absolute/path/to/my-sidebar", "--compact" })
+frame.extension.set("statusline", false) -- remove the shipped statusline
 -- Replace it using the same declaration, or restore the shipped implementation:
-lemma.extension.set("statusline", { lemma.bundled_ui, "status" })
+frame.extension.set("statusline", { frame.bundled_ui, "status" })
 ```
 
 Names are unique, at most 64 bytes; setting an existing name replaces its program. `false` removes
 it. Up to eight programs are admitted, with at most 64 arguments and 4 KiB per argv including
-terminators. `lemma.bundled_ui` is the installed helper's absolute path. Programs receive
-`LEMMA_EXTENSION_ENDPOINT`, inherit the daemon environment, and run in their own process groups.
+terminators. `frame.bundled_ui` is the installed helper's absolute path. Programs receive
+`FRAME_EXTENSION_ENDPOINT`, inherit the daemon environment, and run in their own process groups.
 Standard input/output use `/dev/null`; diagnostics use the daemon's stderr. Configuration is
 published atomically; changes take effect at the next daemon startup.
 
@@ -138,7 +138,7 @@ until it updates or disconnects. Native recovery remains available.
 
 `ui.status_line = false` also removes the named `statusline` program and disables the native editor
 bindings that require a visible prompt. To supply a replacement status UI, keep that setting enabled
-and replace the program with `lemma.extension.set`. The prompt state remains native and observable;
+and replace the program with `frame.extension.set`. The prompt state remains native and observable;
 the extension chooses its representation.
 
 ## Presentation observation
@@ -147,7 +147,7 @@ A scoped subscription can set `presentation = true`. Its initial snapshot and fr
 Events include `presentation`: Session identity/name, current connection (null while detached),
 physical dimensions, ordered tab titles and stable IDs, input mode, native prompt kind/value/cursor/
 feedback, current message, and copy-search/history state. It never includes terminal cells. The
-[embedded schema](../schema/lemma-api-v1.schema.json) defines the fields. The NDJSON observer emits
+[embedded schema](../schema/frame-api-v1.schema.json) defines the fields. The NDJSON observer emits
 `attachment.changed` for presentation changes. Neither form schedules periodic refreshes.
 
 A subscription can also set `signals = true` (Python: `Client(..., signals=True)`) to receive
@@ -165,10 +165,10 @@ native editor's cursor without routing ordinary typing through the extension pro
 ## Authoring extensions
 
 Start with an [argv command](configuration.md#external-command-programs) for a keybound workflow.
-It can call ordinary `lemma` commands or submit a complete Proc; it does not need a Surface or a
+It can call ordinary `frame` commands or submit a complete Proc; it does not need a Surface or a
 framed connection. Keep projects, tasks, and durable state in the program, using returned stable IDs.
 
-For custom UI, the dependency-free [Python client](../extensions/lemma_client.py) provides `Client`,
+For custom UI, the dependency-free [Python client](../extensions/frame_client.py) provides `Client`,
 `command_context()`, ordered `proc()` requests, retained `update()` messages, and blocking `event()`
 observation. The C++ shipped UI uses the separate [native client](../src/extension/client.hpp).
 Neither client executes inside the daemon.
@@ -186,11 +186,11 @@ Reconnection is explicit and creates a new owner; obtain a fresh snapshot and re
 For responsive input while fetching metadata, use a separate catalogue connection, as the shipped
 session manager does.
 
-Installations include the Python client and picker under `share/lemma/extensions`. During local
-development, register an absolute path to your working-tree script and keep `lemma_client.py` next
+Installations include the Python client and picker under `share/frame/extensions`. During local
+development, register an absolute path to your working-tree script and keep `frame_client.py` next
 to it (or on that program's `PYTHONPATH`). Invocation-scoped programs start fresh every time: close,
 edit, and invoke again without changing daemon configuration. Reload changed command declarations
-with [`lemma config reload`](configuration.md#reload). Managed-program declarations currently
+with [`frame config reload`](configuration.md#reload). Managed-program declarations currently
 require a daemon restart; changing them rejects reload rather than partially publishing policy.
 
 ## Navigation picker
@@ -199,22 +199,22 @@ The [Python picker](../extensions/picker.py) is a complete Session/Tab/Pane work
 not a terminal emulator. From the checkout, install it at the path used by this configuration:
 
 ```sh
-mkdir -p "$HOME/.config/lemma"
-cp extensions/picker.py extensions/lemma_client.py "$HOME/.config/lemma/"
+mkdir -p "$HOME/.config/frame"
+cp extensions/picker.py extensions/frame_client.py "$HOME/.config/frame/"
 ```
 
 Add this [configuration](../examples/picker.lua) to `init.lua` (adjust `argv` to use a different
 Python executable or installation path):
 
 ```lua example=../examples/picker.lua
-local lemma = require("lemma")
+local frame = require("frame")
 
-lemma.command.register("nav.pick", {
+frame.command.register("nav.pick", {
   description = "Choose a Session, Tab, or Pane",
   timeout_ms = 120000,
-  argv = { "python3", os.getenv("HOME") .. "/.config/lemma/picker.py" },
+  argv = { "python3", os.getenv("HOME") .. "/.config/frame/picker.py" },
 })
-lemma.keymap.set("prefix", "p", "nav.pick")
+frame.keymap.set("prefix", "p", "nav.pick")
 ```
 
 `C-b p` opens the picker, as does `nav.pick` in the native command line. Up/Down or `k`/`j` select a
@@ -232,7 +232,7 @@ the configured host watchdog, so close the picker when finished.
 
 ## Boundary and trust
 
-The daemon owns mux and terminal state. Extensions own their application state and refer to Lemma
+The daemon owns mux and terminal state. Extensions own their application state and refer to Frame
 objects by stable IDs, never borrowed Core pointers. For example, filtering a picker changes
 extension state and its Surface; selecting or killing a real Session submits a Proc.
 
@@ -253,7 +253,7 @@ V1 negotiates these capabilities:
 | `proc` | Proc submission |
 | `surface` | Surface lifecycle/content and scoped interaction Events |
 
-Surface input goes only to its owner, not to every observer. Lemma retains a native recovery path
+Surface input goes only to its owner, not to every observer. Frame retains a native recovery path
 that extension UI cannot override.
 
 ## Connection and framing
@@ -276,7 +276,7 @@ Every record has a 16-byte network-byte-order header; the initial magic byte sel
 
 Payloads are UTF-8 JSON. Unknown versions, kinds, flags, invalid lengths, zero sequence IDs,
 malformed JSON, duplicate keys, or records using an ungranted capability are rejected.
-`lemma api schema --json` exposes the payload schemas; Welcome supplies negotiated resource limits,
+`frame api schema --json` exposes the payload schemas; Welcome supplies negotiated resource limits,
 including `record_bytes`. Framing and parser limits apply in addition to JSON Schema validity.
 
 The first record is Hello. This [example](../examples/extension-hello.json) binds to an existing
@@ -284,11 +284,11 @@ Session named `example`; send it as a framed Hello, not as a CONTROL JSON line:
 
 ```json example=../examples/extension-hello.json
 {
-  "schema": "lemma.extension/v1",
+  "schema": "frame.extension/v1",
   "name": "project-sidebar",
   "capabilities": ["observe", "proc", "surface"],
   "events": {
-    "schema": "lemma.events/v1",
+    "schema": "frame.events/v1",
     "session": {"name": "example"}
   }
 }
@@ -300,7 +300,7 @@ omit `events`; its Commands use ordinary explicit selectors. Supplying `events.s
 without `observe`, requires a live Session and binds connection
 lifetime to it. This alone does not grant observation.
 
-Lemma replies with one `lemma.extension-welcome/v1` record containing the generation, granted
+Frame replies with one `frame.extension-welcome/v1` record containing the generation, granted
 capabilities, and limits. `attachment` is present only for scoped connections. When `observe` is
 granted, an authoritative `snapshot` follows before incremental Events.
 
@@ -358,7 +358,7 @@ damage generation. It is presentation state, not terminal truth. Use Proc for `s
 `surface.configure`, `surface.focus`, and `surface.close`, because these change authoritative
 Attachment state and can affect Pane geometry.
 
-High-frequency content uses `lemma.surface-update/v1`: optional style-table replacement, row text
+High-frequency content uses `frame.surface-update/v1`: optional style-table replacement, row text
 runs, and cursor state. Each supplied row replaces that row's runs, not the whole Grid. Different
 row patches cannot supersede each other. The complete update is validated before retained state
 changes; rejected updates cannot leave partial content.
@@ -432,7 +432,7 @@ last byte drains, even while unrelated output keeps the queue nonempty.
 
 Surface paste waits for queued Events to drain before producing another chunk. This backpressures
 that attachment's input without spinning or blocking other attachments. If the Event backlog
-prevents paste progress for five seconds, Lemma disconnects its owner and releases the retained
+prevents paste progress for five seconds, Frame disconnects its owner and releases the retained
 input record; a brief reader pause does not exhaust the Event queue.
 
 Global turn budgets charge socket reads/writes, record count, and complete framed bytes before

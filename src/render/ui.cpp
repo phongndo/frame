@@ -1,6 +1,6 @@
 #include "render/ui.hpp"
 
-#include "lemma/geometry.hpp"
+#include "frame/geometry.hpp"
 
 #include <algorithm>
 #include <array>
@@ -13,7 +13,7 @@
 #include <string_view>
 #include <system_error>
 
-namespace lemma::render::ui {
+namespace frame::render::ui {
 namespace {
 
 [[nodiscard]] auto append_bytes(const std::span<std::byte> output, std::size_t& used,
@@ -135,4 +135,4 @@ auto paint_cells(const PaneRectangle rectangle, const std::uint16_t columns,
   return true;
 }
 
-} // namespace lemma::render::ui
+} // namespace frame::render::ui

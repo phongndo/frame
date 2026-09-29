@@ -1,5 +1,5 @@
+#include "frame/terminal/terminal.hpp"
 #include "image/png.hpp"
-#include "lemma/terminal/terminal.hpp"
 
 #include "terminal/terminal_impl.hpp"
 #include <array>
@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <atomic>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace {
 struct Pixels {
   const GhosttyAllocator* allocator;
@@ -179,4 +179,4 @@ auto Terminal::tick_graphics(const std::uint64_t now_ms) noexcept
   }
   return delay;
 }
-} // namespace lemma::vt
+} // namespace frame::vt

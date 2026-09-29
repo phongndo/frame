@@ -8,15 +8,15 @@ import sys
 import unittest
 from pathlib import Path
 
-from tests.support.mux_harness import LemmaServer, wait_until
+from tests.support.mux_harness import FrameServer, wait_until
 
 
 class ConfigurationMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment(
+        self.server = FrameServer.from_environment(
             config_text="""
-local lemma = require("lemma")
-lemma.setup({
+local frame = require("frame")
+frame.setup({
   input = { preset = "none", prefix = false },
   terminal = { scrollback_lines = 1234 },
   ui = { status_line = false },
@@ -27,12 +27,12 @@ lemma.setup({
     },
   },
 })
-lemma.context.set("copy", { label = " COPY ", unbound = "consume" })
-lemma.keymap.set("normal", "M-c", "enter_copy_mode")
-lemma.keymap.set("copy", "x", "copy_leave")
-lemma.keymap.set("normal", "M-s", "split_left_right")
-lemma.keymap.set("normal", "M-f", "enter_copy_search_forward")
-lemma.keymap.del("normal", "C-b")
+frame.context.set("copy", { label = " COPY ", unbound = "consume" })
+frame.keymap.set("normal", "M-c", "enter_copy_mode")
+frame.keymap.set("copy", "x", "copy_leave")
+frame.keymap.set("normal", "M-s", "split_left_right")
+frame.keymap.set("normal", "M-f", "enter_copy_search_forward")
+frame.keymap.del("normal", "C-b")
 """
         )
         self.addCleanup(self.server.close)
@@ -70,7 +70,7 @@ lemma.keymap.del("normal", "C-b")
 class DocumentedConfigurationMuxTest(unittest.TestCase):
     def setUp(self) -> None:
         self.examples = Path(__file__).resolve().parents[2] / "examples"
-        self.server = LemmaServer.from_environment(
+        self.server = FrameServer.from_environment(
             config_text=(self.examples / "configuration.lua").read_text()
             + "\n"
             + (self.examples / "command.lua").read_text()
@@ -116,12 +116,12 @@ class DocumentedConfigurationMuxTest(unittest.TestCase):
 class ConfigurationReloadMuxTest(unittest.TestCase):
     def setUp(self) -> None:
         self.initial = (
-            'local lemma = require("lemma")\n'
-            'lemma.keymap.set("normal", "M-d", "split_left_right")\n'
+            'local frame = require("frame")\n'
+            'frame.keymap.set("normal", "M-d", "split_left_right")\n'
         )
-        self.server = LemmaServer.from_environment(config_text=self.initial)
+        self.server = FrameServer.from_environment(config_text=self.initial)
         self.addCleanup(self.server.close)
-        self.path = Path(self.server.environment["XDG_CONFIG_HOME"]) / "lemma/init.lua"
+        self.path = Path(self.server.environment["XDG_CONFIG_HOME"]) / "frame/init.lua"
         self.session = self.server.create_session("reload", command=("cat",))
         self.client = self.session.require_client()
 
@@ -135,8 +135,8 @@ class ConfigurationReloadMuxTest(unittest.TestCase):
         pane = self.session.pane()
         before = self.session.state()
         self.path.write_text(
-            'local lemma = require("lemma")\n'
-            'lemma.keymap.set("normal", "M-n", "split_left_right")\n'
+            'local frame = require("frame")\n'
+            'frame.keymap.set("normal", "M-n", "split_left_right")\n'
         )
         self.assertTrue(self.reload()["ok"])
         self.assertEqual(self.session.state().panes, before.panes)
@@ -149,7 +149,7 @@ class ConfigurationReloadMuxTest(unittest.TestCase):
     def test_invalid_and_startup_only_changes_leave_old_policy_intact(self) -> None:
         for text, reason in [
             ("error('bad reload')", "invalid_configuration"),
-            ('require("lemma").setup({ui={status_line=false}})', "restart_required"),
+            ('require("frame").setup({ui={status_line=false}})', "restart_required"),
         ]:
             with self.subTest(reason=reason):
                 self.path.write_text(text)
@@ -209,7 +209,7 @@ class ConfigurationReloadMuxTest(unittest.TestCase):
 
     def test_reload_is_native_and_replaces_commands(self) -> None:
         self.path.write_text(
-            'local l=require("lemma")\n'
+            'local l=require("frame")\n'
             'l.command.register("test.new", {description="new", handler=function(ctx) '
             'assert(ctx:proc({commands={{command="tab.rename", session={id=ctx.session}, '
             'tab={id=ctx.tab}, title="RELOADED"}}}).ok) end})\n'
@@ -235,7 +235,7 @@ class ConfigurationReloadMuxTest(unittest.TestCase):
         peer.settimeout(4)
         peer.connect(str(self.server.socket_path))
         peer.sendall(
-            b'{"schema":"lemma.proc/v1","commands":[{"command":"config.reload"}]}\n'
+            b'{"schema":"frame.proc/v1","commands":[{"command":"config.reload"}]}\n'
         )
         wait_until("configuration host started", lambda: marker.exists() or None)
         self.client.send("ALIVE-DURING-RELOAD\r")
@@ -249,15 +249,15 @@ class ConfigurationReloadMuxTest(unittest.TestCase):
         gate = self.server.root / "cancel-gate"
         marker = self.server.root / "cancel-loading"
         self.path.write_text(
-            'local lemma=require("lemma")\n'
-            'lemma.keymap.set("normal", "M-n", "split_left_right")\n'
+            'local frame=require("frame")\n'
+            'frame.keymap.set("normal", "M-n", "split_left_right")\n'
             f'local f=assert(io.open({json.dumps(str(marker))}, "w")); f:close()\n'
             f'while not io.open({json.dumps(str(gate))}, "r") do os.execute("sleep 0.01") end\n'
         )
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
             peer.connect(str(self.server.socket_path))
             peer.sendall(
-                b'{"schema":"lemma.proc/v1","commands":[{"command":"config.reload"}]}\n'
+                b'{"schema":"frame.proc/v1","commands":[{"command":"config.reload"}]}\n'
             )
             wait_until(
                 "cancellable configuration host", lambda: marker.exists() or None
@@ -282,7 +282,7 @@ class ConfigurationReloadMuxTest(unittest.TestCase):
             self.addCleanup(pending.close)
             pending.connect(str(self.server.socket_path))
             request = {
-                "schema": "lemma.proc/v1",
+                "schema": "frame.proc/v1",
                 "commands": [
                     {
                         "command": "pane.wait",
@@ -297,7 +297,7 @@ class ConfigurationReloadMuxTest(unittest.TestCase):
         gate = self.server.root / "queued-cancel-gate"
         marker = self.server.root / "queued-cancel-loading"
         self.path.write_text(
-            'require("lemma").keymap.set("normal", "M-n", "split_left_right")\n'
+            'require("frame").keymap.set("normal", "M-n", "split_left_right")\n'
             'local s=assert(io.open("/proc/self/stat")); local pid=s:read("*n"); s:close()\n'
             f'local f=assert(io.open({json.dumps(str(marker))}, "w")); f:write(pid); f:close()\n'
             f'while not io.open({json.dumps(str(gate))}, "r") do os.execute("sleep 0.01") end\n'
@@ -306,7 +306,7 @@ class ConfigurationReloadMuxTest(unittest.TestCase):
         self.addCleanup(peer.close)
         peer.connect(str(self.server.socket_path))
         peer.sendall(
-            b'{"schema":"lemma.proc/v1","commands":[{"command":"config.reload"}]}\n'
+            b'{"schema":"frame.proc/v1","commands":[{"command":"config.reload"}]}\n'
         )
         wait_until(
             "queued cancellable host",
@@ -360,7 +360,7 @@ class ConfigurationReloadMuxTest(unittest.TestCase):
 
     def test_reload_recovers_a_crashed_command_host(self) -> None:
         self.path.write_text(
-            self.initial + 'require("lemma").command.register("test.crash", '
+            self.initial + 'require("frame").command.register("test.crash", '
             '{description="crash", handler=function() os.exit(0) end})\n'
         )
         self.assertTrue(self.reload()["ok"])

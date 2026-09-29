@@ -214,7 +214,7 @@ def check(root: Path) -> list[str]:
             )
 
     try:
-        schema = read_json(root / "schema/lemma-api-v1.schema.json")
+        schema = read_json(root / "schema/frame-api-v1.schema.json")
         Draft202012Validator.check_schema(schema)
         # An empty registry refuses remote references instead of making network requests.
         validator = Draft202012Validator(schema, registry=Registry())

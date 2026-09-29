@@ -4,7 +4,7 @@
      const GhosttyTerminalProgressReport* report);
  
  /**
-+ * Lemma extension: literal OSC 133 semantic prompt action.
++ * Frame extension: literal OSC 133 semantic prompt action.
 + *
 + * @ingroup terminal
 + */
@@ -29,7 +29,7 @@
 +} GhosttyTerminalSemanticPromptAction;
 +
 +/**
-+ * Lemma extension: one parsed OSC 133 semantic prompt command.
++ * Frame extension: one parsed OSC 133 semantic prompt command.
 + *
 + * This is a sized struct. `has_exit_code` is true only for an end-of-command
 + * action whose first option is a decimal exit status.
@@ -51,7 +51,7 @@
 +} GhosttyTerminalSemanticPrompt;
 +
 +/**
-+ * Lemma extension: callback for OSC 133 semantic prompt commands.
++ * Frame extension: callback for OSC 133 semantic prompt commands.
 + *
 + * Called synchronously after the terminal applies the command to its own
 + * state, including when that application fails. Terminal state changes are
@@ -65,7 +65,7 @@
 +    const GhosttyTerminalSemanticPrompt* prompt);
 +
 +/**
-+ * Lemma extension: install or clear (NULL) the semantic prompt callback.
++ * Frame extension: install or clear (NULL) the semantic prompt callback.
 + * Uses the userdata set via GHOSTTY_TERMINAL_OPT_USERDATA.
 + *
 + * @ingroup terminal
@@ -103,7 +103,7 @@
      progress: i8,
  };
  
-+/// Lemma extension. C: GhosttyTerminalSemanticPromptAction
++/// Frame extension. C: GhosttyTerminalSemanticPromptAction
 +pub const SemanticPromptAction = enum(c_int) {
 +    fresh_line = 0,
 +    new_prompt = 1,
@@ -116,7 +116,7 @@
 +    _,
 +};
 +
-+/// Lemma extension. C: GhosttyTerminalSemanticPrompt
++/// Frame extension. C: GhosttyTerminalSemanticPrompt
 +pub const SemanticPrompt = extern struct {
 +    size: usize,
 +    action: SemanticPromptAction,
@@ -139,7 +139,7 @@
      /// C function pointer type for the progress_report callback.
      pub const ProgressReportFn = *const fn (Terminal, ?*anyopaque, *const ProgressReport) callconv(lib.calling_conv) void;
  
-+    /// Lemma extension: C function pointer type for the semantic_prompt callback.
++    /// Frame extension: C function pointer type for the semantic_prompt callback.
 +    pub const SemanticPromptFn = *const fn (Terminal, ?*anyopaque, *const SemanticPrompt) callconv(lib.calling_conv) void;
 +
      /// C function pointer type for the unknown_sequence callback. The request
@@ -184,7 +184,7 @@
  /// C: GhosttyTerminal
  pub const Terminal = ?*TerminalWrapper;
  
-+/// Lemma extension: install or clear the OSC 133 semantic prompt callback.
++/// Frame extension: install or clear the OSC 133 semantic prompt callback.
 +pub fn set_semantic_prompt_callback(
 +    terminal_: Terminal,
 +    callback: ?Effects.SemanticPromptFn,
@@ -211,7 +211,7 @@
          /// Called when the running program reports progress via OSC 9;4.
          progress_report: ?*const fn (*Handler, osc.Command.ProgressReport) void,
  
-+        /// Lemma extension: called after an OSC 133 semantic prompt command
++        /// Frame extension: called after an OSC 133 semantic prompt command
 +        /// is applied to terminal state, including when application fails.
 +        semantic_prompt: ?*const fn (*Handler, osc.Command.SemanticPrompt) void = null,
 +

@@ -10,7 +10,7 @@
 #include <string>
 #include <string_view>
 
-namespace lemma::api {
+namespace frame::api {
 namespace {
 
 // Assertions establish optional presence before the test examines decoded values.
@@ -22,7 +22,7 @@ TEST(ApiTest, EmbedsParseableVersionedSchema) {
   const auto parsed = parse_json(schema);
   ASSERT_TRUE(parsed.value.has_value()) << parsed.error_offset;
   EXPECT_EQ(json_string(*parsed.value, "$schema"), "https://json-schema.org/draft/2020-12/schema");
-  EXPECT_EQ(json_string(*parsed.value, "$id"), "urn:lemma:schema:api:v1");
+  EXPECT_EQ(json_string(*parsed.value, "$id"), "urn:frame:schema:api:v1");
   const auto* const definitions = json_member(*parsed.value, "$defs");
   ASSERT_NE(definitions, nullptr);
   EXPECT_EQ(json_member(*definitions, "waitResult"), nullptr);
@@ -193,8 +193,8 @@ TEST(ApiTest, DecodesCommandCompletionWait) {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(ApiTest, DecodesSignalObservationForGlobalAndScopedFeeds) {
   for (const std::string_view valid : {
-           R"({"schema":"lemma.events/v1","signals":true})",
-           R"({"schema":"lemma.events/v1","session":{"name":"work"},"signals":true})",
+           R"({"schema":"frame.events/v1","signals":true})",
+           R"({"schema":"frame.events/v1","session":{"name":"work"},"signals":true})",
        }) {
     const auto document = parse_json(valid);
     ASSERT_TRUE(document.value.has_value());
@@ -202,7 +202,7 @@ TEST(ApiTest, DecodesSignalObservationForGlobalAndScopedFeeds) {
     ASSERT_TRUE(decoded.subscription.has_value()) << decoded.error.reason;
     EXPECT_TRUE(decoded.subscription->signals);
   }
-  const auto invalid = parse_json(R"({"schema":"lemma.events/v1","signals":1})");
+  const auto invalid = parse_json(R"({"schema":"frame.events/v1","signals":1})");
   ASSERT_TRUE(invalid.value.has_value());
   const auto rejected = decode_event_subscription(*invalid.value);
   EXPECT_FALSE(rejected.subscription.has_value());
@@ -211,7 +211,7 @@ TEST(ApiTest, DecodesSignalObservationForGlobalAndScopedFeeds) {
 
 TEST(ApiTest, DecodesBoundedMultiPaneObservation) {
   constexpr std::string_view valid = R"({
-    "schema":"lemma.events/v1",
+    "schema":"frame.events/v1",
     "session":{"id":"0:1"},
     "panes":[{"id":"1:1"},{"id":"2:1"}],
     "screen":true
@@ -224,7 +224,7 @@ TEST(ApiTest, DecodesBoundedMultiPaneObservation) {
   EXPECT_EQ(decoded.subscription->panes.at(1).id, PaneId::from_parts(2, 1));
 
   constexpr std::string_view duplicate = R"({
-    "schema":"lemma.events/v1",
+    "schema":"frame.events/v1",
     "session":{"id":"0:1"},
     "panes":[{"id":"1:1"},{"id":"1:1"}],
     "screen":true
@@ -247,7 +247,7 @@ TEST(ApiTest, RejectsAgentInputBatchCapacityOverflow) {
 }
 
 TEST(ApiTest, RejectsObservationPaneCapacityOverflow) {
-  std::string subscription = R"({"schema":"lemma.events/v1","session":{"id":"0:1"},"panes":[)";
+  std::string subscription = R"({"schema":"frame.events/v1","session":{"id":"0:1"},"panes":[)";
   for (std::size_t index = 0; index <= event_panes_max; ++index) {
     if (index > 0) {
       subscription += ',';
@@ -261,7 +261,7 @@ TEST(ApiTest, RejectsObservationPaneCapacityOverflow) {
 }
 
 TEST(ApiTest, RequiresPaneFilterForScreenObservation) {
-  constexpr std::string_view invalid = R"({"schema":"lemma.events/v1","screen":true})";
+  constexpr std::string_view invalid = R"({"schema":"frame.events/v1","screen":true})";
   const auto document = parse_json(invalid);
   ASSERT_TRUE(document.value.has_value());
   const auto rejected = decode_event_subscription(*document.value);
@@ -608,4 +608,4 @@ TEST(ApiTest, RejectsNonIntegerNumbersAndInvalidUnicode) {
 // NOLINTEND(bugprone-unchecked-optional-access)
 
 } // namespace
-} // namespace lemma::api
+} // namespace frame::api

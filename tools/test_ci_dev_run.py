@@ -16,11 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_runner() -> dict[str, Any]:
-    return runpy.run_path(str(ROOT / "scripts" / "dev-run"), run_name="lemma_dev_run")
+    return runpy.run_path(str(ROOT / "scripts" / "dev-run"), run_name="frame_dev_run")
 
 
 class DevelopmentRunnerContractTest(unittest.TestCase):
-    def test_just_and_dev_shell_lemma_delegate_to_the_shared_runner(self) -> None:
+    def test_just_and_dev_shell_frame_delegate_to_the_shared_runner(self) -> None:
         justfile = (ROOT / "justfile").read_text(encoding="utf-8")
         flake = (ROOT / "flake.nix").read_text(encoding="utf-8")
         self.assertIn('exec ./scripts/dev-run "$@"', justfile)
@@ -29,7 +29,7 @@ class DevelopmentRunnerContractTest(unittest.TestCase):
     def test_build_diagnostics_do_not_pollute_application_stdout(self) -> None:
         runner = load_runner()
         run_checked = runner["run_checked"]
-        root = Path("/work/lemma")
+        root = Path("/work/frame")
         environment = {"PATH": "/bin"}
 
         with mock.patch.object(subprocess, "run") as run:
@@ -46,15 +46,15 @@ class DevelopmentRunnerContractTest(unittest.TestCase):
     def test_session_creation_defaults_to_the_invocation_directory(self) -> None:
         runner = load_runner()
         development_arguments = runner["development_arguments"]
-        invocation_directory = Path("/work/lemma")
+        invocation_directory = Path("/work/frame")
 
         self.assertEqual(
             development_arguments([], invocation_directory),
-            ["new", "--cwd", "/work/lemma"],
+            ["new", "--cwd", "/work/frame"],
         )
         self.assertEqual(
             development_arguments(["new", "work"], invocation_directory),
-            ["new", "work", "--cwd", "/work/lemma"],
+            ["new", "work", "--cwd", "/work/frame"],
         )
         self.assertEqual(
             development_arguments(
@@ -64,7 +64,7 @@ class DevelopmentRunnerContractTest(unittest.TestCase):
                 "start",
                 "tests",
                 "--cwd",
-                "/work/lemma",
+                "/work/frame",
                 "--",
                 "just",
                 "test",
@@ -74,7 +74,7 @@ class DevelopmentRunnerContractTest(unittest.TestCase):
     def test_explicit_cwd_and_non_creation_arguments_are_unchanged(self) -> None:
         runner = load_runner()
         development_arguments = runner["development_arguments"]
-        invocation_directory = Path("/work/lemma")
+        invocation_directory = Path("/work/frame")
 
         explicit = ["new", "work", "--cwd", "/tmp"]
         command = ["proc", "session", "start"]
@@ -98,9 +98,9 @@ class DevelopmentRunnerContractTest(unittest.TestCase):
             self.assertNotEqual(
                 runtime_directory(first, 1234), runtime_directory(second, 1234)
             )
-            self.assertIn("lemma-dev-1234-", runtime_directory(first, 1234).name)
+            self.assertIn("frame-dev-1234-", runtime_directory(first, 1234).name)
 
-    def test_cached_configuration_builds_only_the_checkout_lemma_target(self) -> None:
+    def test_cached_configuration_builds_only_the_checkout_frame_target(self) -> None:
         runner = load_runner()
         prepare = runner["prepare"]
         fingerprint_for = runner["configuration_fingerprint"]
@@ -117,18 +117,18 @@ class DevelopmentRunnerContractTest(unittest.TestCase):
             (build / "conan" / "conan_toolchain.cmake").touch()
             (build / "CMakeCache.txt").write_text(
                 "CMAKE_BUILD_TYPE:STRING=Dev\n"
-                "LEMMA_BUILD_TESTS:BOOL=OFF\n"
-                "LEMMA_BUILD_BENCHMARKS:BOOL=OFF\n"
-                "LEMMA_VALIDATE_GHOSTTY_EVERY_BUILD:BOOL=OFF\n"
+                "FRAME_BUILD_TESTS:BOOL=OFF\n"
+                "FRAME_BUILD_BENCHMARKS:BOOL=OFF\n"
+                "FRAME_VALIDATE_GHOSTTY_EVERY_BUILD:BOOL=OFF\n"
                 f"CMAKE_HOME_DIRECTORY:INTERNAL={root.resolve()}\n",
                 encoding="utf-8",
             )
             environment = {"PATH": os.environ.get("PATH", "")}
             fingerprint = fingerprint_for(root, environment)
-            (build / ".lemma-configure-signature").write_text(
+            (build / ".frame-configure-signature").write_text(
                 fingerprint + "\n", encoding="ascii"
             )
-            (build / "lemma").write_bytes(b"current checkout lemma")
+            (build / "frame").write_bytes(b"current checkout frame")
 
             calls: list[list[str]] = []
             prepare.__globals__["runtime_directory"] = lambda _root: runtime
@@ -142,22 +142,22 @@ class DevelopmentRunnerContractTest(unittest.TestCase):
 
             self.assertEqual(
                 calls,
-                [["cmake", "--build", str(build), "--target", "lemma"]],
+                [["cmake", "--build", str(build), "--target", "frame"]],
             )
-            self.assertEqual(binary, root / "build" / "dev" / "lemma")
+            self.assertEqual(binary, root / "build" / "dev" / "frame")
             self.assertEqual(
                 arguments,
                 [
-                    str(root / "build" / "dev" / "lemma"),
+                    str(root / "build" / "dev" / "frame"),
                     "pane",
                     "split",
                     "argument with spaces",
                 ],
             )
             self.assertEqual(
-                execution_environment["LEMMA_DEV_RUNTIME_DIR"], str(runtime)
+                execution_environment["FRAME_DEV_RUNTIME_DIR"], str(runtime)
             )
-            self.assertNotIn("/usr/bin/lemma", arguments)
+            self.assertNotIn("/usr/bin/frame", arguments)
 
     def test_missing_configuration_runs_setup_once_before_incremental_build(
         self,
@@ -185,14 +185,14 @@ class DevelopmentRunnerContractTest(unittest.TestCase):
                     (build / "conan" / "conan_toolchain.cmake").touch()
                     (build / "CMakeCache.txt").write_text(
                         "CMAKE_BUILD_TYPE:STRING=Dev\n"
-                        "LEMMA_BUILD_TESTS:BOOL=OFF\n"
-                        "LEMMA_BUILD_BENCHMARKS:BOOL=OFF\n"
-                        "LEMMA_VALIDATE_GHOSTTY_EVERY_BUILD:BOOL=OFF\n"
+                        "FRAME_BUILD_TESTS:BOOL=OFF\n"
+                        "FRAME_BUILD_BENCHMARKS:BOOL=OFF\n"
+                        "FRAME_VALIDATE_GHOSTTY_EVERY_BUILD:BOOL=OFF\n"
                         f"CMAKE_HOME_DIRECTORY:INTERNAL={root.resolve()}\n",
                         encoding="utf-8",
                     )
                 else:
-                    (build / "lemma").write_bytes(b"configured lemma")
+                    (build / "frame").write_bytes(b"configured frame")
 
             prepare.__globals__["runtime_directory"] = lambda _root: runtime
             prepare.__globals__["run_checked"] = run_checked
@@ -207,7 +207,7 @@ class DevelopmentRunnerContractTest(unittest.TestCase):
             self.assertEqual(len(configure_calls), 1)
             self.assertEqual(len(build_calls), 2)
             self.assertTrue(
-                all(call[-2:] == ["--target", "lemma"] for call in build_calls)
+                all(call[-2:] == ["--target", "frame"] for call in build_calls)
             )
 
     def test_stale_daemon_is_shut_down_before_execution(self) -> None:
@@ -230,7 +230,7 @@ class DevelopmentRunnerContractTest(unittest.TestCase):
                             command = connection.recv(1)
                             if command == b"S":
                                 shutdown_seen.set()
-                                connection.sendall(b"lemma daemon shut down\n")
+                                connection.sendall(b"frame daemon shut down\n")
                                 break
                 finally:
                     listener.close()

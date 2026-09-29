@@ -1,11 +1,11 @@
-#ifndef LEMMA_TESTS_SIM_ENVIRONMENT_HPP
-#define LEMMA_TESTS_SIM_ENVIRONMENT_HPP
+#ifndef FRAME_TESTS_SIM_ENVIRONMENT_HPP
+#define FRAME_TESTS_SIM_ENVIRONMENT_HPP
 
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 
 [[nodiscard]] inline auto environment_u64(const char* const name, std::uint64_t& value) noexcept
     -> bool {
@@ -23,6 +23,6 @@ namespace lemma::test::sim {
   return true;
 }
 
-} // namespace lemma::test::sim
+} // namespace frame::test::sim
 
-#endif // LEMMA_TESTS_SIM_ENVIRONMENT_HPP
+#endif // FRAME_TESTS_SIM_ENVIRONMENT_HPP

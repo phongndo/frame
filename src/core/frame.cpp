@@ -1,6 +1,6 @@
-#include "lemma/lemma.hpp"
+#include "frame/frame.hpp"
 
-#include "lemma/terminal/terminal.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <cstdint>
 #include <span>
@@ -8,7 +8,7 @@
 
 #include <zstd.h>
 
-namespace lemma {
+namespace frame {
 
 [[nodiscard]] auto greeting() noexcept -> std::string_view { return "Hello, world!"; }
 
@@ -18,4 +18,4 @@ namespace lemma {
 
 [[nodiscard]] auto zstd_version() noexcept -> std::string_view { return ZSTD_versionString(); }
 
-} // namespace lemma
+} // namespace frame

@@ -11,8 +11,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from extensions.lemma_client import Client as ExtensionClient
-from tests.support.mux_harness import Client, LemmaServer, Session, wait_until
+from extensions.frame_client import Client as ExtensionClient
+from tests.support.mux_harness import Client, FrameServer, Session, wait_until
 
 # Mirrors OuterResizeSchedule::commit_interval.
 OUTER_RESIZE_COMMIT_INTERVAL = 0.016
@@ -21,7 +21,7 @@ HISTORY_LINES = 3_000
 
 class ResizeMuxTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
 
     def test_in_band_geometry_overrides_stale_proxy_size_without_typing_reports(
@@ -263,8 +263,8 @@ while True:
         # Reflow cost grows with history, so a drag over deep scrollback can queue geometry faster
         # than Panes reflow. A raw client delivers that backlog at once: the daemon must apply only
         # the newest queued size, and the input queued behind it must still observe that size.
-        self.server = LemmaServer.from_environment(
-            config_text='require("lemma").setup({ terminal = { scrollback_lines = %d } })'
+        self.server = FrameServer.from_environment(
+            config_text='require("frame").setup({ terminal = { scrollback_lines = %d } })'
             % HISTORY_LINES
         )
         self.addCleanup(self.server.close)
@@ -485,7 +485,7 @@ class CopyModeReflowMuxTest(unittest.TestCase):
     MOVES = 150
 
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
 
     def start(self, name: str) -> tuple[Session, Client, Path]:

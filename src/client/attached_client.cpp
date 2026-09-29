@@ -32,14 +32,14 @@
 #include <termios.h>
 #include <unistd.h>
 
-namespace lemma::client {
+namespace frame::client {
 namespace {
 
 constexpr auto host_input_flush_delay = std::chrono::milliseconds(50);
 // Recognized OSC records are transport, not ambiguous Escape keys. Partial progress cannot renew
 // this deadline; exhaustion still fails closed instead of reinterpreting clipboard bytes as input.
 constexpr auto host_terminal_reply_timeout = std::chrono::seconds(30);
-// XTWINOPS 22;2 / 23;2 save and restore the user's window title around Lemma's OSC 2 titles.
+// XTWINOPS 22;2 / 23;2 save and restore the user's window title around Frame's OSC 2 titles.
 // Do not request Kitty's "report all keys" flag: several outer terminals accept that flag but
 // omit associated text, which turns ordinary printable input into semantically incomplete events.
 // Disambiguation, event types, alternate keys, and associated text preserve metadata where it is
@@ -54,7 +54,7 @@ constexpr std::string_view outer_terminal_restore =
     "\x1B]8;;\x1B\\\x1B[0m\x1B[?2026l\x1B[r\x1B[?1l\x1B[?9l\x1B[?1000l\x1B[?1002l\x1B[?1003l"
     "\x1B[?1004l\x1B[?1005l\x1B[?1006l\x1B[?1007l\x1B[?1015l\x1B[?1016l"
     "\x1B[?2004l\x1B]112\x1B\\\x1B[0 q\x1B[?25h\x1B[?7h\x1B[<u\x1B[?2048r\x1B[23;2t\x1B[?1049l";
-constexpr std::string_view interruption_diagnostic = "lemma attach interrupted by signal\n";
+constexpr std::string_view interruption_diagnostic = "frame attach interrupted by signal\n";
 constexpr auto signal_cleanup_storage = [] {
   std::array<char, outer_terminal_restore.size() + interruption_diagnostic.size()> payload{};
   std::size_t offset = 0;
@@ -639,7 +639,7 @@ template <typename Header>
 }
 
 void report_disconnect(const protocol::ServerMessage& message) noexcept {
-  static_cast<void>(write_text_interruptibly(STDERR_FILENO, "lemma attach failed: "));
+  static_cast<void>(write_text_interruptibly(STDERR_FILENO, "frame attach failed: "));
   static_cast<void>(write_text_interruptibly(
       STDERR_FILENO,
       message.diagnostic.empty() ? std::string_view{"daemon disconnected"} : message.diagnostic));
@@ -660,7 +660,7 @@ enum class HandshakeResult : std::uint8_t {
   while (true) {
     const auto decoded = decoder.next();
     if (!decoded.has_value()) {
-      static_cast<void>(write_text_interruptibly(STDERR_FILENO, "lemma attach protocol error: "));
+      static_cast<void>(write_text_interruptibly(STDERR_FILENO, "frame attach protocol error: "));
       static_cast<void>(write_text_interruptibly(
           STDERR_FILENO, protocol::decode_error_diagnostic(decoded.error())));
       static_cast<void>(write_text_interruptibly(STDERR_FILENO, "\n"));
@@ -675,7 +675,7 @@ enum class HandshakeResult : std::uint8_t {
       }
       if (message.kind != protocol::ServerMessageKind::hello || message.dimensions != expected) {
         static_cast<void>(write_text_interruptibly(
-            STDERR_FILENO, "lemma attach protocol error: invalid daemon hello\n"));
+            STDERR_FILENO, "frame attach protocol error: invalid daemon hello\n"));
         return HandshakeResult::error;
       }
       decoder.consume();
@@ -714,7 +714,7 @@ public:
     if (!empty()) {
       return;
     }
-    append("lemma attach protocol error: ");
+    append("frame attach protocol error: ");
     append(protocol::decode_error_diagnostic(error));
     append("\n");
   }
@@ -723,7 +723,7 @@ public:
     if (!empty() || message.reason == protocol::DisconnectReason::normal) {
       return;
     }
-    append("lemma attach failed: ");
+    append("frame attach failed: ");
     append(message.diagnostic.empty() ? std::string_view{"daemon disconnected"}
                                       : message.diagnostic);
     append("\n");
@@ -731,7 +731,7 @@ public:
 
   void record_terminal_error() noexcept {
     if (empty()) {
-      append("lemma attach error: outer terminal write failed\n");
+      append("frame attach error: outer terminal write failed\n");
     }
   }
 
@@ -755,7 +755,7 @@ private:
 process_server_messages(protocol::ServerDecoder& decoder, const int terminal_descriptor,
                         diagnostic::LatencyTraceMarkerMatcher& output_trace_matcher,
                         std::uint64_t& pending_trace_correlation,
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
                         const diagnostic::LatencyTraceEventHandle socket_read_event,
 #endif
                         LiveDiagnostic& live_diagnostic) noexcept -> ServerParseResult {
@@ -781,7 +781,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
     }
 
     std::uint64_t trace_correlation = 0;
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
     trace_correlation =
         output_trace_matcher.observe_expected_visible(message.ansi, pending_trace_correlation);
     if (trace_correlation != 0) {
@@ -817,7 +817,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
                                   LiveDiagnostic& live_diagnostic) noexcept -> ServerParseResult {
   const auto buffered = process_server_messages(decoder, terminal_descriptor, output_trace_matcher,
                                                 pending_trace_correlation,
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
                                                 {},
 #endif
                                                 live_diagnostic);
@@ -842,7 +842,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
     return ServerParseResult::peer_closed;
   }
   const auto size = static_cast<std::size_t>(received);
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
   // The read timestamp is reserved before decoding can reveal the exact marker token. The decoder
   // may later correlate this one append-only event; unrelated reads remain explicitly uncorrelated.
   const auto socket_read_event = diagnostic::record_client_socket_read_latency_trace(
@@ -855,7 +855,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
   }
   return process_server_messages(decoder, terminal_descriptor, output_trace_matcher,
                                  pending_trace_correlation,
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
                                  socket_read_event,
 #endif
                                  live_diagnostic);
@@ -876,7 +876,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
   termination_render_closed = 0;
   if (::isatty(STDIN_FILENO) == 0 || ::isatty(STDOUT_FILENO) == 0) {
     static_cast<void>(
-        write_text_interruptibly(STDERR_FILENO, "lemma attach requires a terminal\n"));
+        write_text_interruptibly(STDERR_FILENO, "frame attach requires a terminal\n"));
     return 1;
   }
 
@@ -891,12 +891,12 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
         std::make_unique_for_overwrite<std::byte[]>(host_input_output_bytes_max);
   } catch (const std::bad_alloc&) {
     static_cast<void>(
-        write_text_interruptibly(STDERR_FILENO, "lemma attach input allocation failed\n"));
+        write_text_interruptibly(STDERR_FILENO, "frame attach input allocation failed\n"));
     return 1;
   }
   if (!decoder.prepare().has_value() || !host_input_parser.prepare().has_value()) {
     static_cast<void>(
-        write_text_interruptibly(STDERR_FILENO, "lemma attach decoder allocation failed\n"));
+        write_text_interruptibly(STDERR_FILENO, "frame attach decoder allocation failed\n"));
     return 1;
   }
   const auto classified_input =
@@ -904,7 +904,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
   int connection = daemon::open_server_connection(endpoint);
   if (connection < 0) {
     static_cast<void>(
-        write_text_interruptibly(STDERR_FILENO, "no lemma daemon; run `lemma` first\n"));
+        write_text_interruptibly(STDERR_FILENO, "no frame daemon; run `frame` first\n"));
     return 1;
   }
   SignalWakeup termination_wakeup(SignalWakeupRole::termination);
@@ -965,7 +965,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
     }
 
     std::array<std::byte, protocol::input_bytes_max> input{};
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
     diagnostic::LatencyTraceMarkerMatcher input_trace_matcher;
 #endif
     diagnostic::LatencyTraceMarkerMatcher output_trace_matcher;
@@ -1103,7 +1103,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
       host_theme_update_pending = false;
       if (host_theme_parser.overflowed()) {
         static_cast<void>(write_text_interruptibly(
-            STDERR_FILENO, "lemma attach host-theme query exceeded retained input capacity\n"));
+            STDERR_FILENO, "frame attach host-theme query exceeded retained input capacity\n"));
         return false;
       }
       const auto theme = host_theme_parser.theme();
@@ -1122,7 +1122,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
       }
       const auto buffered = process_server_messages(decoder, outer_terminal.render_descriptor(),
                                                     output_trace_matcher, pending_trace_correlation,
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
                                                     {},
 #endif
                                                     live_diagnostic);
@@ -1241,7 +1241,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
         }
         const auto input_size = static_cast<std::size_t>(bytes_read);
         std::uint64_t trace_correlation = 0;
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
         trace_correlation = input_trace_matcher.observe(std::span(input).first(input_size));
         if (trace_correlation != 0) {
           pending_trace_correlation = trace_correlation;
@@ -1299,7 +1299,7 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
   }
   if (!clean_detach && !typed_disconnect && !protocol_failure) {
     static_cast<void>(
-        write_text_interruptibly(STDERR_FILENO, "lemma session ended or connection was lost\n"));
+        write_text_interruptibly(STDERR_FILENO, "frame session ended or connection was lost\n"));
   }
   return clean_detach ? 0 : 1;
 }
@@ -1312,4 +1312,4 @@ process_server_messages(protocol::ServerDecoder& decoder, const int terminal_des
                                                               : 1;
 }
 
-} // namespace lemma::client
+} // namespace frame::client

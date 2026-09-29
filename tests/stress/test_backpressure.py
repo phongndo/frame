@@ -5,12 +5,12 @@ import select
 import time
 import unittest
 
-from tests.support.mux_harness import LemmaServer
+from tests.support.mux_harness import FrameServer
 
 
 class BackpressureRecoveryTest(unittest.TestCase):
     def test_exact_two_mib_payload_recovers_after_outer_input_stalls(self) -> None:
-        server = LemmaServer.from_environment()
+        server = FrameServer.from_environment()
         self.addCleanup(server.close)
         gate = server.root / "release-blocked-pty"
         size = 2 * 1024 * 1024
@@ -20,7 +20,7 @@ class BackpressureRecoveryTest(unittest.TestCase):
             hold=True,
         )
         client = session.require_client()
-        client.expect_output("__LEMMA_PTY_READY__")
+        client.expect_output("__FRAME_PTY_READY__")
 
         payload = b"x" * size
         offset = 0
@@ -53,5 +53,5 @@ class BackpressureRecoveryTest(unittest.TestCase):
             digest ^= byte
             digest = (digest * 1_099_511_628_211) & ((1 << 64) - 1)
         client.expect_output(
-            f"__LEMMA_PTY_DONE__ bytes={size} digest={digest:x}", timeout=15.0
+            f"__FRAME_PTY_DONE__ bytes={size} digest={digest:x}", timeout=15.0
         )

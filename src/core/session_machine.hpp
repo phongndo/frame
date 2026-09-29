@@ -1,12 +1,12 @@
-#ifndef LEMMA_CORE_SESSION_MACHINE_HPP
-#define LEMMA_CORE_SESSION_MACHINE_HPP
+#ifndef FRAME_CORE_SESSION_MACHINE_HPP
+#define FRAME_CORE_SESSION_MACHINE_HPP
 
 #include "core/float_layer.hpp"
 #include "core/layout.hpp"
 #include "core/session.hpp"
-#include "lemma/command.hpp"
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
+#include "frame/command.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,7 +14,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::core {
+namespace frame::core {
 
 enum class RuntimeEffectStatus : std::uint8_t {
   applied,
@@ -212,6 +212,6 @@ private:
   SessionMachineOptions options_;
 };
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_SESSION_MACHINE_HPP
+#endif // FRAME_CORE_SESSION_MACHINE_HPP

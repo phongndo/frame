@@ -9,7 +9,7 @@
     },
     {
       "file": "patches/async-clipboard.patch",
-      "sha256": "aa397baa8979b3daf8138e4ee4105bb5bffe86295522be49249e5737bf3017cc"
+      "sha256": "eb58ee3c8221290b64e17262fc0127433cdb53ffa78a647e9cf09f78e969202d"
     },
     {
       "file": "patches/kitty-render.patch",
@@ -17,7 +17,7 @@
     },
     {
       "file": "patches/semantic-prompt.patch",
-      "sha256": "c06e49fb25e20b744f547791507d89cf38d953ba0f2836f9640a2c268edc5a66"
+      "sha256": "2cb580f2b533bcbd468fb562f444cebd1491595da8a28bd1c17e128ca0710db7"
     }
   ],
   "zig_version": "0.16.0",

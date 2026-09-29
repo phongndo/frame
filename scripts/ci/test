@@ -10,7 +10,7 @@ readonly profile="$1"
 # CMake registers this unlabeled sentinel when a discovered GTest binary has not been built. The
 # platform lane intentionally does not build extended binaries, so exclude only their sentinels;
 # a missing fast-suite binary must still fail loudly.
-readonly unbuilt_extended_tests='^lemma_(terminal_resource|core_sim|protocol_sim|terminal_sim)_tests_NOT_BUILT$'
+readonly unbuilt_extended_tests='^frame_(terminal_resource|core_sim|protocol_sim|terminal_sim)_tests_NOT_BUILT$'
 
 # Cheap native tests run in parallel. Real process tests intentionally run one at a time:
 # each creates PTYs, sockets, and subprocesses, and host contention can obscure the contract.

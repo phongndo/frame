@@ -7,7 +7,7 @@
 #include <iterator>
 #include <span>
 
-namespace lemma::diagnostic {
+namespace frame::diagnostic {
 namespace {
 
 [[nodiscard]] auto marker_token(const std::span<const std::byte> marker) noexcept -> std::uint64_t {
@@ -102,9 +102,9 @@ void LatencyTraceMarkerMatcher::reset() noexcept {
   return matcher.observe(bytes);
 }
 
-} // namespace lemma::diagnostic
+} // namespace frame::diagnostic
 
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
 
 #include <cerrno>
 #include <cstdio>
@@ -118,7 +118,7 @@ void LatencyTraceMarkerMatcher::reset() noexcept {
 #include <sys/stat.h>
 #include <unistd.h>
 
-namespace lemma::diagnostic {
+namespace frame::diagnostic {
 namespace {
 
 constexpr std::uint64_t trace_magic = 0x3145'4341'5254'4D4CULL;
@@ -187,7 +187,7 @@ public:
       return;
     }
     initialized_ = true;
-    const char* const directory = std::getenv("LEMMA_LATENCY_TRACE");
+    const char* const directory = std::getenv("FRAME_LATENCY_TRACE");
     if (directory == nullptr || *directory != '/') {
       return;
     }
@@ -362,14 +362,14 @@ correlate_client_socket_read_latency_trace(const LatencyTraceEventHandle event,
   return trace_state().correlate(event.sequence_, correlation);
 }
 
-} // namespace lemma::diagnostic
+} // namespace frame::diagnostic
 
 #else
 
-namespace lemma::diagnostic::detail {
+namespace frame::diagnostic::detail {
 
 void latency_trace_disabled_translation_unit() noexcept {}
 
-} // namespace lemma::diagnostic::detail
+} // namespace frame::diagnostic::detail
 
-#endif // LEMMA_ENABLE_LATENCY_TRACE
+#endif // FRAME_ENABLE_LATENCY_TRACE

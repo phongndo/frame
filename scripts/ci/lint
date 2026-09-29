@@ -2,10 +2,10 @@
 set -euo pipefail
 
 scripts/ci/configure debug \
-  -DLEMMA_BUILD_TESTS=ON \
-  -DLEMMA_BUILD_BENCHMARKS=ON
+  -DFRAME_BUILD_TESTS=ON \
+  -DFRAME_BUILD_BENCHMARKS=ON
 # Prepare generated includes without building the application.
-cmake --build --preset debug --target lemma_analysis_inputs
+cmake --build --preset debug --target frame_analysis_inputs
 
 # The default config omits the expensive Static Analyzer from interactive and pre-push linting.
 # Keep it merge-blocking here, where this lane runs independently from developer feedback.

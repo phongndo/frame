@@ -1,5 +1,5 @@
-#ifndef LEMMA_TESTS_SIM_TERMINAL_TRACE_HPP
-#define LEMMA_TESTS_SIM_TERMINAL_TRACE_HPP
+#ifndef FRAME_TESTS_SIM_TERMINAL_TRACE_HPP
+#define FRAME_TESTS_SIM_TERMINAL_TRACE_HPP
 
 #include <array>
 #include <cstddef>
@@ -9,7 +9,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 
 inline constexpr std::size_t terminal_trace_operations_max = 16'384;
 
@@ -100,8 +100,8 @@ public:
   }
 
   void write(std::ostream& stream) const {
-    stream << "replay: LEMMA_SIM_SEED=0x" << std::hex << seed_ << std::dec
-           << " LEMMA_SIM_OPERATIONS=" << requested_operations_ << " ./test sim\n"
+    stream << "replay: FRAME_SIM_SEED=0x" << std::hex << seed_ << std::dec
+           << " FRAME_SIM_OPERATIONS=" << requested_operations_ << " ./test sim\n"
            << "seed=0x" << std::hex << seed_ << std::dec << " operations=" << requested_operations_
            << '\n';
     for (std::size_t index = 0; index < size_; ++index) {
@@ -121,6 +121,6 @@ inline auto operator<<(std::ostream& stream, const TerminalTrace& trace) -> std:
   return stream;
 }
 
-} // namespace lemma::test::sim
+} // namespace frame::test::sim
 
-#endif // LEMMA_TESTS_SIM_TERMINAL_TRACE_HPP
+#endif // FRAME_TESTS_SIM_TERMINAL_TRACE_HPP

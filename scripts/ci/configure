@@ -40,14 +40,14 @@ conan install . \
   --build=missing
 
 cmake_ghostty_args=()
-if [[ -n "${LEMMA_GHOSTTY_SOURCE_DIR:-}" ]]; then
+if [[ -n "${FRAME_GHOSTTY_SOURCE_DIR:-}" ]]; then
   cmake_ghostty_args+=(
-    "-DLEMMA_GHOSTTY_SOURCE_DIR=${LEMMA_GHOSTTY_SOURCE_DIR}"
-    "-DLEMMA_GHOSTTY_NIX_SOURCE_REV=${LEMMA_GHOSTTY_NIX_SOURCE_REV:-}"
+    "-DFRAME_GHOSTTY_SOURCE_DIR=${FRAME_GHOSTTY_SOURCE_DIR}"
+    "-DFRAME_GHOSTTY_NIX_SOURCE_REV=${FRAME_GHOSTTY_NIX_SOURCE_REV:-}"
   )
 fi
-if [[ -n "${LEMMA_GHOSTTY_ZIG_SYSTEM_DIR:-}" ]]; then
-  cmake_ghostty_args+=("-DLEMMA_GHOSTTY_ZIG_SYSTEM_DIR=${LEMMA_GHOSTTY_ZIG_SYSTEM_DIR}")
+if [[ -n "${FRAME_GHOSTTY_ZIG_SYSTEM_DIR:-}" ]]; then
+  cmake_ghostty_args+=("-DFRAME_GHOSTTY_ZIG_SYSTEM_DIR=${FRAME_GHOSTTY_ZIG_SYSTEM_DIR}")
 fi
 
 cmake --preset "${profile}" \

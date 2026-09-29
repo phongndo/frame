@@ -12,17 +12,17 @@ from typing import Any
 
 from tests.support.mux_harness import (
     ALT_SCREEN,
-    LEMMA_OUTER_TERMINAL_RESTORE,
-    LemmaServer,
+    FRAME_OUTER_TERMINAL_RESTORE,
+    FrameServer,
 )
 from tests.support.pty_process import PtyProcess
 
 
 class ProductionCliTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = LemmaServer.from_environment()
+        self.server = FrameServer.from_environment()
         self.addCleanup(self.server.close)
-        self.executable = Path(os.environ["LEMMA_TEST_EXECUTABLE"]).resolve()
+        self.executable = Path(os.environ["FRAME_TEST_EXECUTABLE"]).resolve()
         self.assertTrue(self.executable.is_file(), self.executable)
         # Route the real main() to this test's owned daemon, never the user's runtime.
         build_id = "0" * 64
@@ -30,8 +30,8 @@ class ProductionCliTest(unittest.TestCase):
         marker.write_text(build_id)
         marker.chmod(0o600)
         self.environment = self.server.environment | {
-            "LEMMA_DEV_RUNTIME_DIR": str(self.server.root),
-            "LEMMA_DEV_BUILD_ID": build_id,
+            "FRAME_DEV_RUNTIME_DIR": str(self.server.root),
+            "FRAME_DEV_BUILD_ID": build_id,
         }
 
     def command(
@@ -60,11 +60,11 @@ class ProductionCliTest(unittest.TestCase):
 
     def result(self, *arguments: str) -> dict[str, Any]:
         document = json.loads(self.ok(*arguments))
-        self.assertEqual(document["schema"], "lemma.proc-result/v1")
+        self.assertEqual(document["schema"], "frame.proc-result/v1")
         self.assertTrue(document["ok"], document)
         self.assertEqual(len(document["results"]), 1, document)
         result = document["results"][0]["result"]
-        self.assertEqual(result["schema"], "lemma.command-result/v1")
+        self.assertEqual(result["schema"], "frame.command-result/v1")
         self.assertIn(result["status"], ("applied", "no_effect"))
         return result
 
@@ -77,14 +77,14 @@ class ProductionCliTest(unittest.TestCase):
         started = self.start(
             "terminfo",
             'printf "TERM=%s\\n" "$TERM"; '
-            'test -r "$TERMINFO/l/lemma" || test -r "$TERMINFO/6c/lemma"; '
+            'test -r "$TERMINFO/f/frame" || test -r "$TERMINFO/66/frame"; '
             'infocmp -x "$TERM"; printf "COLORS="; tput colors',
         )
         target = ("--session", "terminfo", "--pane", started["pane"])
         self.ok("wait", *target, "--exit-code", "0", "--timeout", "2s")
         captured = self.ok("capture", *target, "--source", "recent", "--lines", "250")
-        self.assertIn("TERM=lemma", captured)
-        self.assertIn("Lemma terminal multiplexer", captured)
+        self.assertIn("TERM=frame", captured)
+        self.assertIn("Frame terminal multiplexer", captured)
         self.assertIn("COLORS=256", captured)
         for capability in ("Ss=", "Se=", "Cs=", "Cr="):
             self.assertIn(capability, captured)
@@ -132,7 +132,7 @@ class ProductionCliTest(unittest.TestCase):
         self.assertEqual(root, self.ok("help"))
         offline = self.server.root / "offline"
         offline.mkdir()
-        environment = self.environment | {"LEMMA_DEV_RUNTIME_DIR": str(offline)}
+        environment = self.environment | {"FRAME_DEV_RUNTIME_DIR": str(offline)}
         names = [
             "new",
             "start",
@@ -185,7 +185,7 @@ class ProductionCliTest(unittest.TestCase):
                 result = self.command(*arguments)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertEqual(result.stdout, "")
-                self.assertIn("invalid lemma", result.stderr)
+                self.assertIn("invalid frame", result.stderr)
 
     def test_basic_session_lifecycle_and_resource_aliases(self) -> None:
         self.start("anchor")
@@ -199,7 +199,7 @@ class ProductionCliTest(unittest.TestCase):
             self.assertEqual(len(lines), 2)
             self.assertEqual(
                 {line.split('":', 1)[0] for line in lines},
-                {'lemma session "anchor', 'lemma session "lifecycle'},
+                {'frame session "anchor', 'frame session "lifecycle'},
             )
         before = self.result("session", "inspect", "lifecycle")
         self.assertEqual(
@@ -347,9 +347,9 @@ class ProductionCliTest(unittest.TestCase):
         for pane in (started["pane"], right["pane"]):
             self.ok("wait", "--session", session, "--pane", pane, "--timeout", "2s")
         environment = self.environment | {
-            "LEMMA_SESSION_ID": session,
-            "LEMMA_TAB_ID": started["tab"],
-            "LEMMA_PANE_ID": started["pane"],
+            "FRAME_SESSION_ID": session,
+            "FRAME_TAB_ID": started["tab"],
+            "FRAME_PANE_ID": started["pane"],
         }
         for arguments, expected in (
             (("capture",), "LEFT"),
@@ -471,7 +471,7 @@ class ProductionCliTest(unittest.TestCase):
         self.assertIn("revision_mismatch", conflict.stderr)
         offline = self.server.root / "offline"
         offline.mkdir()
-        environment = self.environment | {"LEMMA_DEV_RUNTIME_DIR": str(offline)}
+        environment = self.environment | {"FRAME_DEV_RUNTIME_DIR": str(offline)}
         for flags in ((), ("--json",)):
             result = self.command("capture", *target, *flags, environment=environment)
             self.assertEqual(result.returncode, 1)
@@ -503,7 +503,7 @@ class ProductionCliTest(unittest.TestCase):
             self.assertEqual(
                 [entry["result"]["status"] for entry in results], ["applied"] * 4
             )
-            self.assertIn("hello from Lemma", results[2]["result"]["capture"]["text"])
+            self.assertIn("hello from Frame", results[2]["result"]["capture"]["text"])
         invalid = self.command("proc", "--stdin", input="not JSON")
         self.assertEqual(invalid.returncode, 2)
         self.assertEqual(json.loads(invalid.stdout)["error"]["reason"], "invalid_json")
@@ -537,7 +537,7 @@ class ProductionCliTest(unittest.TestCase):
 
     def test_config_schema_skill_version_and_noninteractive_launch_guards(self) -> None:
         self.assertEqual(self.ok("version"), self.ok("--version"))
-        self.assertTrue(self.ok("skill").startswith("---\nname: lemma\n"))
+        self.assertTrue(self.ok("skill").startswith("---\nname: frame\n"))
         self.assertEqual(
             json.loads(self.ok("api", "schema", "--json"))["$schema"],
             "https://json-schema.org/draft/2020-12/schema",
@@ -568,7 +568,7 @@ class ProductionCliTest(unittest.TestCase):
             process = PtyProcess(
                 [str(self.executable), *arguments],
                 self.environment,
-                terminal_restore_sequence=LEMMA_OUTER_TERMINAL_RESTORE,
+                terminal_restore_sequence=FRAME_OUTER_TERMINAL_RESTORE,
             )
             self.addCleanup(process.close)
             process.read_until(ALT_SCREEN, 3.0, preserve_suffix=True)
@@ -585,7 +585,7 @@ class ProductionCliTest(unittest.TestCase):
             attached = PtyProcess(
                 [str(self.executable), "attach", created[0]],
                 self.environment,
-                terminal_restore_sequence=LEMMA_OUTER_TERMINAL_RESTORE,
+                terminal_restore_sequence=FRAME_OUTER_TERMINAL_RESTORE,
             )
             self.addCleanup(attached.close)
             attached.read_until(ALT_SCREEN, 3.0, preserve_suffix=True)

@@ -1,4 +1,4 @@
-lemma-mux-trace-v1
+frame-mux-trace-v1
 # corpus-kind: characterization
 # description: cross-runtime lifecycle, identity, geometry, and stale-target convergence
 # source-trace: curated from the deterministic mux operation grammar for real-daemon replay

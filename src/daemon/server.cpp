@@ -7,7 +7,7 @@
 #include "core/engine.hpp"
 #include "extension/lua_host.hpp"
 #include "extension/services.hpp"
-#include "lemma/id.hpp"
+#include "frame/id.hpp"
 #include "platform/io.hpp"
 #include "platform/pty.hpp"
 #include "protocol/attachment.hpp"
@@ -43,7 +43,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-namespace lemma::daemon {
+namespace frame::daemon {
 namespace {
 
 constexpr auto response_ready = protocol::wire_byte(protocol::ControlResponse::ready);
@@ -323,7 +323,7 @@ constexpr std::size_t development_build_id_bytes = 64;
 }
 
 [[nodiscard]] auto development_build_id() noexcept -> std::optional<std::string_view> {
-  const char* const value = std::getenv("LEMMA_DEV_BUILD_ID");
+  const char* const value = std::getenv("FRAME_DEV_BUILD_ID");
   if (value == nullptr) {
     return std::nullopt;
   }
@@ -369,7 +369,7 @@ constexpr std::size_t development_build_id_bytes = 64;
 }
 
 [[nodiscard]] auto development_build_matches(const std::string& path) noexcept -> bool {
-  const char* const configured = std::getenv("LEMMA_DEV_BUILD_ID");
+  const char* const configured = std::getenv("FRAME_DEV_BUILD_ID");
   if (configured == nullptr) {
     return true;
   }
@@ -456,7 +456,7 @@ constexpr std::size_t development_build_id_bytes = 64;
 [[nodiscard]] auto publish_development_build_id(const std::string& path,
                                                 std::array<char, 256>& marker_path) noexcept
     -> bool {
-  const char* const configured = std::getenv("LEMMA_DEV_BUILD_ID");
+  const char* const configured = std::getenv("FRAME_DEV_BUILD_ID");
   if (configured == nullptr) {
     return true;
   }
@@ -548,7 +548,7 @@ void release_owned_endpoint(void* const context) noexcept {
   static_cast<void>(::signal(SIGPIPE, SIG_IGN));
   auto configured_runtime = extension::load_configuration();
   if (configured_runtime.status == extension::ConfigurationStatus::invalid) {
-    static_cast<void>(write_text(STDERR_FILENO, "lemma configuration rejected"));
+    static_cast<void>(write_text(STDERR_FILENO, "frame configuration rejected"));
     if (!configured_runtime.path.empty()) {
       static_cast<void>(write_text(STDERR_FILENO, ": "));
       static_cast<void>(write_text(STDERR_FILENO, configured_runtime.path));
@@ -743,7 +743,7 @@ struct DevelopmentServerProbe final {
 }
 
 [[nodiscard]] auto stop_stale_development_server(const std::string& path) noexcept -> bool {
-  const char* const configured = std::getenv("LEMMA_DEV_BUILD_ID");
+  const char* const configured = std::getenv("FRAME_DEV_BUILD_ID");
   if (configured == nullptr || !valid_development_build_id(configured)) {
     return configured == nullptr;
   }
@@ -862,14 +862,14 @@ struct CapturedLaunchContext final {
 
   const auto environment_size = platform::capture_process_environment(context.environment);
   if (!environment_size.has_value()) {
-    static_cast<void>(write_text(STDERR_FILENO, "launch environment exceeds lemma limits\n"));
+    static_cast<void>(write_text(STDERR_FILENO, "launch environment exceeds frame limits\n"));
     return false;
   }
   context.environment_size = *environment_size;
 
   const auto command_size = encode_launch_command(options.command, context.command);
   if (!command_size.has_value()) {
-    static_cast<void>(write_text(STDERR_FILENO, "launch command exceeds lemma limits\n"));
+    static_cast<void>(write_text(STDERR_FILENO, "launch command exceeds frame limits\n"));
     return false;
   }
   context.command_size = *command_size;
@@ -934,8 +934,8 @@ struct CapturedLaunchContext final {
   if (result.status != OperationStatus::applied) {
     if (report_missing) {
       static_cast<void>(write_text(STDERR_FILENO, result.status == OperationStatus::missing
-                                                      ? "no lemma session\n"
-                                                      : "no lemma daemon\n"));
+                                                      ? "no frame session\n"
+                                                      : "no frame daemon\n"));
     }
     return 1;
   }
@@ -947,13 +947,13 @@ struct CapturedLaunchContext final {
     return 0;
   }
   if (status == OperationStatus::missing) {
-    static_cast<void>(write_text(STDERR_FILENO, "no matching lemma session or tab\n"));
+    static_cast<void>(write_text(STDERR_FILENO, "no matching frame session or tab\n"));
   } else if (status == OperationStatus::conflict) {
-    static_cast<void>(write_text(STDERR_FILENO, "lemma session name already exists\n"));
+    static_cast<void>(write_text(STDERR_FILENO, "frame session name already exists\n"));
   } else if (status == OperationStatus::capacity) {
-    static_cast<void>(write_text(STDERR_FILENO, "lemma identity capacity reached\n"));
+    static_cast<void>(write_text(STDERR_FILENO, "frame identity capacity reached\n"));
   } else {
-    static_cast<void>(write_text(STDERR_FILENO, "failed to rename lemma session or tab\n"));
+    static_cast<void>(write_text(STDERR_FILENO, "failed to rename frame session or tab\n"));
   }
   return 1;
 }
@@ -961,13 +961,13 @@ struct CapturedLaunchContext final {
 [[nodiscard]] auto run_shutdown_command(const RuntimeEndpoint& endpoint) -> int {
   int connection = open_connection(std::string(endpoint.socket_path()));
   if (connection < 0) {
-    static_cast<void>(write_text(STDERR_FILENO, "no lemma daemon\n"));
+    static_cast<void>(write_text(STDERR_FILENO, "no frame daemon\n"));
     return 1;
   }
   const std::array command{protocol::wire_byte(protocol::ControlCommand::shutdown)};
   if (!send_all(connection, command)) {
     close_descriptor(connection);
-    static_cast<void>(write_text(STDERR_FILENO, "failed to shut down lemma daemon\n"));
+    static_cast<void>(write_text(STDERR_FILENO, "failed to shut down frame daemon\n"));
     return 1;
   }
 
@@ -980,8 +980,8 @@ struct CapturedLaunchContext final {
     return write_all(STDOUT_FILENO, expected) ? 0 : 1;
   }
   static_cast<void>(write_text(STDERR_FILENO, response.front() == response_capacity
-                                                  ? "lemma daemon connection capacity reached\n"
-                                                  : "failed to shut down lemma daemon\n"));
+                                                  ? "frame daemon connection capacity reached\n"
+                                                  : "failed to shut down frame daemon\n"));
   return 1;
 }
 
@@ -1047,7 +1047,7 @@ template <typename Id>
     return std::nullopt;
   }
   try {
-    std::string request = R"({"schema":"lemma.events/v1")";
+    std::string request = R"({"schema":"frame.events/v1")";
     if (session_id.has_value()) {
       request += R"(,"session":{"id":")";
       request += std::to_string(session_id->slot());
@@ -1095,7 +1095,7 @@ template <typename Id>
     return std::nullopt;
   }
   try {
-    std::string request = R"({"schema":"lemma.events/v1")";
+    std::string request = R"({"schema":"frame.events/v1")";
     if (session_id.has_value()) {
       request += R"(,"session":{"id":")" + std::to_string(session_id->slot()) + ":" +
                  std::to_string(session_id->generation()) + "\"}";
@@ -1242,7 +1242,7 @@ invoke_public_command(const RuntimeEndpoint& endpoint, const std::string_view co
                       const std::chrono::milliseconds response_timeout = std::chrono::seconds(10))
     -> std::optional<api::JsonValue> {
   try {
-    std::string request = R"({"schema":"lemma.proc/v1","commands":[)";
+    std::string request = R"({"schema":"frame.proc/v1","commands":[)";
     request += command;
     request += "]}";
     auto proc_result = invoke_public_request(endpoint, std::move(request), response_timeout);
@@ -1416,10 +1416,10 @@ template <typename Id>
 }
 
 [[nodiscard]] auto default_runtime_endpoint() -> RuntimeEndpoint {
-  const char* const development_runtime = std::getenv("LEMMA_DEV_RUNTIME_DIR");
+  const char* const development_runtime = std::getenv("FRAME_DEV_RUNTIME_DIR");
   if (development_runtime != nullptr) {
     const std::string_view directory(development_runtime);
-    const char* const configured_build = std::getenv("LEMMA_DEV_BUILD_ID");
+    const char* const configured_build = std::getenv("FRAME_DEV_BUILD_ID");
     if (directory.empty() || directory.front() != '/' || directory.contains('\0') ||
         configured_build == nullptr || !valid_development_build_id(configured_build)) {
       std::abort();
@@ -1431,7 +1431,7 @@ template <typename Id>
     return std::move(*endpoint);
   }
 
-  auto endpoint = RuntimeEndpoint::create("/tmp/lemma-" + std::to_string(::getuid()) + ".sock");
+  auto endpoint = RuntimeEndpoint::create("/tmp/frame-" + std::to_string(::getuid()) + ".sock");
   // The fixed production path is absolute and well below sockaddr_un::sun_path on supported hosts.
   if (!endpoint.has_value()) {
     std::abort();
@@ -1486,7 +1486,7 @@ namespace {
   }
   const auto policy = proc_request_policy(*parsed.value);
   if (policy.starts_session && !ensure_server(std::string(endpoint.socket_path()))) {
-    static_cast<void>(write_text(STDERR_FILENO, "failed to start lemma daemon\n"));
+    static_cast<void>(write_text(STDERR_FILENO, "failed to start frame daemon\n"));
     return proc_error("unavailable", 1);
   }
   auto result = invoke_public_request(endpoint, std::move(compact), policy.response_timeout);
@@ -1543,7 +1543,7 @@ auto create_detailed(const RuntimeEndpoint& endpoint, const std::optional<std::s
   }
   const std::string path(endpoint.socket_path());
   if (!ensure_server(path)) {
-    static_cast<void>(write_text(STDERR_FILENO, "failed to start lemma daemon\n"));
+    static_cast<void>(write_text(STDERR_FILENO, "failed to start frame daemon\n"));
     return {};
   }
   try {
@@ -1606,9 +1606,9 @@ auto create_detailed(const RuntimeEndpoint& endpoint, const std::optional<std::s
       const auto status = public_operation_status(*public_result);
       if (status != OperationStatus::applied) {
         if (status == OperationStatus::conflict) {
-          static_cast<void>(write_text(STDERR_FILENO, "lemma session already exists\n"));
+          static_cast<void>(write_text(STDERR_FILENO, "frame session already exists\n"));
         } else if (status == OperationStatus::capacity) {
-          static_cast<void>(write_text(STDERR_FILENO, "lemma session capacity reached\n"));
+          static_cast<void>(write_text(STDERR_FILENO, "frame session capacity reached\n"));
         }
         return {.status = status, .session = {}, .tab = {}, .pane = {}};
       }
@@ -1701,7 +1701,7 @@ auto query(const RuntimeEndpoint& endpoint, const QueryKind kind, const std::str
 auto list(const RuntimeEndpoint& endpoint) -> int {
   int connection = open_server_connection(endpoint);
   if (connection < 0) {
-    static_cast<void>(write_text(STDOUT_FILENO, "no lemma sessions\n"));
+    static_cast<void>(write_text(STDOUT_FILENO, "no frame sessions\n"));
     return 0;
   }
   close_descriptor(connection);
@@ -1752,7 +1752,7 @@ auto create_surface(const RuntimeEndpoint& endpoint, const std::string_view sess
   std::array<std::byte, protocol::command_bytes_max> command{};
   const auto command_size = encode_launch_command(options.command, command);
   if (!command_size.has_value()) {
-    static_cast<void>(write_text(STDERR_FILENO, "launch command exceeds lemma limits\n"));
+    static_cast<void>(write_text(STDERR_FILENO, "launch command exceeds frame limits\n"));
     return {};
   }
   try {
@@ -2113,12 +2113,12 @@ auto kill(const RuntimeEndpoint& endpoint, const std::string_view session) -> in
   }
   const auto status = perform_command(endpoint, session, SemanticCommand::session_kill, {});
   if (status == OperationStatus::applied || status == OperationStatus::no_effect) {
-    const auto message = "lemma session \"" + std::string(session) + "\" stopped\n";
+    const auto message = "frame session \"" + std::string(session) + "\" stopped\n";
     return write_text(STDOUT_FILENO, message) ? 0 : 1;
   }
   static_cast<void>(write_text(STDERR_FILENO, status == OperationStatus::missing
-                                                  ? "no lemma session\n"
-                                                  : "lemma operation failed\n"));
+                                                  ? "no frame session\n"
+                                                  : "frame operation failed\n"));
   return 1;
 }
 
@@ -2133,4 +2133,4 @@ auto kill_all(const RuntimeEndpoint& endpoint) -> int {
 
 auto shutdown(const RuntimeEndpoint& endpoint) -> int { return run_shutdown_command(endpoint); }
 
-} // namespace lemma::daemon
+} // namespace frame::daemon

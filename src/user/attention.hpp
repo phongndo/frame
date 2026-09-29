@@ -1,8 +1,8 @@
-#ifndef LEMMA_USER_ATTENTION_HPP
-#define LEMMA_USER_ATTENTION_HPP
+#ifndef FRAME_USER_ATTENTION_HPP
+#define FRAME_USER_ATTENTION_HPP
 
 #include "api/json.hpp"
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <array>
 #include <cstddef>
@@ -13,7 +13,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::user {
+namespace frame::user {
 
 // Core's per-Session Pane bound (core::panes_per_session_max); a unit test asserts they agree.
 inline constexpr std::size_t attention_panes_max =
@@ -101,6 +101,6 @@ private:
   bool listed_{false};
 };
 
-} // namespace lemma::user
+} // namespace frame::user
 
 #endif

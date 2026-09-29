@@ -196,7 +196,7 @@ def main() -> int:
     failures = [result for result in results if result["status"] == "failed"]
     report = {
         "schema": 1,
-        "suite": "lemma-performance-calibration",
+        "suite": "frame-performance-calibration",
         "status": "failed" if failures else "passed",
         "capture_count": len(arguments.captures),
         "captures": [str(path) for path in arguments.captures],

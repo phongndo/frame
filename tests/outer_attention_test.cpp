@@ -1,6 +1,6 @@
 #include "core/outer_attention.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <array>
 #include <chrono>
@@ -12,7 +12,7 @@
 
 #include <gtest/gtest.h>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 using namespace std::chrono_literals;
@@ -117,4 +117,4 @@ TEST(OuterAttentionTest, DecodesOnlyLocalOsc7Directories) {
 }
 
 } // namespace
-} // namespace lemma::core
+} // namespace frame::core

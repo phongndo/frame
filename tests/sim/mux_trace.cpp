@@ -9,7 +9,7 @@
 #include <system_error>
 #include <utility>
 
-namespace lemma::test::sim {
+namespace frame::test::sim {
 using namespace std::string_view_literals;
 namespace {
 
@@ -437,4 +437,4 @@ void write_mux_checkpoint(std::ostream& stream, const MuxCheckpoint& checkpoint)
   return true;
 }
 
-} // namespace lemma::test::sim
+} // namespace frame::test::sim

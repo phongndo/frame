@@ -187,7 +187,7 @@ evidence, not paired blockers: frame-cadence outliers make their rank unstable.
 | Is resource use bounded and efficient? | Idle CPU, wakeups or context switches, memory, native CPU, deterministic work/queue bounds |
 | Is output efficient? | Warm-scroll completion and byte limits, not interactive frame deadlines |
 | Did this change regress? | Paired baseline/candidate checks independent of absolute-target misses |
-| Does Lemma match competitors? | Same-host, same-fixture comparison with the best supported subject for each workload and metric |
+| Does Frame match competitors? | Same-host, same-fixture comparison with the best supported subject for each workload and metric |
 
 Absolute targets in the workload manifest are not automatically competitor-parity thresholds.
 Warm-scroll limits must not be interpreted as feasible end-to-end deadlines without measuring the
@@ -198,7 +198,7 @@ batching changes the fixture and requires fresh controls, not comparison with ol
 
 Select the lowest valid latency, CPU, memory, or byte statistic per workload rather than naming one
 universally fastest mux. Lower bytes need not mean lower CPU or latency. Use process-tree PSS/private
-memory alongside RSS and separate daemon/client roles from descendants. Lemma's `daemon_helpers`
+memory alongside RSS and separate daemon/client roles from descendants. Frame's `daemon_helpers`
 census occurs before panes exist; `attached_client` includes descendant terminal-restoration
 guardians. `pane_or_mux_children` can contain unclassified helpers and is not equivalent to pane
 memory. Active pane profiles drive the focused pane, not every pane simultaneously.

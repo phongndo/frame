@@ -8,8 +8,8 @@ ownership and boundaries. Hot-path changes also require the
 ## Workflow
 
 Follow [Build and run](usage.md#build-and-run) to enter the Nix environment. `just run [args...]`
-and the shell's `lemma` alias share the isolated development runner. It configures `build/dev` only
-when toolchain/configuration inputs change and incrementally builds the `lemma` target. The `dev`
+and the shell's `frame` alias share the isolated development runner. It configures `build/dev` only
+when toolchain/configuration inputs change and incrementally builds the `frame` target. The `dev`
 profile uses `-O1`, debug symbols, invariants, and frame pointers. Release is explicit for packaging,
 production validation, and performance measurement.
 
@@ -61,9 +61,9 @@ common edit loop.
 
 ```sh
 ./test sim
-LEMMA_SIM_SEED=0x1234 LEMMA_SIM_OPERATIONS=4096 ./test sim
-LEMMA_MUX_SIM_SEED=0x1234 LEMMA_MUX_SIM_OPERATIONS=4096 ./test sim
-LEMMA_MUX_SIM_TRACE=path/to/failure.min.trace ./test sim
+FRAME_SIM_SEED=0x1234 FRAME_SIM_OPERATIONS=4096 ./test sim
+FRAME_MUX_SIM_SEED=0x1234 FRAME_MUX_SIM_OPERATIONS=4096 ./test sim
+FRAME_MUX_SIM_TRACE=path/to/failure.min.trace ./test sim
 ```
 
 Core, protocol, presentation, composition, and Ghostty worlds print exact replay commands on
@@ -71,9 +71,9 @@ failure. The mux world executes the production SessionMachine against simulated 
 its concrete, versioned operation/effect histories replay without invoking the generator. Curated
 coverage and independent semantic invariants live with [simulation tests](../tests/sim/).
 
-Set `LEMMA_MUX_SIM_TRACE_OUT=path/to/trace` with a configured mux seed to retain the in-progress trace,
+Set `FRAME_MUX_SIM_TRACE_OUT=path/to/trace` with a configured mux seed to retain the in-progress trace,
 including the operation active at a sanitizer abort. Ordinary failures write the complete trace and
-a bounded deterministic reduction under `build/mux-sim-failures/`. Use `LEMMA_SIM_TRACE=1` for non-mux
+a bounded deterministic reduction under `build/mux-sim-failures/`. Use `FRAME_SIM_TRACE=1` for non-mux
 replays to stream completed operations before a dependency abort.
 
 After reproducing and fixing a genuine finding:
@@ -90,20 +90,20 @@ coverage is not bug-discovery evidence, and checkpoints supplement rather than r
 invariants. Promote a regression only after confirming both the broken behavior and the fix.
 
 Scheduled [mux-sim-campaign](../scripts/ci/mux-sim-campaign) runs longer campaigns; use
-`LEMMA_MUX_CAMPAIGN_SEEDS` and `LEMMA_MUX_CAMPAIGN_OPERATIONS` to bound a local equivalent.
+`FRAME_MUX_CAMPAIGN_SEEDS` and `FRAME_MUX_CAMPAIGN_OPERATIONS` to bound a local equivalent.
 
 ### Fuzzing
 
-Parser fuzz targets cover Lemma-owned attachment, host-input, extension-framing, and public JSON
+Parser fuzz targets cover Frame-owned attachment, host-input, extension-framing, and public JSON
 boundaries. To replay checked-in corpora:
 
 ```sh
-scripts/ci/configure sanitizers -DLEMMA_BUILD_TESTS=OFF -DLEMMA_BUILD_BENCHMARKS=OFF -DLEMMA_BUILD_FUZZERS=ON
-cmake --build build/sanitizers --target lemma_attachment_decoder_fuzz lemma_host_input_parser_fuzz lemma_api_json_fuzz lemma_extension_framing_fuzz
-./build/sanitizers/lemma_attachment_decoder_fuzz -runs=0 fuzz/corpus/attachment
-./build/sanitizers/lemma_host_input_parser_fuzz -runs=0 fuzz/corpus/host-input
-./build/sanitizers/lemma_api_json_fuzz -runs=0 fuzz/corpus/api
-./build/sanitizers/lemma_extension_framing_fuzz -runs=0 fuzz/corpus/extension
+scripts/ci/configure sanitizers -DFRAME_BUILD_TESTS=OFF -DFRAME_BUILD_BENCHMARKS=OFF -DFRAME_BUILD_FUZZERS=ON
+cmake --build build/sanitizers --target frame_attachment_decoder_fuzz frame_host_input_parser_fuzz frame_api_json_fuzz frame_extension_framing_fuzz
+./build/sanitizers/frame_attachment_decoder_fuzz -runs=0 fuzz/corpus/attachment
+./build/sanitizers/frame_host_input_parser_fuzz -runs=0 fuzz/corpus/host-input
+./build/sanitizers/frame_api_json_fuzz -runs=0 fuzz/corpus/api
+./build/sanitizers/frame_extension_framing_fuzz -runs=0 fuzz/corpus/extension
 ```
 
 Linux links libFuzzer for mutation runs. The [sanitizer lane](../scripts/ci/sanitizers) replays seeds,
@@ -147,15 +147,15 @@ just skill-bench --help
 The interactive local benchmark selects provider, model, and thinking level. It uses isolated
 workspaces/runtimes, randomizes paired baseline/skill order, verifies terminal consequences
 externally, and writes raw traces and JSON/Markdown reports under `build/agent-skill-benchmark/`.
-Baseline runs cannot fetch the embedded skill through `lemma skill`. Model calls may incur provider
+Baseline runs cannot fetch the embedded skill through `frame skill`. Model calls may incur provider
 charges; this is not a CI gate.
 
 Pi is the built-in adapter. Another agent can supply `--adapter PATH`, invoked as `PATH REQUEST.json`
-in the isolated workspace with its environment. The `lemma.agent-skill-benchmark-request/v1` request
+in the isolated workspace with its environment. The `frame.agent-skill-benchmark-request/v1` request
 provides prompt, optional skill path, provider, model, thinking level, and timeout. The executable
-prints one `lemma.agent-skill-benchmark-result/v1` JSON object containing `returncode`, `final_text`,
+prints one `frame.agent-skill-benchmark-result/v1` JSON object containing `returncode`, `final_text`,
 normalized `tool_calls`/`tool_results` arrays, and `skill_loaded`; `usage` is optional. See the
-[benchmark implementation](../tools/benchmark_lemma_skill.py) and its
+[benchmark implementation](../tools/benchmark_frame_skill.py) and its
 [contract tests](../tools/test_ci_agent_skill_benchmark.py).
 
 ## CI and Python tooling
@@ -191,7 +191,7 @@ submodule or Nix store. The complete pin manifest identifies source/archive cach
 
 Maintain current supported behavior, contracts, boundaries, and durable rationale—not a record of
 work performed. Keep each subject in one home; link instead of repeating its definition. Exact CLI
-and JSON grammar belong to binary help and the embedded [schema](../schema/lemma-api-v1.schema.json).
+and JSON grammar belong to binary help and the embedded [schema](../schema/frame-api-v1.schema.json).
 Local implementation rationale belongs beside its code.
 
 When behavior changes, update its documentation and examples in the same change. Replace or delete
@@ -206,7 +206,7 @@ JSON examples, and requires fenced blocks marked `example=../examples/FILE` to m
 All example files must be referenced by a marked block. This prevents editing the displayed copy
 without changing the tested input.
 
-The mux suite loads Lua examples through `lemma config check`, exercises the configuration and
+The mux suite loads Lua examples through `frame config check`, exercises the configuration and
 custom command, executes the JSON job, and admits the extension Hello. Example changes therefore
 select native tests. Other fences are illustrative: no documentation check executes arbitrary shell
 commands, attaches to user Sessions, runs performance captures, or calls paid models. Link/schema

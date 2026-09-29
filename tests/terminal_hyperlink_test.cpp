@@ -1,5 +1,5 @@
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -12,7 +12,7 @@
 #include <string_view>
 #include <utility>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace {
 
 constexpr std::string_view link_close = "\x1B]8;;\x1B\\";
@@ -35,7 +35,7 @@ void write_text(Terminal& terminal, const std::string_view text) {
 }
 
 [[nodiscard]] auto link_open(const Terminal& terminal, const std::string_view uri) -> std::string {
-  return std::string("\x1B]8;id=lemma-")
+  return std::string("\x1B]8;id=frame-")
       .append(std::to_string(terminal.graphics_identity()))
       .append(";")
       .append(uri)
@@ -49,7 +49,7 @@ void write_text(Terminal& terminal, const std::string_view text) {
 }
 
 // Every open link closes before the cursor moves, a line or cells are erased, the screen scrolls,
-// or the frame ends, so no link leaks onto content Lemma did not link.
+// or the frame ends, so no link leaks onto content Frame did not link.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void expect_links_contained(const std::string_view encoded) {
   constexpr std::string_view open = "\x1B]8;id=";
@@ -520,4 +520,4 @@ TEST(TerminalHyperlinkTest, FailedRenderInvalidatesPhysicalLinksBeforeRetry) {
 }
 
 } // namespace
-} // namespace lemma::vt
+} // namespace frame::vt

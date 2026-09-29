@@ -1,9 +1,9 @@
-#ifndef LEMMA_API_COMMAND_HPP
-#define LEMMA_API_COMMAND_HPP
+#ifndef FRAME_API_COMMAND_HPP
+#define FRAME_API_COMMAND_HPP
 
 #include "api/json.hpp"
 #include "core/float_layer.hpp"
-#include "lemma/id.hpp"
+#include "frame/id.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,11 +13,11 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::api {
+namespace frame::api {
 
-inline constexpr std::string_view command_result_schema = "lemma.command-result/v1";
-inline constexpr std::string_view events_schema = "lemma.events/v1";
-inline constexpr std::string_view event_schema = "lemma.event/v1";
+inline constexpr std::string_view command_result_schema = "frame.command-result/v1";
+inline constexpr std::string_view events_schema = "frame.events/v1";
+inline constexpr std::string_view event_schema = "frame.event/v1";
 
 enum class CommandKind : std::uint8_t {
   daemon_inspect,
@@ -315,6 +315,6 @@ struct EventSubscriptionDecodeResult final {
 [[nodiscard]] auto decode_event_subscription(const JsonValue& document)
     -> EventSubscriptionDecodeResult;
 
-} // namespace lemma::api
+} // namespace frame::api
 
-#endif // LEMMA_API_COMMAND_HPP
+#endif // FRAME_API_COMMAND_HPP

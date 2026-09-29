@@ -16,7 +16,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-namespace lemma::extension {
+namespace frame::extension {
 auto bundled_ui_path() -> std::string {
   std::array<char, 4096> path{};
   const auto size = platform::executable_path(path);
@@ -24,7 +24,7 @@ auto bundled_ui_path() -> std::string {
     throw std::runtime_error("cannot resolve executable path for bundled UI");
   }
   const std::string executable(path.data(), size);
-  return executable.substr(0, executable.find_last_of('/') + 1U) + "lemma-ui";
+  return executable.substr(0, executable.find_last_of('/') + 1U) + "frame-ui";
 }
 
 Services::Services(const std::span<const config::ExtensionConfiguration> configuration,
@@ -54,7 +54,7 @@ void Services::start(Service& service) noexcept {
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
       const auto null = ::open("/dev/null", O_RDWR | O_CLOEXEC);
       if (null < 0 || ::dup2(null, STDIN_FILENO) < 0 || ::dup2(null, STDOUT_FILENO) < 0 ||
-          ::setenv("LEMMA_EXTENSION_ENDPOINT", endpoint_.c_str(), 1) != 0) {
+          ::setenv("FRAME_EXTENSION_ENDPOINT", endpoint_.c_str(), 1) != 0) {
         ::_exit(127);
       }
       if (null > STDERR_FILENO) {
@@ -95,4 +95,4 @@ void Services::reap_exited() noexcept {
     }
   }
 }
-} // namespace lemma::extension
+} // namespace frame::extension

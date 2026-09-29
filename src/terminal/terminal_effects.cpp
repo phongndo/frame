@@ -1,8 +1,8 @@
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 #include "terminal/terminal_impl.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/assert.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,13 +15,13 @@
 #include <string_view>
 #include <vector>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace {
 
 // Copies pending bytes in order and retains capacity once drained, so repeated replies reuse it.
 auto drain_responses(std::vector<std::byte>& responses, std::size_t& offset,
                      const std::span<std::byte> output) noexcept -> std::size_t {
-  LEMMA_ASSERT(offset <= responses.size());
+  FRAME_ASSERT(offset <= responses.size());
   const auto available = std::span(responses).subspan(offset);
   const auto count = std::min(output.size(), available.size());
   std::ranges::copy(available.first(count), output.begin());
@@ -315,7 +315,7 @@ void Terminal::Impl::unknown_sequence([[maybe_unused]] GhosttyTerminal terminal_
 
 auto Terminal::Impl::enquiry([[maybe_unused]] GhosttyTerminal terminal_handle,
                              [[maybe_unused]] void* userdata) noexcept -> GhosttyString {
-  static constexpr std::array<std::uint8_t, 5> identity{'l', 'e', 'm', 'm', 'a'};
+  static constexpr std::array<std::uint8_t, 5> identity{'f', 'r', 'a', 'm', 'e'};
   return {.ptr = identity.data(), .len = identity.size()};
 }
 
@@ -362,13 +362,13 @@ auto Terminal::Impl::size_report([[maybe_unused]] GhosttyTerminal terminal_handl
 
 auto Terminal::Impl::xtversion([[maybe_unused]] GhosttyTerminal terminal_handle,
                                [[maybe_unused]] void* userdata) noexcept -> GhosttyString {
-  static constexpr std::array<std::uint8_t, 5> identity{'l', 'e', 'm', 'm', 'a'};
+  static constexpr std::array<std::uint8_t, 5> identity{'f', 'r', 'a', 'm', 'e'};
   return {.ptr = identity.data(), .len = identity.size()};
 }
 
 auto Terminal::title() const noexcept -> std::expected<std::string_view, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   GhosttyString title{};
   const auto result = ghostty_terminal_get(impl_->terminal, GHOSTTY_TERMINAL_DATA_TITLE, &title);
@@ -381,8 +381,8 @@ auto Terminal::title() const noexcept -> std::expected<std::string_view, Error> 
 }
 
 auto Terminal::pwd() const noexcept -> std::expected<std::string_view, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   GhosttyString pwd{};
   const auto result = ghostty_terminal_get(impl_->terminal, GHOSTTY_TERMINAL_DATA_PWD, &pwd);
@@ -395,13 +395,13 @@ auto Terminal::pwd() const noexcept -> std::expected<std::string_view, Error> {
 }
 
 auto Terminal::signals() const noexcept -> const TerminalSignals& {
-  LEMMA_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
   return impl_->signals;
 }
 
 auto Terminal::take_effects() noexcept -> EffectBatch {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   const auto effects = impl_->effects;
   impl_->effects = {};
@@ -409,24 +409,24 @@ auto Terminal::take_effects() noexcept -> EffectBatch {
 }
 
 auto Terminal::pending_pty_response_bytes() const noexcept -> std::size_t {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   return impl_->pty_responses.size() - impl_->pty_response_offset +
          impl_->clipboard_responses.size() - impl_->clipboard_response_offset;
 }
 
 auto Terminal::pty_response_overflowed() const noexcept -> bool {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   return impl_->pty_response_integrity_failed;
 }
 
 auto Terminal::read_pty_responses(const std::span<std::byte> output) noexcept -> std::size_t {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   const auto used = drain_responses(impl_->pty_responses, impl_->pty_response_offset, output);
   return used + drain_responses(impl_->clipboard_responses, impl_->clipboard_response_offset,
                                 output.subspan(used));
 }
 
-} // namespace lemma::vt
+} // namespace frame::vt

@@ -1,23 +1,23 @@
-if(NOT DEFINED LEMMA_SOURCE_DIR)
-  message(FATAL_ERROR "LEMMA_SOURCE_DIR is required")
+if(NOT DEFINED FRAME_SOURCE_DIR)
+  message(FATAL_ERROR "FRAME_SOURCE_DIR is required")
 endif()
 
 file(
-  GLOB_RECURSE lemma_sources
+  GLOB_RECURSE frame_sources
   LIST_DIRECTORIES false
-  "${LEMMA_SOURCE_DIR}/apps/*.cpp"
-  "${LEMMA_SOURCE_DIR}/include/*.hpp"
-  "${LEMMA_SOURCE_DIR}/src/*.cpp"
-  "${LEMMA_SOURCE_DIR}/src/*.hpp"
-  "${LEMMA_SOURCE_DIR}/tests/*.cpp"
-  "${LEMMA_SOURCE_DIR}/tests/*.hpp"
+  "${FRAME_SOURCE_DIR}/apps/*.cpp"
+  "${FRAME_SOURCE_DIR}/include/*.hpp"
+  "${FRAME_SOURCE_DIR}/src/*.cpp"
+  "${FRAME_SOURCE_DIR}/src/*.hpp"
+  "${FRAME_SOURCE_DIR}/tests/*.cpp"
+  "${FRAME_SOURCE_DIR}/tests/*.hpp"
 )
 
 set(violations)
-foreach(source IN LISTS lemma_sources)
+foreach(source IN LISTS frame_sources)
   file(READ "${source}" contents)
   if(contents MATCHES "#[ \t]*include[ \t]*[<\"]ghostty/")
-    file(RELATIVE_PATH relative "${LEMMA_SOURCE_DIR}" "${source}")
+    file(RELATIVE_PATH relative "${FRAME_SOURCE_DIR}" "${source}")
     if(NOT relative MATCHES "^src/terminal/")
       list(APPEND violations "${relative}")
     endif()

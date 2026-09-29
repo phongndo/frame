@@ -1,8 +1,8 @@
 #include "core/session.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/id.hpp"
-#include "lemma/limits.hpp"
+#include "frame/assert.hpp"
+#include "frame/id.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -11,7 +11,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 [[nodiscard]] constexpr auto valid_session_name(const std::string_view name) noexcept -> bool {
@@ -110,7 +110,7 @@ auto TabOrder::place_before(const TabId moving, const std::optional<TabId> ancho
 
 Tab::Tab(const TabId assigned_id, const PaneId first_pane) noexcept
     : id(assigned_id), layout(first_pane), previous_pane(first_pane), focus(first_pane) {
-  LEMMA_ASSERT(id.is_valid() && first_pane.is_valid());
+  FRAME_ASSERT(id.is_valid() && first_pane.is_valid());
 }
 
 auto Tab::float_presentable(const PaneId pane) const noexcept -> bool {
@@ -127,7 +127,7 @@ auto Tab::float_presentable(const PaneId pane) const noexcept -> bool {
 }
 
 void Tab::set_tiled_focus(const PaneId pane) noexcept {
-  LEMMA_ASSERT(layout.contains(pane));
+  FRAME_ASSERT(layout.contains(pane));
   focus.tiled_pane_ = pane;
 }
 
@@ -170,10 +170,10 @@ Session::Session(const std::string_view session_name,
                  const LaunchEnvironmentMode initial_environment_mode) noexcept
     : working_directory_size(initial_working_directory.size()),
       environment_size(initial_environment.size()), environment_mode(initial_environment_mode) {
-  LEMMA_ASSERT(initial_working_directory.size() <= limits::working_directory_bytes_max);
-  LEMMA_ASSERT(initial_environment.size() <= environment.size());
+  FRAME_ASSERT(initial_working_directory.size() <= limits::working_directory_bytes_max);
+  FRAME_ASSERT(initial_environment.size() <= environment.size());
   const bool named = rename(session_name);
-  LEMMA_ASSERT(named);
+  FRAME_ASSERT(named);
   if (!initial_working_directory.empty()) {
     std::memcpy(working_directory.data(), initial_working_directory.data(),
                 initial_working_directory.size());
@@ -201,4 +201,4 @@ auto Session::launch_environment() const noexcept -> std::span<const std::byte> 
   return std::span(environment).first(environment_size);
 }
 
-} // namespace lemma::core
+} // namespace frame::core

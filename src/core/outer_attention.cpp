@@ -1,7 +1,7 @@
 #include "core/outer_attention.hpp"
 
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,7 +11,7 @@
 #include <span>
 #include <string_view>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 constexpr std::string_view notification_begin = "\x1B]777;notify;";
@@ -218,4 +218,4 @@ auto local_directory_from_osc7(const std::string_view uri, const std::string_vie
   return percent_decode(authority_and_path.substr(slash), storage);
 }
 
-} // namespace lemma::core
+} // namespace frame::core

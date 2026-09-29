@@ -19,7 +19,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 struct ConnectedListener final {
@@ -51,7 +51,7 @@ struct ConnectedListener final {
 [[nodiscard]] auto connected_listener() noexcept -> std::optional<ConnectedListener> {
   // Use the production transport. TCP delivery/FIN depends on host scheduling even on loopback;
   // declaring it ready and advancing virtual time makes host latency look like reactor work.
-  auto directory = std::to_array("/tmp/lemma-reactor-XXXXXX");
+  auto directory = std::to_array("/tmp/frame-reactor-XXXXXX");
   if (::mkdtemp(directory.data()) == nullptr) {
     return std::nullopt;
   }
@@ -188,7 +188,7 @@ thread_local ScriptedReactor* active_script = nullptr;
     return -1;
   }
   const std::string_view response(script.response.data(), script.response_size);
-  if (response.ends_with('\n') && response.contains(R"("schema":"lemma.proc-result/v1")") &&
+  if (response.ends_with('\n') && response.contains(R"("schema":"frame.proc-result/v1")") &&
       response.contains(R"("status":"applied")")) {
     script.stop = true;
   } else if (script.polls > 32U) {
@@ -423,7 +423,7 @@ TEST(ReactorEnvironmentTest, ResponseCollectionWaitsForRecordBoundary) {
     static_cast<void>(::close(connected.listener));
     FAIL() << "accept failed";
   }
-  constexpr std::string_view prefix = R"({"schema":"lemma.proc-result/v1","status":"applied")";
+  constexpr std::string_view prefix = R"({"schema":"frame.proc-result/v1","status":"applied")";
   constexpr std::string_view suffix = "}\n";
   ScriptedReactor script{.now = {}, .client = connected.client};
   EXPECT_EQ(::send(accepted, prefix.data(), prefix.size(), MSG_NOSIGNAL),
@@ -460,7 +460,7 @@ TEST(ReactorEnvironmentTest, ScriptedWorldControlsFragmentationBackpressureChild
       .listener = connected.listener,
       .client = connected.client,
       .wake_read = wake.front(),
-      .fragments = {"{", R"("schema":"lemma.proc/v1",)",
+      .fragments = {"{", R"("schema":"frame.proc/v1",)",
                     R"("commands":[{"command":"daemon.inspect"})", "]}\n"},
       .fragment_count = 4,
   };
@@ -506,7 +506,7 @@ TEST(ReactorEnvironmentTest, ChildWakeCanPrecedeAcceptAndFragmentedRequest) {
       .listener = connected.listener,
       .client = connected.client,
       .wake_read = wake.front(),
-      .fragments = {"{", R"("schema":"lemma.proc/v1",)",
+      .fragments = {"{", R"("schema":"frame.proc/v1",)",
                     R"("commands":[{"command":"daemon.inspect"})", "]}\n"},
       .fragment_count = 4,
       .wake_before_accept = true,
@@ -543,7 +543,7 @@ TEST(ReactorEnvironmentTest, ChildReapedBeforePollCannotSleepBeforePublishingIts
       .listener = connected.listener,
       .client = connected.client,
       .wake_read = wake.front(),
-      .fragments = {"{", R"("schema":"lemma.proc/v1",)",
+      .fragments = {"{", R"("schema":"frame.proc/v1",)",
                     R"("commands":[{"command":"daemon.inspect"})", "]}\n"},
       .fragment_count = 4,
       .child_exit_pending = true,
@@ -601,4 +601,4 @@ TEST(ReactorEnvironmentTest, VirtualDeadlineClosesAFragmentedRequestWithoutHostT
 }
 
 } // namespace
-} // namespace lemma::core
+} // namespace frame::core

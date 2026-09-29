@@ -1,8 +1,8 @@
 #include "terminal/terminal_impl.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/assert.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <array>
 #include <cmath>
@@ -11,7 +11,7 @@
 #include <expected>
 #include <span>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace {
 
 constexpr std::uint16_t modifiers_valid =
@@ -141,10 +141,10 @@ constexpr std::uint16_t modifiers_valid =
 
 auto Terminal::encode_key(const KeyEvent& event, const std::span<std::byte> output) noexcept
     -> std::expected<std::size_t, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
-  LEMMA_ASSERT(impl_->key_encoder != nullptr);
-  LEMMA_ASSERT(impl_->key_event != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_->key_encoder != nullptr);
+  FRAME_ASSERT(impl_->key_event != nullptr);
 
   if ((event.modifiers & ~modifiers_valid) != 0 ||
       (event.consumed_modifiers & ~modifiers_valid) != 0 || event.text.size() > 256) {
@@ -170,15 +170,15 @@ auto Terminal::encode_key(const KeyEvent& event, const std::span<std::byte> outp
   if (result != GHOSTTY_SUCCESS) {
     return std::unexpected(detail::map_error(result));
   }
-  LEMMA_ASSERT(bytes_written <= output.size());
+  FRAME_ASSERT(bytes_written <= output.size());
   return bytes_written;
 }
 
 auto Terminal::encode_paste(const std::span<std::byte> input,
                             const std::span<std::byte> output) noexcept
     -> std::expected<std::size_t, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   if (input.size() > limits::paste_payload_bytes_max) {
     return std::unexpected(Error::limit_exceeded);
   }
@@ -203,14 +203,14 @@ auto Terminal::encode_paste(const std::span<std::byte> input,
   if (result != GHOSTTY_SUCCESS) {
     return std::unexpected(detail::map_error(result));
   }
-  LEMMA_ASSERT(bytes_written <= output.size());
+  FRAME_ASSERT(bytes_written <= output.size());
   return bytes_written;
 }
 
 [[nodiscard]] auto Terminal::paste_is_safe(const std::span<const std::byte> input) const noexcept
     -> bool {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   if (input.size() > limits::paste_payload_bytes_max) {
     return false;
   }
@@ -223,8 +223,8 @@ auto Terminal::encode_paste(const std::span<std::byte> input,
 auto Terminal::encode_focus(const FocusEvent event,
                             const std::span<std::byte> output) const noexcept
     -> std::expected<std::size_t, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   GhosttyTerminalModeConfig focus{.mode = GHOSTTY_MODE_FOCUS_EVENT, .value = false};
   auto result = ghostty_terminal_get(impl_->terminal, GHOSTTY_TERMINAL_DATA_MODE, &focus);
   if (result != GHOSTTY_SUCCESS) {
@@ -243,16 +243,16 @@ auto Terminal::encode_focus(const FocusEvent event,
   if (result != GHOSTTY_SUCCESS) {
     return std::unexpected(detail::map_error(result));
   }
-  LEMMA_ASSERT(written <= output.size());
+  FRAME_ASSERT(written <= output.size());
   return written;
 }
 
 auto Terminal::encode_mouse(const MouseEvent& event, const std::span<std::byte> output) noexcept
     -> std::expected<std::size_t, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
-  LEMMA_ASSERT(impl_->mouse_encoder != nullptr);
-  LEMMA_ASSERT(impl_->mouse_event != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_->mouse_encoder != nullptr);
+  FRAME_ASSERT(impl_->mouse_event != nullptr);
   const auto& geometry = event.geometry;
   if ((event.modifiers & ~modifiers_valid) != 0 || geometry.screen_width == 0 ||
       geometry.screen_height == 0 || geometry.cell_width == 0 || geometry.cell_height == 0 ||
@@ -301,14 +301,14 @@ auto Terminal::encode_mouse(const MouseEvent& event, const std::span<std::byte> 
   if (result != GHOSTTY_SUCCESS) {
     return std::unexpected(detail::map_error(result));
   }
-  LEMMA_ASSERT(written <= output.size());
+  FRAME_ASSERT(written <= output.size());
   return written;
 }
 
 [[nodiscard]] auto Terminal::mouse_tracking() const noexcept
     -> std::expected<MouseTrackingState, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   bool enabled = false;
   auto result =
@@ -329,8 +329,8 @@ auto Terminal::encode_mouse(const MouseEvent& event, const std::span<std::byte> 
 
 [[nodiscard]] auto Terminal::wheel_uses_alternate_scroll() const noexcept
     -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
 
   bool tracking = false;
   GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
@@ -354,8 +354,8 @@ auto Terminal::encode_mouse(const MouseEvent& event, const std::span<std::byte> 
 }
 
 auto Terminal::synchronized_output() const noexcept -> std::expected<bool, Error> {
-  LEMMA_ASSERT(impl_ != nullptr);
-  LEMMA_ASSERT(impl_->terminal != nullptr);
+  FRAME_ASSERT(impl_ != nullptr);
+  FRAME_ASSERT(impl_->terminal != nullptr);
   GhosttyTerminalModeConfig synchronized{
       .mode = GHOSTTY_MODE_SYNC_OUTPUT,
       .value = false,
@@ -368,4 +368,4 @@ auto Terminal::synchronized_output() const noexcept -> std::expected<bool, Error
   return synchronized.value;
 }
 
-} // namespace lemma::vt
+} // namespace frame::vt

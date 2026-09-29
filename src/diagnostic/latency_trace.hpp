@@ -1,12 +1,12 @@
-#ifndef LEMMA_DIAGNOSTIC_LATENCY_TRACE_HPP
-#define LEMMA_DIAGNOSTIC_LATENCY_TRACE_HPP
+#ifndef FRAME_DIAGNOSTIC_LATENCY_TRACE_HPP
+#define FRAME_DIAGNOSTIC_LATENCY_TRACE_HPP
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 
-namespace lemma::diagnostic {
+namespace frame::diagnostic {
 
 enum class LatencyTraceRole : std::uint8_t {
   daemon = 1,
@@ -69,10 +69,10 @@ private:
   std::uint64_t sequence_{0};
 };
 
-#ifdef LEMMA_ENABLE_LATENCY_TRACE
+#ifdef FRAME_ENABLE_LATENCY_TRACE
 
 // Diagnostic trace files are enabled only when the build-time option and the
-// LEMMA_LATENCY_TRACE directory are both present. Each process owns one bounded mmap file.
+// FRAME_LATENCY_TRACE directory are both present. Each process owns one bounded mmap file.
 void set_latency_trace_role(LatencyTraceRole role) noexcept;
 void set_latency_trace_correlation(std::uint64_t correlation) noexcept;
 [[nodiscard]] auto latency_trace_correlation() noexcept -> std::uint64_t;
@@ -115,6 +115,6 @@ record_client_socket_read_latency_trace([[maybe_unused]] const std::uint32_t sub
 
 #endif
 
-} // namespace lemma::diagnostic
+} // namespace frame::diagnostic
 
-#endif // LEMMA_DIAGNOSTIC_LATENCY_TRACE_HPP
+#endif // FRAME_DIAGNOSTIC_LATENCY_TRACE_HPP

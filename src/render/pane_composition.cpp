@@ -2,8 +2,8 @@
 #include "render/graphics.hpp"
 #include "render/status_line.hpp"
 
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "render/grid.hpp"
 #include "render/scene.hpp"
 #include "render/ui.hpp"
@@ -21,7 +21,7 @@
 #include <string_view>
 #include <system_error>
 
-namespace lemma::render {
+namespace frame::render {
 namespace {
 
 [[nodiscard]] auto append(std::span<std::byte> output, std::size_t& used,
@@ -486,7 +486,7 @@ project_scene_cursor(const Scene scene, const std::span<std::byte> output, std::
                                  : CompositionError::invalid_pane);
     }
     used += rendered->bytes;
-    // The focused Surface projects Lemma's steady block while every Pane is unfocused. Returning
+    // The focused Surface projects Frame's steady block while every Pane is unfocused. Returning
     // focus to a Pane must restore its canonical shape even when the terminal has no damage.
     invalidate_pane_cursor_projections(scene.panes);
     return {};
@@ -876,4 +876,4 @@ auto compose_frame(const std::span<const PaneSurface> panes, const Viewport view
                        previous_outer_modes, message_view);
 }
 
-} // namespace lemma::render
+} // namespace frame::render

@@ -1,7 +1,7 @@
-#ifndef LEMMA_TERMINAL_TERMINAL_IMPL_HPP
-#define LEMMA_TERMINAL_TERMINAL_IMPL_HPP
+#ifndef FRAME_TERMINAL_TERMINAL_IMPL_HPP
+#define FRAME_TERMINAL_TERMINAL_IMPL_HPP
 
-#include "lemma/terminal/terminal.hpp"
+#include "frame/terminal/terminal.hpp"
 #include "terminal/fingerprint.hpp"
 
 #include <ghostty/vt.h>
@@ -14,7 +14,7 @@
 #include <span>
 #include <vector>
 
-namespace lemma::vt {
+namespace frame::vt {
 namespace detail {
 
 class AnsiWriter;
@@ -28,7 +28,7 @@ enum class RowEncoding : std::uint8_t {
 };
 
 // Covers allocations routed through Ghostty's C allocator. The render and other adapter-owned
-// buffers remain independently bounded by their owning Lemma components.
+// buffers remain independently bounded by their owning Frame components.
 class QuotaAllocator final {
 public:
   explicit QuotaAllocator(std::size_t bytes_max) noexcept;
@@ -71,7 +71,7 @@ using CellHashStorage = std::unique_ptr<std::uint64_t[]>; // NOLINT
 
 } // namespace detail
 
-// This definition is private to lemma_terminal. Ghostty handles never enter Lemma's public headers
+// This definition is private to frame_terminal. Ghostty handles never enter Frame's public headers
 // or any target that does not explicitly belong to the terminal adapter.
 struct Terminal::Impl final {
   explicit Impl(const TerminalOptions& terminal_options) noexcept;
@@ -226,6 +226,6 @@ struct Terminal::Impl final {
   detail::FingerprintKey fingerprint_key{};
 };
 
-} // namespace lemma::vt
+} // namespace frame::vt
 
-#endif // LEMMA_TERMINAL_TERMINAL_IMPL_HPP
+#endif // FRAME_TERMINAL_TERMINAL_IMPL_HPP

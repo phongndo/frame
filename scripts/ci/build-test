@@ -6,11 +6,11 @@ hk validate
 nix flake check --no-build
 
 scripts/ci/configure debug \
-  -DLEMMA_BUILD_TESTS=ON \
-  -DLEMMA_BUILD_BENCHMARKS=ON
+  -DFRAME_BUILD_TESTS=ON \
+  -DFRAME_BUILD_BENCHMARKS=ON
 cmake --build --preset debug
 scripts/ci/test debug
 scripts/ci/deterministic-budgets debug
 
 # Exercise command dispatch without opening a PTY or creating persistent state.
-./build/debug/lemma --help >/dev/null
+./build/debug/frame --help >/dev/null

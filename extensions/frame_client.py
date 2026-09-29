@@ -1,4 +1,4 @@
-"""Small synchronous client for Lemma's public extension interface.
+"""Small synchronous client for Frame's public extension interface.
 
 No daemon imports, event polling timer, automatic reconnect, or mutation replay. A
 new Client is a new owner: reconnect from a fresh snapshot and recreate Surfaces.
@@ -45,10 +45,10 @@ class Record:
 
 def command_context() -> dict[str, Any]:
     """Read the daemon-captured invocation context, never infer current focus."""
-    context = json.loads(os.environ["LEMMA_COMMAND_CONTEXT"])
+    context = json.loads(os.environ["FRAME_COMMAND_CONTEXT"])
     if (
         not isinstance(context, dict)
-        or context.get("schema") != "lemma.command-context/v1"
+        or context.get("schema") != "frame.command-context/v1"
     ):
         raise ProtocolError("invalid command context")
     return context
@@ -101,12 +101,12 @@ class Client:
         self.pending: int | None = None
         self.closed = False
         hello: dict[str, Any] = {
-            "schema": "lemma.extension/v1",
+            "schema": "frame.extension/v1",
             "name": name,
             "capabilities": capabilities,
         }
         if session is not None or "observe" in capabilities:
-            subscription: dict[str, Any] = {"schema": "lemma.events/v1"}
+            subscription: dict[str, Any] = {"schema": "frame.events/v1"}
             if session is not None:
                 subscription["session"] = {"id": session}
             if presentation:
@@ -251,7 +251,7 @@ class Client:
         return self.request(
             PROC,
             RESULT,
-            {"schema": "lemma.proc/v1", "commands": commands, "on_error": on_error},
+            {"schema": "frame.proc/v1", "commands": commands, "on_error": on_error},
         )
 
     def command(self, command: str, **fields: Any) -> dict[str, Any]:
@@ -268,7 +268,7 @@ class Client:
         """
         return self.send(
             UPDATE,
-            {"schema": "lemma.surface-update/v1", "surface": surface, **content},
+            {"schema": "frame.surface-update/v1", "surface": surface, **content},
         )
 
     def event(self, timeout: float | None = None) -> dict[str, Any]:

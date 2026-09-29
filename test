@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run Lemma test tiers with low-friction filtering."""
+"""Build and run Frame test tiers with low-friction filtering."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-PROFILE = os.environ.get("LEMMA_TEST_PROFILE", "debug")
+PROFILE = os.environ.get("FRAME_TEST_PROFILE", "debug")
 BUILD = ROOT / "build" / PROFILE
 
 # One authoritative selector registry owns help, validation, focused domains, and the default mux
@@ -45,14 +45,14 @@ def configure_if_needed() -> None:
     cache = BUILD / "CMakeCache.txt"
     if (BUILD / "build.ninja").is_file() and cache.is_file():
         configured = cache.read_text(encoding="utf-8", errors="replace")
-        if "LEMMA_BUILD_TESTS:BOOL=ON" in configured:
+        if "FRAME_BUILD_TESTS:BOOL=ON" in configured:
             return
     run(
         [
             str(ROOT / "scripts" / "ci" / "configure"),
             PROFILE,
-            "-DLEMMA_BUILD_TESTS=ON",
-            "-DLEMMA_BUILD_BENCHMARKS=OFF",
+            "-DFRAME_BUILD_TESTS=ON",
+            "-DFRAME_BUILD_BENCHMARKS=OFF",
         ]
     )
 
@@ -69,10 +69,10 @@ def binary(name: str, *arguments: str) -> None:
 def mux_environment() -> dict[str, str]:
     return {
         **os.environ,
-        "LEMMA_TEST_SERVER": str(BUILD / "lemma_test_server"),
-        "LEMMA_TEST_CLI": str(BUILD / "lemma_test_cli"),
-        "LEMMA_TEST_EXECUTABLE": str(BUILD / "lemma"),
-        "LEMMA_TEST_PTY_PEER": str(BUILD / "lemma_test_pty_peer"),
+        "FRAME_TEST_SERVER": str(BUILD / "frame_test_server"),
+        "FRAME_TEST_CLI": str(BUILD / "frame_test_cli"),
+        "FRAME_TEST_EXECUTABLE": str(BUILD / "frame"),
+        "FRAME_TEST_PTY_PEER": str(BUILD / "frame_test_pty_peer"),
     }
 
 
@@ -80,7 +80,7 @@ def run_mux(domain: str | None = None) -> None:
     if domain is not None and domain not in MUX_DOMAINS:
         choices = ", ".join(MUX_DOMAINS)
         raise SystemExit(f"unknown mux domain {domain!r}; choose one of: {choices}")
-    build("lemma", "lemma_test_server", "lemma_test_cli", "lemma_test_pty_peer")
+    build("frame", "frame_test_server", "frame_test_cli", "frame_test_pty_peer")
     selected = (
         [MUX_DOMAINS[domain][0]]
         if domain is not None
@@ -93,35 +93,35 @@ def run_mux(domain: str | None = None) -> None:
 
 
 def run_unit(filter_value: str | None = None) -> None:
-    build("lemma_unit_tests")
+    build("frame_unit_tests")
     arguments = ["--gtest_brief=1"]
     if filter_value is not None:
         arguments.append(f"--gtest_filter={filter_value}")
-    binary("lemma_unit_tests", *arguments)
+    binary("frame_unit_tests", *arguments)
 
 
 def run_terminal(filter_value: str | None = None) -> None:
-    build("lemma_terminal_boundary_tests", "lemma_dependency_integrity_tests")
+    build("frame_terminal_boundary_tests", "frame_dependency_integrity_tests")
     arguments = ["--gtest_brief=1"]
     if filter_value is not None:
         arguments.append(f"--gtest_filter={filter_value}")
-    binary("lemma_terminal_boundary_tests", *arguments)
+    binary("frame_terminal_boundary_tests", *arguments)
     if filter_value is None:
-        binary("lemma_dependency_integrity_tests", "--gtest_brief=1")
+        binary("frame_dependency_integrity_tests", "--gtest_brief=1")
 
 
 def run_component() -> None:
-    build("lemma_component_integration_tests")
-    binary("lemma_component_integration_tests", "--gtest_brief=1")
+    build("frame_component_integration_tests")
+    binary("frame_component_integration_tests", "--gtest_brief=1")
 
 
 def run_sim() -> None:
     build(
-        "lemma_core_sim_tests", "lemma_protocol_sim_tests", "lemma_terminal_sim_tests"
+        "frame_core_sim_tests", "frame_protocol_sim_tests", "frame_terminal_sim_tests"
     )
-    binary("lemma_core_sim_tests", "--gtest_brief=1")
-    binary("lemma_protocol_sim_tests", "--gtest_brief=1")
-    binary("lemma_terminal_sim_tests", "--gtest_brief=1")
+    binary("frame_core_sim_tests", "--gtest_brief=1")
+    binary("frame_protocol_sim_tests", "--gtest_brief=1")
+    binary("frame_terminal_sim_tests", "--gtest_brief=1")
 
 
 def usage() -> str:
@@ -181,17 +181,17 @@ def main() -> int:
         run_mux(extra[0] if extra else None)
     elif tier == "stress":
         build(
-            "lemma_core_sim_tests",
-            "lemma_protocol_sim_tests",
-            "lemma_terminal_sim_tests",
-            "lemma_terminal_resource_tests",
-            "lemma_test_server",
-            "lemma_test_cli",
-            "lemma_test_pty_peer",
+            "frame_core_sim_tests",
+            "frame_protocol_sim_tests",
+            "frame_terminal_sim_tests",
+            "frame_terminal_resource_tests",
+            "frame_test_server",
+            "frame_test_cli",
+            "frame_test_pty_peer",
         )
-        binary("lemma_core_sim_tests", "--gtest_brief=1")
-        binary("lemma_protocol_sim_tests", "--gtest_brief=1")
-        binary("lemma_terminal_sim_tests", "--gtest_brief=1")
+        binary("frame_core_sim_tests", "--gtest_brief=1")
+        binary("frame_protocol_sim_tests", "--gtest_brief=1")
+        binary("frame_terminal_sim_tests", "--gtest_brief=1")
         run(
             [
                 sys.executable,
@@ -204,15 +204,15 @@ def main() -> int:
             ],
             environment=mux_environment(),
         )
-        binary("lemma_terminal_resource_tests", "--gtest_brief=1")
+        binary("frame_terminal_resource_tests", "--gtest_brief=1")
     elif tier == "extended":
         configure_if_needed()
         build(
-            "lemma_core_sim_tests",
-            "lemma_protocol_sim_tests",
-            "lemma_terminal_sim_tests",
-            "lemma_terminal_resource_tests",
-            "lemma_steady_state_allocation_audit",
+            "frame_core_sim_tests",
+            "frame_protocol_sim_tests",
+            "frame_terminal_sim_tests",
+            "frame_terminal_resource_tests",
+            "frame_steady_state_allocation_audit",
         )
         run(
             [

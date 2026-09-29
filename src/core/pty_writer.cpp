@@ -1,13 +1,13 @@
 #include "core/pty_writer.hpp"
 
 #include "core/input.hpp"
-#include "lemma/assert.hpp"
+#include "frame/assert.hpp"
 
 #include <algorithm>
 #include <cerrno>
 #include <cstddef>
 
-namespace lemma::core {
+namespace frame::core {
 
 // The branches are the explicit bounded outcomes of one nonblocking queue flush.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -34,7 +34,7 @@ namespace lemma::core {
         return PtyFlushStatus::hard_error;
       }
       const bool consumed = queue.consume(size);
-      LEMMA_ASSERT(consumed);
+      FRAME_ASSERT(consumed);
       budget -= size;
       global_budget -= size;
       continue;
@@ -53,4 +53,4 @@ namespace lemma::core {
   return queue.empty() ? PtyFlushStatus::drained : PtyFlushStatus::pending;
 }
 
-} // namespace lemma::core
+} // namespace frame::core

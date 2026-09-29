@@ -1,6 +1,6 @@
-# Lemma
+# Frame
 
-Lemma is a terminal multiplexer focused on performance and extensibility. It prioritizes responsive
+Frame is a terminal multiplexer focused on performance and extensibility. It prioritizes responsive
 terminal interaction and low resource overhead as workloads, panes, and clients scale.
 
 Keep the daemon's `Session -> Tab -> Pane` kernel small. Projects, worktrees, and agent workflows

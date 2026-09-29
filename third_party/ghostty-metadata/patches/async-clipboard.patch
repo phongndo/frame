@@ -27,7 +27,7 @@ index db5420d..bfe77c4 100644
      const GhosttyClipboardRead* read);
  
 +/**
-+ * Lemma extension: defer a clipboard request without blocking the VT stream.
++ * Frame extension: defer a clipboard request without blocking the VT stream.
 + * Call only during its callback, before replying. Success suppresses the default
 + * synchronous denial and returns a separately owned request, including MIME/data
 + * strings and protocol reply state. Call its reply function at most once, from

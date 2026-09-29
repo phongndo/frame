@@ -4,9 +4,9 @@
 #include "render/scene.hpp"
 #include "render/status_line.hpp"
 
-#include "lemma/assert.hpp"
-#include "lemma/limits.hpp"
-#include "lemma/terminal/terminal.hpp"
+#include "frame/assert.hpp"
+#include "frame/limits.hpp"
+#include "frame/terminal/terminal.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -19,7 +19,7 @@
 #include <span>
 #include <utility>
 
-namespace lemma::render {
+namespace frame::render {
 namespace {
 
 [[nodiscard]] auto allocate_frame_storage(void* const /*context*/, const std::size_t bytes) noexcept
@@ -69,7 +69,7 @@ namespace {
 }
 
 void FrameCapacityBudget::release(const std::size_t bytes) noexcept {
-  LEMMA_ASSERT(bytes <= used_);
+  FRAME_ASSERT(bytes <= used_);
   used_ -= bytes;
 }
 
@@ -81,8 +81,8 @@ FrameBuffer::FrameBuffer(const FrameAllocationOperation allocate,
 FrameBuffer::~FrameBuffer() { release(); }
 
 void FrameBuffer::bind_capacity_budget(FrameCapacityBudget& budget) noexcept {
-  LEMMA_ASSERT(capacity_ == 0);
-  LEMMA_ASSERT(capacity_budget_ == nullptr);
+  FRAME_ASSERT(capacity_ == 0);
+  FRAME_ASSERT(capacity_budget_ == nullptr);
   capacity_budget_ = &budget;
 }
 
@@ -173,4 +173,4 @@ compose_retained_frame(const std::span<const PaneSurface> panes, const Viewport 
                                 frame, force_full);
 }
 
-} // namespace lemma::render
+} // namespace frame::render

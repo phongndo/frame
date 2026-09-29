@@ -1,8 +1,8 @@
-#ifndef LEMMA_CORE_FLOAT_LAYER_HPP
-#define LEMMA_CORE_FLOAT_LAYER_HPP
+#ifndef FRAME_CORE_FLOAT_LAYER_HPP
+#define FRAME_CORE_FLOAT_LAYER_HPP
 
-#include "lemma/geometry.hpp"
-#include "lemma/id.hpp"
+#include "frame/geometry.hpp"
+#include "frame/id.hpp"
 
 #include <array>
 #include <cstddef>
@@ -11,7 +11,7 @@
 #include <span>
 #include <type_traits>
 
-namespace lemma::core {
+namespace frame::core {
 
 inline constexpr std::size_t floats_per_tab_max = 8;
 // A float's native frame is one cell on every side, so its outer rectangle holds at least one
@@ -125,6 +125,6 @@ private:
 
 static_assert(std::is_trivially_copyable_v<FloatLayer>);
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_FLOAT_LAYER_HPP
+#endif // FRAME_CORE_FLOAT_LAYER_HPP

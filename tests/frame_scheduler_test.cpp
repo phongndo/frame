@@ -1,11 +1,11 @@
 #include "core/frame_scheduler.hpp"
-#include "lemma/id.hpp"
+#include "frame/id.hpp"
 
 #include <chrono>
 
 #include <gtest/gtest.h>
 
-namespace lemma::core {
+namespace frame::core {
 namespace {
 
 using namespace std::chrono_literals;
@@ -363,4 +363,4 @@ TEST(FrameSchedulerTest, NoClientDoesNotCreatePendingWorkOrAnIdleTimer) {
 }
 
 } // namespace
-} // namespace lemma::core
+} // namespace frame::core

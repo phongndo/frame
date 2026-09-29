@@ -1,12 +1,12 @@
-#ifndef LEMMA_CORE_PTY_WRITER_HPP
-#define LEMMA_CORE_PTY_WRITER_HPP
+#ifndef FRAME_CORE_PTY_WRITER_HPP
+#define FRAME_CORE_PTY_WRITER_HPP
 
 #include "core/input.hpp"
 
 #include <cstddef>
 #include <span>
 
-namespace lemma::core {
+namespace frame::core {
 
 inline constexpr std::size_t pty_write_bytes_per_pane_turn_max = std::size_t{64} * 1'024U;
 inline constexpr std::size_t pty_write_attempts_per_pane_turn_max = 32;
@@ -32,6 +32,6 @@ enum class PtyFlushStatus : unsigned char {
                                          PtyWriteOperation write, void* context) noexcept
     -> PtyFlushStatus;
 
-} // namespace lemma::core
+} // namespace frame::core
 
-#endif // LEMMA_CORE_PTY_WRITER_HPP
+#endif // FRAME_CORE_PTY_WRITER_HPP

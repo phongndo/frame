@@ -3,7 +3,7 @@
 #include "api/json.hpp"
 #include "extension/client.hpp"
 #include "extension/protocol.hpp"
-#include "lemma/limits.hpp"
+#include "frame/limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -25,7 +25,7 @@
 
 #include <poll.h>
 
-namespace lemma::user {
+namespace frame::user {
 namespace {
 namespace ext = extension;
 using api::JsonValue;
@@ -66,7 +66,7 @@ using Clock = std::chrono::steady_clock;
   return member(member(result, "results").array.front(), "result");
 }
 [[nodiscard]] auto scoped_hello(std::string_view session) -> std::string {
-  return R"({"schema":"lemma.extension/v1","name":"session-picker","capabilities":["observe","proc","surface"],"events":{"schema":"lemma.events/v1","presentation":true,"session":)" +
+  return R"({"schema":"frame.extension/v1","name":"session-picker","capabilities":["observe","proc","surface"],"events":{"schema":"frame.events/v1","presentation":true,"session":)" +
          selector(session) + "}}";
 }
 
@@ -319,7 +319,7 @@ public:
       : client_(text(context, "endpoint"), scoped_hello(text(context, "session"))),
         observer_(
             text(context, "endpoint"),
-            R"({"schema":"lemma.extension/v1","name":"picker-data","capabilities":["observe","proc"],"events":{"schema":"lemma.events/v1"}})"),
+            R"({"schema":"frame.extension/v1","name":"picker-data","capabilities":["observe","proc"],"events":{"schema":"frame.events/v1"}})"),
         connection_(text(context, "connection")), current_(text(context, "session")) {
     const auto inspected =
         command(client_, R"({"command":"session.inspect","session":)" + selector(current_) + '}');
@@ -832,7 +832,7 @@ void SessionManager::paint() {
     grid.put(0, layout_.surface.height - 1, message_, layout_.surface.width, 1);
   }
   const std::string header =
-      R"({"schema":"lemma.surface-update/v1","surface":)" + ext::json_quote(surface_) +
+      R"({"schema":"frame.surface-update/v1","surface":)" + ext::json_quote(surface_) +
       R"(,"styles":[{},{"faint":true},{"foreground":"#a7bbdf","bold":true},{"background":"#303847","foreground":"#e1e6ef","bold":true},{"bold":true,"underline":true},{"background":"#303847","foreground":"#a7bbdf","bold":true,"underline":true}],"rows":[)";
   std::string update = header;
   std::size_t nodes = 0;
@@ -1299,4 +1299,4 @@ auto SessionManager::run() -> int {
 auto run_session_manager(const api::JsonValue& context) -> int {
   return SessionManager(context).run();
 }
-} // namespace lemma::user
+} // namespace frame::user
