@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-MAGIC = b"\x8aLME"
+MAGIC = b"\x8aFME"
 HEADER = struct.Struct(">4sBBBBII")
 HELLO = 1
 WELCOME = 2

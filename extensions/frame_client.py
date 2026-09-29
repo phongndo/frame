@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 HEADER = struct.Struct(">4sBBBBII")
-MAGIC = b"\x8aLME"
+MAGIC = b"\x8aFME"
 HELLO, WELCOME, PROC, RESULT, UPDATE, EVENT, ERROR = range(1, 8)
 MAX_RECORD = 1024 * 1024
 MAX_EVENTS = 64

@@ -13,7 +13,7 @@
 
 namespace frame::extension {
 
-inline constexpr std::array<std::byte, 4> protocol_magic{std::byte{0x8a}, std::byte{'L'},
+inline constexpr std::array<std::byte, 4> protocol_magic{std::byte{0x8a}, std::byte{'F'},
                                                          std::byte{'M'}, std::byte{'E'}};
 inline constexpr std::uint8_t protocol_major = 1;
 inline constexpr std::uint8_t protocol_minor = 0;

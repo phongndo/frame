@@ -262,7 +262,7 @@ struct GraphicsProjection::State {
   std::array<Rectangle, placement_limit> coverage{};
   std::size_t plan_size{0}, next_size{0}, image_count{0}, clear_cursor{image_limit},
       place_cursor{0};
-  std::uint32_t next_id{0x4C4D0000U};
+  std::uint32_t next_id{0x464D0000U};
   bool pending{false};
   std::optional<std::chrono::steady_clock::time_point> animation_deadline;
 

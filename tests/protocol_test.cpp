@@ -30,7 +30,7 @@ TEST(ProtocolTest, HasDeterministicGoldenClientHelloEncoding) {
   const auto encoded =
       encode_client_hello("project", {.columns = 132, .rows = 43}, 1, current_version);
   const std::array expected{
-      std::byte{0x89}, std::byte{'L'},  std::byte{'M'},  std::byte{'A'},  std::byte{0x02},
+      std::byte{0x89}, std::byte{'F'},  std::byte{'M'},  std::byte{'A'},  std::byte{0x02},
       std::byte{0x0B}, std::byte{0x01}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
       std::byte{0x00}, std::byte{0x0D}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
       std::byte{0x01}, std::byte{0x07}, std::byte{0x00}, std::byte{0x84}, std::byte{0x00},
@@ -245,7 +245,7 @@ TEST(ProtocolTest, RoundTripsLiveHostThemeUpdate) {
 TEST(ProtocolTest, HasDeterministicGoldenRenderEncoding) {
   const auto encoded = encode_render_frame_header(3, 2, 1, true);
   const std::array expected{
-      std::byte{0x89}, std::byte{'L'},  std::byte{'M'},  std::byte{'A'},  std::byte{0x02},
+      std::byte{0x89}, std::byte{'F'},  std::byte{'M'},  std::byte{'A'},  std::byte{0x02},
       std::byte{0x0B}, std::byte{0x06}, std::byte{0x01}, std::byte{0x00}, std::byte{0x00},
       std::byte{0x00}, std::byte{0x07}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
       std::byte{0x02}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x01},

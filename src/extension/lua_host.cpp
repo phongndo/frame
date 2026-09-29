@@ -52,7 +52,7 @@ namespace {
 
 using platform::close_descriptor;
 
-inline constexpr std::array<std::byte, 4> host_magic{std::byte{'L'}, std::byte{'M'}, std::byte{'C'},
+inline constexpr std::array<std::byte, 4> host_magic{std::byte{'F'}, std::byte{'M'}, std::byte{'C'},
                                                      std::byte{'F'}};
 inline constexpr std::size_t host_header_bytes = 12;
 inline constexpr std::size_t diagnostic_bytes_max = 4'096;
