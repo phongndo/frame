@@ -597,12 +597,15 @@ class PtyProcess:
         failure_markers: tuple[bytes, ...] = (),
         preserve_suffix: bool = False,
         visible_text: bool = False,
+        observed_prefix: bytes = b"",
     ) -> tuple[int, int]:
+        # observed_prefix is output already read and retained, letting a marker that started
+        # before this call complete here. It is not fed or counted again.
         if started_ns is None:
             started_ns = time.monotonic_ns()
         deadline = time.monotonic() + timeout
         total = 0
-        retained = b""
+        retained = observed_prefix
         while time.monotonic() < deadline:
             from_pending = bool(self.pending_read)
             if from_pending:
