@@ -332,6 +332,13 @@ void drain_outer(const int descriptor) noexcept {
   std::array<char, read_bytes_max> output{};
   OuterTextDecoder decoder;
   std::uint64_t outer_bytes = 0;
+  const auto report_failure = [&](const std::string_view reason) {
+    constexpr std::size_t diagnostic_bytes = 512U;
+    const auto tail = retained.substr(
+        retained.size() > diagnostic_bytes ? retained.size() - diagnostic_bytes : 0U);
+    std::cerr << "outer marker " << reason << ": expected=" << std::quoted(std::string(marker))
+              << " outer_bytes=" << outer_bytes << " decoded_tail=" << std::quoted(tail) << '\n';
+  };
   while (std::chrono::steady_clock::now() < deadline) {
     pollfd readable{.fd = outer_descriptor, .events = POLLIN, .revents = 0};
     const auto polled = ::poll(&readable, 1, 20);
@@ -365,14 +372,12 @@ void drain_outer(const int descriptor) noexcept {
       if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
         break;
       }
+      // A closed outer PTY (EOF or EIO) means the attached client exited before the marker.
+      report_failure(count == 0 || errno == EIO ? "closed" : "read failed");
       return {};
     }
   }
-  constexpr std::size_t diagnostic_bytes = 512U;
-  const auto tail =
-      retained.substr(retained.size() > diagnostic_bytes ? retained.size() - diagnostic_bytes : 0U);
-  std::cerr << "outer marker timeout: expected=" << std::quoted(std::string(marker))
-            << " outer_bytes=" << outer_bytes << " decoded_tail=" << std::quoted(tail) << '\n';
+  report_failure("timeout");
   return {};
 }
 
