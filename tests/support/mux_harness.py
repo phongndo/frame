@@ -203,8 +203,15 @@ class Client:
         encoded = marker.encode() if isinstance(marker, str) else marker
         if encoded in self.process.output_tail:
             return
+        # Background drains can consume a marker prefix before this wait starts; Darwin PTYs
+        # deliver about 1 KiB per read, so a long sequence can straddle that boundary.
+        consumed = self.process.output_tail[
+            : len(self.process.output_tail) - len(self.process.pending_read)
+        ]
         try:
-            self.process.read_until(encoded, timeout)
+            self.process.read_until(
+                encoded, timeout, observed_prefix=consumed[-(len(encoded) - 1) :]
+            )
         except BaseException as error:
             raise MuxTimeout(
                 f"did not observe raw output {encoded!r}\n{self.diagnostics()}\n"

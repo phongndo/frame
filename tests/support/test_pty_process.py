@@ -285,6 +285,33 @@ class PtyProcessBufferingTest(unittest.TestCase):
             os.close(read_descriptor)
             os.close(write_descriptor)
 
+    def test_marker_completes_across_an_earlier_drain(self) -> None:
+        read_descriptor, write_descriptor = os.pipe()
+        process = object.__new__(PtyProcess)
+        process.descriptor = read_descriptor
+        process.pending_read = b""
+        process.output_tail = b""
+        process.screen = AnsiScreenTracker(80, 24)
+        marker = b"\x1b]7;file://host/long/path\x1b\\"
+        try:
+            # A background drain consumes the first read; the wait starts mid-sequence.
+            os.write(write_descriptor, b"frame" + marker[:10])
+            process.drain(0.05)
+            os.write(write_descriptor, marker[10:])
+            with self.assertRaises(TimeoutError):
+                process.read_until(marker, 0.05)
+
+            os.write(write_descriptor, b"frame" + marker[:10])
+            process.drain(0.05)
+            os.write(write_descriptor, marker[10:])
+            _, observed = process.read_until(
+                marker, 1.0, observed_prefix=process.output_tail[-(len(marker) - 1) :]
+            )
+            self.assertEqual(observed, len(marker) - 10)
+        finally:
+            os.close(read_descriptor)
+            os.close(write_descriptor)
+
 
 if __name__ == "__main__":
     unittest.main()
