@@ -2348,21 +2348,26 @@ def attach_to_visible(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
     session = "attach_visible"
     runtime.start_detached_with_attach_marker(session)
     cpu_before = runtime_resource_snapshot(runtime)
-    completed = subprocess.run(
-        [
-            str(runtime.probe_path),
-            "attach",
-            "1",
-            ATTACH_VISIBLE_MARKER.decode("ascii"),
-            "--",
-            *runtime.attach_arguments(session),
-        ],
-        env=runtime.environment,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10.0,
-    )
+    try:
+        completed = subprocess.run(
+            [
+                str(runtime.probe_path),
+                "attach",
+                "1",
+                ATTACH_VISIBLE_MARKER.decode("ascii"),
+                "--",
+                *runtime.attach_arguments(session),
+            ],
+            env=runtime.environment,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"native attach probe failed: stderr={error.stderr!r}"
+        ) from error
     try:
         measured = json.loads(completed.stdout)
     except json.JSONDecodeError as error:
