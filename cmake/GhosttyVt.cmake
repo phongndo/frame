@@ -166,7 +166,10 @@ function(frame_add_pinned_ghostty)
     OUTPUT "${static_library}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${local_cache}" "${global_cache}"
     COMMAND ${source_preparation_command}
+    # The patched copy lives inside Frame's build tree. Stop Ghostty's git version detection at
+    # its own root so Frame's checkout, such as a release tag, cannot become Ghostty's version.
     COMMAND
+      "${CMAKE_COMMAND}" -E env "GIT_CEILING_DIRECTORIES=${root}"
       "${ZIG_EXECUTABLE}" build
       ${zig_system_args}
       ${zig_libc_args}
