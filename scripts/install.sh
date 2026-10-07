@@ -27,6 +27,10 @@ case "$install_dir:$data_dir" in
   /*:/*) ;;
   *) fail "FRAME_INSTALL_DIR and FRAME_DATA_DIR must be absolute paths" ;;
 esac
+case "$install_dir$data_dir" in
+  *"
+"*) fail "FRAME_INSTALL_DIR and FRAME_DATA_DIR must not contain newlines" ;;
+esac
 
 # Replace only a command owned by this installer. Homebrew and user commands
 # remain under their existing owner's control.
@@ -44,7 +48,15 @@ if [ "$version" = latest ]; then
   version=$(printf '%s\n' "$metadata" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 fi
 case "$version" in v*) tag=$version ;; *) tag="v$version" ;; esac
-printf '%s\n' "$tag" | LC_ALL=C grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || fail "invalid release version: $version"
+# vnightly is the mutable prerelease built from tested main.
+[ "$tag" = vnightly ] ||
+  printf '%s\n' "$tag" | LC_ALL=C grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || fail "invalid release version: $version"
+
+# `frame update` reports the installed release; nightly always refreshes.
+if [ "$tag" != vnightly ] && [ "${FRAME_CURRENT_RELEASE:-}" = "$tag" ] && [ -x "$destination" ]; then
+  printf 'Frame %s is already installed at %s\n' "$tag" "$destination"
+  exit 0
+fi
 
 package="frame-$tag-$target"
 asset="$package.tar.gz"
@@ -75,6 +87,10 @@ done
 mkdir -p "$data_dir/releases" "$install_dir"
 pending=$(mktemp -d "$data_dir/releases/$tag-$target.XXXXXX")
 cp -R "$temporary/$package/." "$pending/"
+# The receipt marks this installer as the owner that `frame update` reruns.
+mkdir -p "$pending/share/frame"
+printf 'release=%s\ninstall_dir=%s\ndata_dir=%s\n' "$tag" "$install_dir" "$data_dir" \
+  >"$pending/share/frame/installation"
 "$pending/bin/frame" --version
 ln -s "$pending/bin/frame" "$temporary/frame"
 mv -f "$temporary/frame" "$destination"
@@ -86,4 +102,4 @@ case ":$PATH:" in
   *":$install_dir:"*) ;;
   *) printf '\nAdd this directory to your shell PATH: %s\n' "$install_dir" ;;
 esac
-printf 'To update, rerun this installer after closing your Frame sessions.\n'
+printf 'To update, close your Frame sessions and run: frame update\n'

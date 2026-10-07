@@ -267,6 +267,42 @@ def check_archive(archive: Path) -> None:
         if result.returncode == 0 or executable.readlink() != installed:
             raise RuntimeError("corrupt update changed the installation")
         smoke(executable)
+        # `frame update` reruns the installer shipped in its own release.
+        nightly = root / "nightly release"
+        retag(archive, "vnightly", nightly)
+        environment["FRAME_RELEASE_BASE_URL"] = nightly.as_uri()
+        subprocess.run(
+            [str(executable), "update", "--version", "nightly"],
+            env=environment,
+            check=True,
+        )
+        if not executable.readlink().parts[-3].startswith("vnightly-"):
+            raise RuntimeError("frame update did not install the requested channel")
+        smoke(executable)
+
+
+def retag(archive: Path, tag: str, output: Path) -> Path:
+    """Republish a tested archive under a channel tag such as vnightly."""
+    target = next(
+        (t for t in TARGETS.values() if archive.name.endswith(f"-{t}.tar.gz")), None
+    )
+    if target is None or not archive.name.startswith("frame-v"):
+        raise ValueError(f"not a Frame release archive: {archive.name}")
+    if checksum(archive) != read_checksum(archive.with_suffix(".gz.sha256")):
+        raise ValueError(f"archive checksum mismatch: {archive.name}")
+    name = f"frame-{tag}-{target}"
+    output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="frame-retag-") as temporary:
+        with tarfile.open(archive) as tar:
+            tar.extractall(temporary, filter="tar")
+        (source,) = Path(temporary).iterdir()
+        retagged = output / f"{name}.tar.gz"
+        with tarfile.open(retagged, "w:gz") as tar:
+            tar.add(source, arcname=name)
+    retagged.with_suffix(".gz.sha256").write_text(
+        f"{checksum(retagged)}  {retagged.name}\n"
+    )
+    return retagged
 
 
 def formula(tag: str, checksums: Path) -> str:
@@ -342,6 +378,10 @@ def main() -> None:
     checking.add_argument("archive", type=Path)
     smoking = commands.add_parser("smoke")
     smoking.add_argument("executable", type=Path)
+    retagging = commands.add_parser("retag")
+    retagging.add_argument("--tag", required=True)
+    retagging.add_argument("--output", required=True, type=Path)
+    retagging.add_argument("archives", nargs="+", type=Path)
     generating = commands.add_parser("formula")
     generating.add_argument("--tag", required=True)
     generating.add_argument("--checksums", required=True, type=Path)
@@ -357,6 +397,11 @@ def main() -> None:
     elif args.command == "smoke":
         smoke(args.executable.absolute())
         print("Installed session check passed")
+    elif args.command == "retag":
+        if args.tag != "vnightly" and TAG_PATTERN.fullmatch(args.tag) is None:
+            raise ValueError(f"invalid release tag: {args.tag}")
+        for archive in args.archives:
+            print(retag(archive, args.tag, args.output))
     elif args.command == "formula":
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(formula(args.tag, args.checksums))
