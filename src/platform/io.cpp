@@ -4,6 +4,7 @@
 #include <array>
 #include <cerrno>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <span>
 #include <string>
@@ -15,6 +16,7 @@
 #ifdef __APPLE__
 #include <cstdint>
 #include <mach-o/dyld.h>
+#include <sys/syslimits.h>
 #endif
 
 namespace frame::platform {
@@ -28,7 +30,18 @@ namespace frame::platform {
   if (_NSGetExecutablePath(output.data(), &size) != 0) {
     return 0;
   }
-  return std::char_traits<char>::length(output.data());
+  // dyld can return the command symlink. Helpers and terminfo belong beside the
+  // actual executable, including when only `frame` is linked onto the user's PATH.
+  std::array<char, PATH_MAX> resolved{};
+  if (::realpath(output.data(), resolved.data()) == nullptr) {
+    return 0;
+  }
+  const auto length = std::char_traits<char>::length(resolved.data());
+  if (length >= output.size()) {
+    return 0;
+  }
+  std::copy_n(resolved.begin(), length + 1U, output.begin());
+  return length;
 #else
   const auto size = ::readlink("/proc/self/exe", output.data(), output.size() - 1U);
   if (size <= 0 || static_cast<std::size_t>(size) >= output.size() - 1U) {

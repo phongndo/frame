@@ -94,6 +94,8 @@
               ];
               buildInputs = [
                 pkgs.lua5_4
+                pkgs.libpng
+                pkgs.zlib
                 zstdStatic
               ];
 

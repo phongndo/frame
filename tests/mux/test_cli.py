@@ -90,6 +90,24 @@ class ProductionCliTest(unittest.TestCase):
             self.assertIn(capability, captured)
         self.assertNotIn("Ms=", captured)
 
+    def test_command_symlink_finds_helpers_and_terminal_data(self) -> None:
+        runtime = self.server.root / "linked-runtime"
+        runtime.mkdir(mode=0o700)
+        launcher = self.server.root / "linked-frame"
+        launcher.symlink_to(self.executable)
+        self.executable = launcher
+        self.environment |= {"FRAME_DEV_RUNTIME_DIR": str(runtime)}
+        try:
+            started = self.start("symlink", 'infocmp -x "$TERM"')
+            target = ("--session", "symlink", "--pane", started["pane"])
+            self.ok("wait", *target, "--exit-code", "0", "--timeout", "2s")
+            captured = self.ok(
+                "capture", *target, "--source", "recent", "--lines", "250"
+            )
+            self.assertIn("Frame terminal multiplexer", captured)
+        finally:
+            self.command("shutdown", "--confirm")
+
     def test_capture_and_split_fail_when_stdout_is_not_writable(self) -> None:
         started = self.start("output-failure", "printf 'small-output\\n'")
         target = ("--session", "output-failure", "--pane", started["pane"])

@@ -1,9 +1,15 @@
 # Using Frame
 
-Frame is currently a development project. Run it from a checkout rather than treating it as a
-stable installed tool.
+Frame is under active development. [Install an early release](installation.md) to try it without
+a build environment, then start a Session in your project:
+
+```sh
+frame new --cwd "$PWD"
+```
 
 ## Build and run
+
+For development from a source checkout:
 
 The supported development environment is Nix:
 

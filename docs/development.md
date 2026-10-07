@@ -173,6 +173,39 @@ fuzz, and benchmark sweeps. Only successful trusted `main` jobs publish build ca
 and merge groups restore without writing. Local lane equivalents live in [scripts/ci](../scripts/ci/);
 `just ci-check` runs the merge-blocking set in a safe sequence.
 
+## Release packages
+
+The [Distribution workflow](../.github/workflows/distribution.yml) builds Release packages for
+the supported platforms, runs the native and real-mux suites, then tests installation outside the
+build environment. It also installs the generated Homebrew formula on every supported platform.
+The package includes CMake's complete install tree and dependency license notices.
+
+To reproduce packaging on macOS:
+
+```sh
+nix develop -c scripts/ci/build-dist
+nix develop -c python3 scripts/ci/distribution.py check build/distribution/frame-v0.1.0-aarch64-apple-darwin.tar.gz
+```
+
+Linux distributions use native Clang 22 from [LLVM's Ubuntu packages](https://apt.llvm.org/) so the
+executables target the host glibc instead of Nix store paths. Nix still supplies the other pinned
+tools and Ghostty sources. `FRAME_DIST_CC` and `FRAME_DIST_CXX` can select those native compilers.
+Packaging rejects unexpected dynamic dependencies and Nix runtime paths. The installation check
+exercises command symlinks, Lua configuration, a real detached Session, terminal definitions,
+reinstallation, and a corrupt-download update using a private runtime directory.
+
+The [Release workflow](../.github/workflows/release.yml) runs manually from `main`, or from a
+matching version tag after CI. It requires successful `CI` and `Distribution` push runs for that
+exact commit on `main`, and publishes the already-tested archives without rebuilding. A draft
+becomes public only after all assets and the generated Homebrew formula have uploaded. Published
+release files are immutable; bump the version for a correction. Keep the version in
+[version.hpp](../include/frame/version.hpp), [CMake](../CMakeLists.txt), [flake.nix](../flake.nix),
+and [pyproject.toml](../pyproject.toml) consistent when bumping it.
+
+The Homebrew tap consumes the generated `frame.rb` from stable releases on its schedule. An optional
+`HOMEBREW_TAP_TOKEN` repository secret can dispatch the updater immediately; publishing does not
+require that secret. User installation and update instructions live in [Installation](installation.md).
+
 ## Ghostty upgrades
 
 Ghostty owns terminal semantics. Update these pins together:

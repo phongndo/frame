@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) ghostty_target=aarch64-macos ;;
+  Linux-aarch64) ghostty_target=aarch64-linux-gnu ;;
+  Linux-x86_64) ghostty_target=x86_64-linux-gnu ;;
+  *) echo 'Unsupported release platform.' >&2; exit 1 ;;
+esac
+
+# Nix supplies the pinned build tools and Ghostty inputs. A native Linux compiler
+# links against the distribution's glibc instead of embedding Nix store paths.
+if [[ "$(uname -s)" == Linux ]]; then
+  readonly native_cc="${FRAME_DIST_CC:-/usr/bin/clang-22}"
+  readonly native_cxx="${FRAME_DIST_CXX:-/usr/bin/clang++-22}"
+  [[ -x "$native_cc" && -x "$native_cxx" ]] || {
+    echo 'Portable Linux builds require native Clang 22 (FRAME_DIST_CC/FRAME_DIST_CXX).' >&2
+    exit 1
+  }
+  mkdir -p build/dist-toolchain
+  ln -sf "$native_cc" build/dist-toolchain/clang
+  ln -sf "$native_cxx" build/dist-toolchain/clang++
+  export PATH="$PWD/build/dist-toolchain:$PATH"
+  export CC="$native_cc" CXX="$native_cxx"
+fi
+
+scripts/ci/configure release -DFRAME_BUILD_TESTS=ON -DFRAME_BUILD_BENCHMARKS=OFF \
+  "-DFRAME_GHOSTTY_ZIG_TARGET=$ghostty_target"
+cmake --build --preset release --target frame frame_terminfo frame_fast_test_binaries
+scripts/ci/test release
+python3 scripts/ci/distribution.py package
