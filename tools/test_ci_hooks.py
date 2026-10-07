@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECK_FILE_SIZE = ROOT / "scripts" / "ci" / "check-file-size.py"
@@ -12,6 +14,14 @@ LIMIT = 500 * 1024
 
 class FileSizeHookTest(unittest.TestCase):
     def setUp(self) -> None:
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        # A hook's Git environment belongs to its caller, never this fixture.
+        for variable in subprocess.check_output(
+            ["git", "rev-parse", "--local-env-vars"], text=True
+        ).splitlines():
+            os.environ.pop(variable, None)
         self.temporary = tempfile.TemporaryDirectory()
         self.repository = Path(self.temporary.name)
         self.git("init", "--quiet")
