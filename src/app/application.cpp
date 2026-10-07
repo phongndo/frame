@@ -5,6 +5,7 @@
 #include "api/proc.hpp"
 #include "api/schema.hpp"
 #include "app/proc.hpp"
+#include "app/update.hpp"
 #include "client/attached_client.hpp"
 #include "daemon/server.hpp"
 #include "extension/lua_host.hpp"
@@ -151,6 +152,7 @@ template <typename Integer>
       "Other:\n"
       "  config        Validate or reload configuration\n"
       "  skill         Print the coding-agent guide\n"
+      "  update        Update a portable installation\n"
       "  version       Show version information\n"
       "  help          Show help\n\n"
       "Running frame without a command creates a numbered session and attaches.\n"
@@ -876,6 +878,11 @@ struct SurfaceArguments final {
     text = "Usage:\n  frame skill\n\nPrint the version-matched coding-agent guide as an Agent "
            "Skills-compatible SKILL.md.\nSave it under a directory named frame in your agent "
            "host's skill location.\n";
+  } else if (command == "update") {
+    text = "Usage:\n  frame update [--version VERSION]\n\nInstall the latest stable release, or "
+           "VERSION, with the portable installer that\ninstalled this Frame. Use --version nightly "
+           "for the build of tested main.\nClose Frame sessions first; previous releases are "
+           "kept for running processes.\n";
   } else if (command == "version" || command == "--version" || command == "-V") {
     text = "Usage:\n  frame version\n  frame --version\n\nShow the Frame version, automation "
            "schema, and private protocol version.\n";
@@ -2291,6 +2298,9 @@ command_target(const TabId tab = {}, const PaneId pane = {}, const PaneId peer =
   }
   if (command == "skill" && command_arguments.size() == 1) {
     return print_skill();
+  }
+  if (command == "update") {
+    return run_update(command_arguments.subspan(1));
   }
 
   static_cast<void>(write_fragment(stderr, "invalid frame command or arguments: "));

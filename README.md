@@ -8,15 +8,30 @@ macOS and ARM64/x86-64 Linux.
 
 ## Install and try
 
+Homebrew on macOS or Linux:
+
 ```sh
 brew install phongndo/tap/frame
+```
+
+Or use the portable installer, [mise](https://mise.jdx.dev/), or Nix:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/phongndo/frame/main/scripts/install.sh | sh
+mise use -g github:phongndo/frame
+nix profile install github:phongndo/frame
+```
+
+Then start a Session in your project:
+
+```sh
 cd your-project
 frame new --cwd "$PWD"
 ```
 
-No compiler or Nix setup is needed. See [Installation](docs/installation.md) for the portable
-installer, platform requirements, updates, and preview builds. See [Usage](docs/usage.md) for
-sessions, panes, and key bindings.
+Update with the method that installed Frame; portable installations use `frame update`. See
+[Installation](docs/installation.md) for platform requirements, nightly builds, and removal, and
+[Usage](docs/usage.md) for sessions, panes, and key bindings.
 
 ## Documentation
 

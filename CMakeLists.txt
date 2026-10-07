@@ -127,6 +127,7 @@ install(DIRECTORY "${FRAME_TERMINFO_DIR}/" DESTINATION share/terminfo)
 install(FILES terminfo/frame.terminfo DESTINATION share/frame)
 install(FILES terminfo/LICENSE DESTINATION share/doc/frame/licenses RENAME ncurses.txt)
 install(FILES extensions/frame_client.py extensions/picker.py DESTINATION share/frame/extensions)
+install(PROGRAMS scripts/install.sh DESTINATION share/frame)
 
 add_library(frame_base STATIC src/core/assert.cpp)
 frame_internal_target(frame_base)
@@ -342,7 +343,7 @@ target_link_libraries(
   PRIVATE frame_daemon frame_diagnostic frame_platform frame_protocol
 )
 
-add_library(frame_app STATIC src/app/application.cpp src/app/proc.cpp)
+add_library(frame_app STATIC src/app/application.cpp src/app/proc.cpp src/app/update.cpp)
 frame_internal_target(frame_app)
 target_link_libraries(
   frame_app PRIVATE frame_api frame_client frame_daemon frame_extension frame_platform frame_terminal
