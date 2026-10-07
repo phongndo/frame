@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import select
+import shutil
 import subprocess
 import unittest
 from pathlib import Path
@@ -175,6 +176,7 @@ class ProductionCliTest(unittest.TestCase):
             "api",
             "config",
             "skill",
+            "update",
             "version",
         ]
         for name in names:
@@ -573,6 +575,30 @@ class ProductionCliTest(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("requires a terminal", result.stderr)
         self.assertEqual(self.result("session", "list")["sessions"], [])
+
+    def test_update_reruns_only_the_installer_that_owns_the_release(self) -> None:
+        unowned = self.command("update")
+        self.assertEqual(unowned.returncode, 1, unowned.stdout)
+        self.assertIn("not installed by Frame's portable installer", unowned.stderr)
+        self.assertEqual(self.command("update", "--version").returncode, 2)
+
+        prefix = self.server.root / "release"
+        (prefix / "bin").mkdir(parents=True)
+        (prefix / "share/frame").mkdir(parents=True)
+        shutil.copy2(self.executable, prefix / "bin/frame")
+        (prefix / "share/frame/installation").write_text(
+            "release=v1.2.3\ninstall_dir=/commands dir\ndata_dir=/data dir\n"
+        )
+        (prefix / "share/frame/install.sh").write_text(
+            'printf "%s|%s|%s|%s" "$FRAME_VERSION" "$FRAME_INSTALL_DIR" '
+            '"$FRAME_DATA_DIR" "$FRAME_CURRENT_RELEASE"\n'
+        )
+        self.executable = prefix / "bin/frame"
+        self.assertEqual(
+            self.ok("update", "--version", "nightly"),
+            "nightly|/commands dir|/data dir|v1.2.3",
+        )
+        self.assertTrue(self.ok("update").startswith("latest|"))
 
     def test_interactive_new_bare_launch_detach_and_attach_restore_the_terminal(
         self,
