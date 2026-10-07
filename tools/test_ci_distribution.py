@@ -36,8 +36,8 @@ class InstallerTest(unittest.TestCase):
         )
         self.executable = Path(self.environment["FRAME_INSTALL_DIR"]) / "frame"
 
-    def archive(self, *, missing_helper: bool = False) -> Path:
-        name = f"frame-v9.8.7-{self.target}"
+    def archive(self, *, missing_helper: bool = False, tag: str = "v9.8.7") -> Path:
+        name = f"frame-{tag}-{self.target}"
         prefix = self.root / name
         (prefix / "bin").mkdir(parents=True)
         (prefix / "share/terminfo").mkdir(parents=True)
@@ -86,6 +86,41 @@ class InstallerTest(unittest.TestCase):
         self.assertNotEqual(failed.returncode, 0)
         self.assertIn("checksum verification failed", failed.stderr)
         self.assertEqual(previous, self.executable.readlink())
+
+    def test_receipt_names_the_owning_installation(self) -> None:
+        self.archive()
+        installed = self.install()
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        receipt = self.executable.resolve().parents[1] / "share/frame/installation"
+        self.assertEqual(
+            receipt.read_text(),
+            f"release=v9.8.7\ninstall_dir={self.environment['FRAME_INSTALL_DIR']}\n"
+            f"data_dir={self.environment['FRAME_DATA_DIR']}\n",
+        )
+
+    def test_update_to_the_installed_release_downloads_nothing(self) -> None:
+        archive = self.archive()
+        self.assertEqual(self.install().returncode, 0)
+        previous = self.executable.readlink()
+        archive.unlink()
+        self.environment["FRAME_CURRENT_RELEASE"] = "v9.8.7"
+        current = self.install()
+        self.assertEqual(current.returncode, 0, current.stderr)
+        self.assertIn("already installed", current.stdout)
+        self.assertEqual(previous, self.executable.readlink())
+
+    def test_nightly_channel_installs_and_always_refreshes(self) -> None:
+        stable = self.archive()
+        nightly = distribution.retag(stable, "vnightly", self.download)
+        self.assertEqual(nightly.name, f"frame-vnightly-{self.target}.tar.gz")
+        self.environment |= {"FRAME_VERSION": "nightly"}
+        self.assertEqual(self.install().returncode, 0)
+        previous = self.executable.resolve()
+        self.environment["FRAME_CURRENT_RELEASE"] = "vnightly"
+        refreshed = self.install()
+        self.assertEqual(refreshed.returncode, 0, refreshed.stderr)
+        self.assertNotEqual(previous, self.executable.resolve())
+        self.assertIn("vnightly-", self.executable.resolve().parts[-3])
 
     def test_unrelated_command_is_not_replaced(self) -> None:
         self.executable.parent.mkdir()

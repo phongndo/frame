@@ -192,7 +192,8 @@ executables target the host glibc instead of Nix store paths. Nix still supplies
 tools and Ghostty sources. `FRAME_DIST_CC` and `FRAME_DIST_CXX` can select those native compilers.
 Packaging rejects unexpected dynamic dependencies and Nix runtime paths. The installation check
 exercises command symlinks, Lua configuration, a real detached Session, terminal definitions,
-reinstallation, and a corrupt-download update using a private runtime directory.
+reinstallation, a corrupt-download update, and `frame update` to the nightly channel using a
+private runtime directory.
 
 The [Release workflow](../.github/workflows/release.yml) runs manually from `main`, or from a
 matching version tag after CI. It requires successful `CI` and `Distribution` push runs for that
@@ -201,6 +202,12 @@ becomes public only after all assets and the generated Homebrew formula have upl
 release files are immutable; bump the version for a correction. Keep the version in
 [version.hpp](../include/frame/version.hpp), [CMake](../CMakeLists.txt), [flake.nix](../flake.nix),
 and [pyproject.toml](../pyproject.toml) consistent when bumping it.
+
+The [Nightly workflow](../.github/workflows/nightly.yml) runs daily from `main` under the same
+qualification and republishes those tested archives, renamed by `distribution.py retag`, as the
+mutable `vnightly` prerelease. Packages ship [install.sh](../scripts/install.sh), and each portable
+installation records its owner in `share/frame/installation`; `frame update` reruns that shipped
+installer, so keep the receipt format and installer environment compatible across releases.
 
 The Homebrew tap consumes the generated `frame.rb` from stable releases on its schedule. An optional
 `HOMEBREW_TAP_TOKEN` repository secret can dispatch the updater immediately; publishing does not
