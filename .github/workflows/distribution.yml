@@ -1,0 +1,138 @@
+name: Distribution
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distribution-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Package (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+      CONAN_HOME: ${{ github.workspace }}/.conan2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install native Linux compiler
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o /tmp/llvm.asc
+          sudo install -m 644 /tmp/llvm.asc /usr/share/keyrings/llvm.asc
+          echo 'deb [signed-by=/usr/share/keyrings/llvm.asc] https://apt.llvm.org/noble/ llvm-toolchain-noble-22 main' |
+            sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y clang-22 g++-14
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Restore trusted distribution cache
+        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            .conan2
+            .cache/ccache
+            build/release/_deps/ghostty
+          key: frame-dist-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('conan.lock', 'conanfile.py', 'flake.lock', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}
+          restore-keys: |
+            frame-dist-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('conan.lock', 'conanfile.py', 'flake.lock', 'third_party/ghostty-metadata/PIN.json') }}-
+
+      - name: Build and test release
+        run: nix develop .#platform --command scripts/ci/build-dist
+
+      - name: Exercise portable installation outside Nix
+        run: python3 scripts/ci/distribution.py check build/distribution/frame-*-"${{ matrix.target }}".tar.gz
+
+      - name: Upload tested package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frame-${{ matrix.target }}
+          path: |
+            build/distribution/*.tar.gz
+            build/distribution/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Save trusted distribution cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            .conan2
+            .cache/ccache
+            build/release/_deps/ghostty
+          key: frame-dist-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('conan.lock', 'conanfile.py', 'flake.lock', 'third_party/ghostty-metadata/PIN.json') }}-${{ github.sha }}
+
+  homebrew:
+    name: Homebrew (${{ matrix.os }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@dc7099b3e807f1e2ecc61f3ecabc840eedd5586a
+
+      - name: Download tested archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: frame-*
+          path: build/distribution
+          merge-multiple: true
+
+      - name: Install and test the generated formula
+        run: |
+          tag="$(python3 scripts/ci/distribution.py version)"
+          mkdir -p "$RUNNER_TEMP/frame-tap/Formula"
+          python3 scripts/ci/distribution.py formula --tag "$tag" \
+            --checksums build/distribution --output "$RUNNER_TEMP/frame-tap/Formula/frame.rb"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          formula = Path(os.environ["RUNNER_TEMP"]) / "frame-tap/Formula/frame.rb"
+          import re
+          local = Path("build/distribution").resolve().as_uri()
+          formula.write_text(re.sub(r'https://github.com/phongndo/frame/releases/download/[^/]+', local, formula.read_text()))
+          PY
+          git -C "$RUNNER_TEMP/frame-tap" init
+          git -C "$RUNNER_TEMP/frame-tap" add Formula/frame.rb
+          git -C "$RUNNER_TEMP/frame-tap" -c user.name=frame-ci -c user.email=frame-ci@example.invalid commit -m 'Test release formula'
+          brew tap frame/release-test "$RUNNER_TEMP/frame-tap"
+          brew style frame/release-test/frame
+          brew install frame/release-test/frame
+          brew test frame/release-test/frame
+          python3 scripts/ci/distribution.py smoke "$(brew --prefix)/bin/frame"
