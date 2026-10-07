@@ -63,7 +63,9 @@ printf 'Installing Frame %s for %s\n' "$tag" "$target"
 curl -fSL --retry 3 "$base_url/$asset" -o "$temporary/$asset" || fail "could not download $asset"
 curl -fsSL --retry 3 "$base_url/$asset.sha256" -o "$temporary/$asset.sha256" || fail "could not download the checksum"
 expected=$(awk -v name="$asset" 'NF == 2 && $2 == name && length($1) == 64 && $1 !~ /[^0-9a-f]/ {print $1}' "$temporary/$asset.sha256")
-[ -n "$expected" ] && [ "$(checksum "$temporary/$asset")" = "$expected" ] || fail "checksum verification failed"
+if [ -z "$expected" ] || [ "$(checksum "$temporary/$asset")" != "$expected" ]; then
+  fail "checksum verification failed"
+fi
 tar -xzf "$temporary/$asset" -C "$temporary"
 for binary in frame frame-ui frame-config-host frame-clipboard-host; do
   [ -x "$temporary/$package/bin/$binary" ] || fail "archive is missing $binary"

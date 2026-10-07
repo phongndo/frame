@@ -102,6 +102,28 @@ class InstallerTest(unittest.TestCase):
         self.assertFalse(self.executable.exists())
 
 
+class TerminfoTest(unittest.TestCase):
+    def test_compiled_entry_is_readable_by_legacy_ncurses(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="frame-terminfo-") as temporary:
+            output = Path(temporary)
+            subprocess.run(
+                ["tic", "-x", "-o", str(output), str(ROOT / "terminfo/frame.terminfo")],
+                check=True,
+                capture_output=True,
+            )
+            entries = list(output.glob("*/frame"))
+            self.assertEqual(len(entries), 1)
+            compiled = entries[0].read_bytes()
+            # macOS's system ncurses cannot read 32-bit numbers or large entries.
+            self.assertEqual(compiled[:2], b"\x1a\x01")
+            self.assertLessEqual(len(compiled), 4096)
+            subprocess.run(
+                ["infocmp", "-x", "-A", str(output), "frame"],
+                check=True,
+                capture_output=True,
+            )
+
+
 class FormulaTest(unittest.TestCase):
     def test_checksum_must_name_the_matching_archive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

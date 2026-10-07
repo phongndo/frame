@@ -20,6 +20,7 @@ if [[ "$(uname -s)" == Linux ]]; then
   mkdir -p build/dist-toolchain
   ln -sf "$native_cc" build/dist-toolchain/clang
   ln -sf "$native_cxx" build/dist-toolchain/clang++
+  ln -sf /usr/bin/ld build/dist-toolchain/ld
   export PATH="$PWD/build/dist-toolchain:$PATH"
   export CC="$native_cc" CXX="$native_cxx"
 fi
