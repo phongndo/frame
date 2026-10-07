@@ -78,7 +78,7 @@ def check_linkage(binary: Path) -> None:
 
 def copy_licenses(build: Path, prefix: Path) -> None:
     destination = prefix / "share/doc/frame/licenses"
-    destination.mkdir(parents=True)
+    destination.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "LICENSE", destination / "Frame.txt")
     packages = {}
     for metadata in (build / "conan").glob("*.cmake"):
@@ -198,7 +198,13 @@ def smoke(executable: Path) -> None:
                 )
             )["results"][0]["result"]
             target = ("--session", "install-test", "--pane", started["pane"])
-            command("wait", *target, "--exit-code", "0", "--timeout", "10s")
+            try:
+                command("wait", *target, "--exit-code", "0", "--timeout", "10s")
+            except RuntimeError as error:
+                captured = command(
+                    "capture", *target, "--source", "recent", "--lines", "250"
+                )
+                raise RuntimeError(f"{error}\nTerminal output:\n{captured}") from error
             captured = command(
                 "capture", *target, "--source", "recent", "--lines", "250"
             )

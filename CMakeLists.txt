@@ -109,8 +109,8 @@ function(frame_internal_target target)
   endif()
 endfunction()
 
-# Build and ship the same virtual-terminal description used by every pane. tic resolves the
-# xterm base at build time; no ncurses library enters the native hot path.
+# Build and ship the same self-contained virtual-terminal description on every host.
+# No ncurses library enters the native hot path.
 find_program(FRAME_TIC_EXECUTABLE tic REQUIRED)
 set(FRAME_TERMINFO_DIR "${CMAKE_CURRENT_BINARY_DIR}/terminfo")
 add_custom_command(
@@ -125,6 +125,7 @@ add_custom_command(
 add_custom_target(frame_terminfo ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/terminfo.stamp")
 install(DIRECTORY "${FRAME_TERMINFO_DIR}/" DESTINATION share/terminfo)
 install(FILES terminfo/frame.terminfo DESTINATION share/frame)
+install(FILES terminfo/LICENSE DESTINATION share/doc/frame/licenses RENAME ncurses.txt)
 install(FILES extensions/frame_client.py extensions/picker.py DESTINATION share/frame/extensions)
 
 add_library(frame_base STATIC src/core/assert.cpp)

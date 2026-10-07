@@ -66,6 +66,10 @@ jobs:
       - name: Build and test release
         run: nix develop .#platform --command scripts/ci/build-dist
 
+      - name: Report dependency configuration failures
+        if: failure()
+        run: find .conan2 -name CMakeConfigureLog.yaml -exec tail -n 180 {} \;
+
       - name: Exercise portable installation outside Nix
         run: python3 scripts/ci/distribution.py check build/distribution/frame-*-"${{ matrix.target }}".tar.gz
 
