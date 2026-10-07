@@ -5,7 +5,7 @@
 #include <array>
 #include <cerrno>
 #include <cstdio>
-#include <cstdlib>
+#include <cstdlib> // IWYU pragma: keep — POSIX setenv.
 #include <cstring>
 #include <fstream>
 #include <optional>
