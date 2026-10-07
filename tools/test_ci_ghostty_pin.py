@@ -1,9 +1,11 @@
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "cmake" / "ValidateGhosttyPin.cmake"
@@ -14,6 +16,14 @@ PINNED_COMMIT = json.loads(
 
 class GhosttyPinValidationTests(unittest.TestCase):
     def setUp(self) -> None:
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        # CMake also invokes Git, so isolate the entire fixture's environment.
+        for variable in subprocess.check_output(
+            ["git", "rev-parse", "--local-env-vars"], text=True
+        ).splitlines():
+            os.environ.pop(variable, None)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.pin_file = self.root / "PIN.json"
