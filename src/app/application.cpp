@@ -152,7 +152,7 @@ template <typename Integer>
       "Other:\n"
       "  config        Validate or reload configuration\n"
       "  skill         Print the coding-agent guide\n"
-      "  update        Update a portable installation\n"
+      "  update        Update Frame with the tool that installed it\n"
       "  version       Show version information\n"
       "  help          Show help\n\n"
       "Running frame without a command creates a numbered session and attaches.\n"
@@ -879,10 +879,10 @@ struct SurfaceArguments final {
            "Skills-compatible SKILL.md.\nSave it under a directory named frame in your agent "
            "host's skill location.\n";
   } else if (command == "update") {
-    text = "Usage:\n  frame update [--version VERSION]\n\nInstall the latest stable release, or "
-           "VERSION, with the portable installer that\ninstalled this Frame. Use --version nightly "
-           "for the build of tested main.\nClose Frame sessions first; previous releases are "
-           "kept for running processes.\n";
+    text = "Usage:\n  frame update [--version VERSION]\n\nUpdate Frame with the tool that "
+           "installed it: Homebrew, the install script, mise,\nor a Nix profile. --version "
+           "selects a release, or nightly for the build of tested\nmain, and works only for "
+           "install script installations.\nClose Frame sessions first.\n";
   } else if (command == "version" || command == "--version" || command == "-V") {
     text = "Usage:\n  frame version\n  frame --version\n\nShow the Frame version, automation "
            "schema, and private protocol version.\n";
