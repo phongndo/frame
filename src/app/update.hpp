@@ -5,8 +5,8 @@
 
 namespace frame::app {
 
-// Reruns the portable installer that owns this executable, replacing the process. Installations
-// owned by a package manager are reported with that manager's update command instead.
+// Replaces this process with the update command of the tool that installed this executable: the
+// install script shipped in its release, Homebrew, mise, or a Nix profile.
 [[nodiscard]] auto run_update(std::span<char*> arguments) -> int;
 
 } // namespace frame::app

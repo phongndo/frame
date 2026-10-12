@@ -579,7 +579,11 @@ class ProductionCliTest(unittest.TestCase):
     def test_update_reruns_only_the_installer_that_owns_the_release(self) -> None:
         unowned = self.command("update")
         self.assertEqual(unowned.returncode, 1, unowned.stdout)
-        self.assertIn("not installed by Frame's portable installer", unowned.stderr)
+        self.assertIn(
+            "not installed by Homebrew, the install script, mise, or Nix",
+            unowned.stderr,
+        )
+        self.assertIn("docs/installation.md", unowned.stderr)
         self.assertEqual(self.command("update", "--version").returncode, 2)
 
         prefix = self.server.root / "release"
@@ -599,6 +603,70 @@ class ProductionCliTest(unittest.TestCase):
             "nightly|/commands dir|/data dir|v1.2.3",
         )
         self.assertTrue(self.ok("update").startswith("latest|"))
+
+    def installed_copy(self, path: Path) -> Path:
+        path.parent.mkdir(parents=True)
+        shutil.copy2(self.executable, path)
+        return path
+
+    def test_update_hands_package_manager_installs_to_their_tool(self) -> None:
+        tools = self.server.root / "tools"
+        tools.mkdir()
+        for name in ("brew", "mise"):
+            (tools / name).write_text(f'#!/bin/sh\nprintf "{name} %s\\n" "$*"\n')
+            (tools / name).chmod(0o755)
+        environment = self.environment | {"PATH": f"{tools}:/usr/bin:/bin"}
+
+        def update(
+            executable: Path, *arguments: str, **variables: str
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [str(executable), "update", *arguments],
+                env=environment | variables,
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+                check=False,
+            )
+
+        brew = self.server.root.resolve() / "brew"
+        keg = self.installed_copy(brew / "Cellar/frame/1.2.3/bin/frame")
+        upgraded = update(keg)
+        self.assertEqual(upgraded.returncode, 0, upgraded.stderr)
+        self.assertEqual(upgraded.stderr, "Updating with: brew upgrade frame\n")
+        self.assertEqual(upgraded.stdout, "brew upgrade frame\n")
+        # The keg's own prefix owns it, ahead of whichever brew is first on PATH.
+        (brew / "bin").mkdir()
+        (brew / "bin/brew").symlink_to(tools / "brew")
+        upgraded = update(keg)
+        self.assertEqual(
+            upgraded.stderr, f"Updating with: {brew}/bin/brew upgrade frame\n"
+        )
+        pinned = update(keg, "--version", "v1.2.3")
+        self.assertEqual(pinned.returncode, 1)
+        self.assertIn("Homebrew installs only the latest release", pinned.stderr)
+        self.assertEqual(pinned.stdout, "")
+
+        data = self.server.root / "mise data"
+        tool = self.installed_copy(
+            data / "installs/github-phongndo-frame/1.2.3/bin/frame"
+        )
+        upgraded = update(tool, MISE_DATA_DIR=str(data))
+        self.assertEqual(upgraded.returncode, 0, upgraded.stderr)
+        self.assertEqual(
+            upgraded.stderr, "Updating with: mise upgrade github:phongndo/frame\n"
+        )
+        self.assertEqual(upgraded.stdout, "mise upgrade github:phongndo/frame\n")
+        pinned = update(tool, "--version", "v1.2.3", MISE_DATA_DIR=str(data))
+        self.assertEqual(pinned.returncode, 1)
+        self.assertIn("mise use -g github:phongndo/frame@1.2.3", pinned.stderr)
+        missing = update(tool, MISE_DATA_DIR=str(data), PATH="/nonexistent")
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn(
+            "could not run mise: No such file or directory. Run it yourself:\n"
+            "  mise upgrade github:phongndo/frame\n",
+            missing.stderr,
+        )
 
     def test_interactive_new_bare_launch_detach_and_attach_restore_the_terminal(
         self,
