@@ -362,18 +362,22 @@ class OuterAttentionMuxTest(unittest.TestCase):
         # It also rings the bell, which terminals without OSC 777 still present.
         self.emit(session, background, b"\x1b]777;notify;Build;done\x1b\\")
         client.expect_raw(b"\x1b]777;notify;notify: jobs x - Build;done\x1b\\\x07")
-        self.emit(session, background, b"\x1b]9;plain body\x07")
-        client.expect_raw(b"\x1b]777;notify;notify: jobs x;plain body\x1b\\")
 
-        # Notifications before forwarding coalesce into the Pane's latest. The body is bounded,
-        # and control characters never reach the outer terminal.
-        burst = b"".join(b"\x1b]9;first %d\x07" % index for index in range(3))
+        # Notifications before forwarding coalesce into the Pane's latest. The burst stays well
+        # within one PTY read, so no frame can be presented between its notifications.
+        burst = b"".join(b"\x1b]9;first %d\x07" % index for index in range(2))
+        self.emit(session, background, burst + b"\x1b]9;plain body\x07")
+        client.expect_raw(b"\x1b]777;notify;notify: jobs x;plain body\x1b\\")
+        self.assertNotIn(b"first", client.process.output_tail)
+
+        # The body is bounded, and control characters never reach the outer terminal. Darwin PTYs
+        # deliver about 1 KiB per read, so a frame can be presented within this write; an earlier
+        # notification in it could spend the last burst token and delay this one by a refill.
         # The emitter repeats the filler: Darwin limits a canonical input line to 1 KiB.
-        body_text = " ".join(((burst + b"\x1b]9;\xc2\x9d").hex(), "78*2000", "07"))
+        body_text = " ".join((b"\x1b]9;\xc2\x9d".hex(), "78*2000", "07"))
         self.emit(session, background, b"", hex_text=body_text)
         client.expect_raw(b"notify: jobs x;??" + b"x" * 1022 + b"\x1b\\")
         client.drain(0.2)
-        self.assertNotIn(b"first 0", client.process.output_tail)
         self.assertNotIn(b"\xc2\x9d", client.process.output_tail)
 
         # Without notification forwarding, a notification only rings the outer bell.
