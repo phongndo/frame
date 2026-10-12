@@ -177,7 +177,8 @@ and merge groups restore without writing. Local lane equivalents live in [script
 
 The [Distribution workflow](../.github/workflows/distribution.yml) builds Release packages for
 the supported platforms, runs the native and real-mux suites, then tests installation outside the
-build environment. It also installs the generated Homebrew formula on every supported platform.
+build environment. It also installs the generated Homebrew formula on every supported platform and
+checks that `frame update` hands that installation to `brew upgrade`.
 The package includes CMake's complete install tree and dependency license notices.
 
 To reproduce packaging on macOS:
