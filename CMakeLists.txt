@@ -343,10 +343,23 @@ target_link_libraries(
   PRIVATE frame_daemon frame_diagnostic frame_platform frame_protocol
 )
 
+# Install-method classification is pure, separated so unit tests can link it without the CLI.
+add_library(frame_install_method STATIC src/app/install_method.cpp)
+frame_internal_target(frame_install_method)
+target_link_libraries(frame_install_method PRIVATE frame_api)
+
 add_library(frame_app STATIC src/app/application.cpp src/app/proc.cpp src/app/update.cpp)
 frame_internal_target(frame_app)
 target_link_libraries(
-  frame_app PRIVATE frame_api frame_client frame_daemon frame_extension frame_platform frame_terminal
+  frame_app
+  PRIVATE
+    frame_api
+    frame_client
+    frame_daemon
+    frame_extension
+    frame_install_method
+    frame_platform
+    frame_terminal
 )
 
 # Compatibility aggregate for existing tests and embedders. New internal code should depend on the
@@ -417,6 +430,7 @@ if(FRAME_BUILD_TESTS)
     tests/host_input_parser_test.cpp
     tests/host_terminal_theme_test.cpp
     tests/input_router_test.cpp
+    tests/install_method_test.cpp
     tests/latency_trace_test.cpp
     tests/layout_test.cpp
     tests/outer_attention_test.cpp
@@ -436,6 +450,7 @@ if(FRAME_BUILD_TESTS)
       frame_diagnostic
       frame_extension
       frame_input
+      frame_install_method
       frame_protocol
       frame_runtime
       frame_ui_attention
