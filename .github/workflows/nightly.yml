@@ -64,9 +64,16 @@ jobs:
           cat > "$RUNNER_TEMP/nightly-notes.md" <<EOF
           Nightly build of tested main at $GITHUB_SHA. Expect breaking changes.
 
+          Install it with the install script:
+
           \`\`\`sh
           curl -fsSL https://raw.githubusercontent.com/phongndo/frame/main/scripts/install.sh | FRAME_VERSION=nightly sh
-          frame update --version nightly  # from an existing portable installation
+          \`\`\`
+
+          Or switch an existing install script installation to it:
+
+          \`\`\`sh
+          frame update --version nightly
           \`\`\`
 
           Run \`frame update\` to return to the latest stable release. See the

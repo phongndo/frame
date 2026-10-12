@@ -3,35 +3,48 @@
 Frame is a terminal multiplexer focused on performance and extensibility, built around a
 daemon-owned `Session -> Tab -> Pane` model.
 
-Frame is under active development. Early releases are available for testing on Apple Silicon
-macOS and ARM64/x86-64 Linux.
+Frame is under active development; early releases are intended for testing.
 
-## Install and try
+## Install
 
-Homebrew on macOS or Linux:
+Frame runs on Apple Silicon macOS 14 or newer and on ARM64 and x86-64 Linux.
+
+### Homebrew
 
 ```sh
 brew install phongndo/tap/frame
 ```
 
-Or use the portable installer, [mise](https://mise.jdx.dev/), or Nix:
+### Install script
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/phongndo/frame/main/scripts/install.sh | sh
+```
+
+### mise
+
+```sh
 mise use -g github:phongndo/frame
+```
+
+### Nix
+
+```sh
 nix profile add github:phongndo/frame
 ```
 
-Then start a Session in your project:
+Update with `frame update`, however you installed it. [Installation](docs/installation.md) covers
+platform details, pinning a version, nightly builds, and removal.
+
+## Start
+
+In your project directory, start a Session:
 
 ```sh
-cd your-project
 frame new --cwd "$PWD"
 ```
 
-Update with the method that installed Frame; portable installations use `frame update`. See
-[Installation](docs/installation.md) for platform requirements, nightly builds, and removal, and
-[Usage](docs/usage.md) for sessions, panes, and key bindings.
+[Usage](docs/usage.md) covers sessions, panes, key bindings, and building from source.
 
 ## Documentation
 
