@@ -19,7 +19,7 @@ Or use the portable installer, [mise](https://mise.jdx.dev/), or Nix:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/phongndo/frame/main/scripts/install.sh | sh
 mise use -g github:phongndo/frame
-nix profile install github:phongndo/frame
+nix profile add github:phongndo/frame
 ```
 
 Then start a Session in your project:
