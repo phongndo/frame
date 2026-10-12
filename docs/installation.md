@@ -8,15 +8,15 @@ Supported release targets are macOS 14 or newer on Apple Silicon, and glibc Linu
 x86-64 (tested on Ubuntu 24.04). Use the Nix package on NixOS. Python is only needed for optional
 Python extensions; the default interface and configuration helpers are native executables.
 
-| Method | Install | Update |
-| --- | --- | --- |
-| [Homebrew](#homebrew) | `brew install phongndo/tap/frame` | `brew upgrade frame` |
-| [Portable installer](#portable-installer) | `curl -fsSL …/install.sh \| sh` | `frame update` |
-| [mise](#mise) | `mise use -g github:phongndo/frame` | `mise upgrade github:phongndo/frame` |
-| [Nix](#nix) | `nix profile add github:phongndo/frame` | `nix profile upgrade frame` |
+| Method | Install |
+| --- | --- |
+| [Homebrew](#homebrew) | `brew install phongndo/tap/frame` |
+| [Install script](#install-script) | `curl -fsSL …/install.sh \| sh` |
+| [mise](#mise) | `mise use -g github:phongndo/frame` |
+| [Nix](#nix) | `nix profile add github:phongndo/frame` |
 
-Each method owns its installation; update Frame with the method that installed it. Close your Frame
-Sessions before updating. The daemon exits after its final Session ends.
+Each method owns its installation, and `frame update` updates Frame through whichever installed it;
+see [Updating](#updating).
 
 ## Homebrew
 
@@ -28,13 +28,13 @@ frame new --cwd "$PWD"
 The tap automatically picks up stable releases within six hours; dispatching its updater applies a
 release immediately.
 
-## Portable installer
+## Install script
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/phongndo/frame/main/scripts/install.sh | sh
 ```
 
-The installer requires `curl`, `tar`, and `shasum` or `sha256sum`. It verifies the archive's SHA-256,
+The script requires `curl`, `tar`, and `shasum` or `sha256sum`. It verifies the archive's SHA-256,
 installs a complete versioned directory under `~/.local/share/frame/releases`, and links the command
 at `~/.local/bin/frame`. Add that directory to your shell's PATH if needed:
 
@@ -43,20 +43,10 @@ export PATH="$HOME/.local/bin:$PATH"
 frame new --cwd "$PWD"
 ```
 
-Update to the latest stable release, or select a version, including a prerelease:
+Updates keep old release directories so an update cannot remove a running process's helpers;
+unused directories can be removed after all Sessions have closed.
 
-```sh
-frame update
-frame update --version v0.1.0
-```
-
-`frame update` reruns the installer shipped with the running release, using the directories it was
-installed with. It does nothing when the requested release is already installed, and refuses to
-manage Homebrew, Nix, mise, or source installations. Old installation directories are retained so
-an update cannot remove a running process's helpers; unused directories can be removed after all
-Sessions have closed.
-
-The installer accepts the same choice when piped:
+The script installs a selected version, including a prerelease, when piped:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/phongndo/frame/main/scripts/install.sh |
@@ -64,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/phongndo/frame/main/scripts/install
 ```
 
 `FRAME_INSTALL_DIR` changes the command directory and `FRAME_DATA_DIR` changes the release directory;
-both must be absolute paths. The installer refuses to replace an unrelated command or a Homebrew
+both must be absolute paths. The script refuses to replace an unrelated command or a Homebrew
 installation. `FRAME_RELEASE_BASE_URL` can point to a download mirror containing a selected release's
 archives and checksum files.
 
@@ -72,15 +62,15 @@ archives and checksum files.
 
 The [Nightly workflow](https://github.com/phongndo/frame/actions/workflows/nightly.yml) republishes
 the archives of the latest tested `main` commit daily as the `vnightly` prerelease. Expect breaking
-changes. Switch to it, and back to stable, with:
+changes. Switch an install script installation to it with:
 
 ```sh
 frame update --version nightly
-frame update
 ```
 
-For a new installation, set `FRAME_VERSION=nightly` on the installer. Each nightly update installs a
-fresh copy, even when `main` is unchanged.
+Return to the latest stable release with `frame update`. For a new installation, set
+`FRAME_VERSION=nightly` on the install script. Each nightly update installs a fresh copy, even when
+`main` is unchanged.
 
 ## mise
 
@@ -123,9 +113,40 @@ Home Manager packages:
 }
 ```
 
-Update with `nix flake update frame` and rebuild. From a source checkout, `nix build .#frame` builds
-the same package into `./result`, and `nix profile add .` installs it. The portable Linux
-archives target conventional glibc distributions; the Nix package carries its runtime closure.
+From a source checkout, `nix build .#frame` builds the same package into `./result`, and
+`nix profile add .` installs it. The portable Linux archives target conventional glibc
+distributions; the Nix package carries its runtime closure.
+
+## Updating
+
+Close your Frame Sessions first; the daemon exits after its final Session ends. Then run:
+
+```sh
+frame update
+```
+
+It prints the command it hands over to, then updates Frame through the method that installed it:
+
+| Method | `frame update` runs |
+| --- | --- |
+| Homebrew | `brew upgrade frame`, using the `brew` of the Homebrew prefix that holds Frame |
+| Install script | The script shipped with the running release, with the directories it was installed with |
+| mise | `mise upgrade github:phongndo/frame` |
+| Nix | `nix profile upgrade frame`, naming the profile element that holds the running Frame |
+
+The install script does nothing when the requested release is already installed. Only install
+script installations accept a version, including a prerelease or [nightly](#nightly-builds):
+
+```sh
+frame update --version v0.1.0
+```
+
+Homebrew installs only the latest release. For mise or Nix, `frame update --version` prints the
+command that pins a version with that tool instead.
+
+A Frame from a NixOS, nix-darwin, or Home Manager configuration, or from `nix run`, is not in your
+Nix profile. Update its flake input with `nix flake update frame` and rebuild. A Frame built from
+source is rebuilt from source.
 
 ## Preview builds
 
@@ -150,7 +171,7 @@ provide persistent downloads. The same layout is attached to every
 Close Frame Sessions first, then use the installing method:
 
 - Homebrew: `brew uninstall frame`
-- Portable installer: remove `~/.local/bin/frame` and `~/.local/share/frame`, or the directories
+- Install script: remove `~/.local/bin/frame` and `~/.local/share/frame`, or the directories
   selected by `FRAME_INSTALL_DIR` and `FRAME_DATA_DIR`
 - mise: `mise uninstall github:phongndo/frame` and remove it from your mise configuration
 - Nix: `nix profile remove frame`, or remove the flake input and package

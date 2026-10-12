@@ -84,7 +84,7 @@ jobs:
           frame new --cwd "$PWD"
           ```
 
-          A portable installer is available in the [installation guide](https://github.com/phongndo/frame/blob/main/docs/installation.md).
+          The [installation guide](https://github.com/phongndo/frame/blob/main/docs/installation.md) covers the install script, mise, and Nix. Update an installation with `frame update`.
 
           Early release for Apple Silicon macOS and ARM64/x86-64 glibc Linux.
           EOF

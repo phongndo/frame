@@ -139,4 +139,9 @@ jobs:
           brew style frame/release-test/frame
           brew install frame/release-test/frame
           brew test frame/release-test/frame
+          # The keg is current, so `frame update` hands off to a brew upgrade that changes nothing.
+          update="$("$(brew --prefix)/bin/frame" update 2>&1)"
+          printf '%s\n' "$update"
+          grep -qF 'Updating with:' <<<"$update"
+          grep -qF 'brew upgrade frame' <<<"$update"
           python3 scripts/ci/distribution.py smoke "$(brew --prefix)/bin/frame"
