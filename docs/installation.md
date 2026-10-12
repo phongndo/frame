@@ -13,7 +13,7 @@ Python extensions; the default interface and configuration helpers are native ex
 | [Homebrew](#homebrew) | `brew install phongndo/tap/frame` | `brew upgrade frame` |
 | [Portable installer](#portable-installer) | `curl -fsSL …/install.sh \| sh` | `frame update` |
 | [mise](#mise) | `mise use -g github:phongndo/frame` | `mise upgrade github:phongndo/frame` |
-| [Nix](#nix) | `nix profile install github:phongndo/frame` | `nix profile upgrade frame` |
+| [Nix](#nix) | `nix profile add github:phongndo/frame` | `nix profile upgrade frame` |
 
 Each method owns its installation; update Frame with the method that installed it. Close your Frame
 Sessions before updating. The daemon exits after its final Session ends.
@@ -103,10 +103,10 @@ Try it without installing:
 nix run github:phongndo/frame -- new --cwd "$PWD"
 ```
 
-Install it into your user profile:
+Install it into your user profile (Lix and Nix before 2.30 spell `add` as `install`):
 
 ```sh
-nix profile install github:phongndo/frame
+nix profile add github:phongndo/frame
 ```
 
 For declarative configuration, add the flake as an input and its package to your system or
@@ -124,7 +124,7 @@ Home Manager packages:
 ```
 
 Update with `nix flake update frame` and rebuild. From a source checkout, `nix build .#frame` builds
-the same package into `./result`, and `nix profile install .` installs it. The portable Linux
+the same package into `./result`, and `nix profile add .` installs it. The portable Linux
 archives target conventional glibc distributions; the Nix package carries its runtime closure.
 
 ## Preview builds
