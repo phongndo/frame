@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.30)
 
-project(frame VERSION 0.1.0 LANGUAGES C CXX)
+project(frame VERSION 0.2.0 LANGUAGES C CXX)
 
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(AppleClang|Clang)$")
   message(FATAL_ERROR "frame requires Clang or Apple Clang")
