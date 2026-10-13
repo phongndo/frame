@@ -5,7 +5,7 @@
 
 namespace frame {
 
-inline constexpr std::string_view version = "0.1.0";
+inline constexpr std::string_view version = "0.2.0";
 inline constexpr std::string_view private_protocol_version = "frame-private-2.9";
 
 } // namespace frame
