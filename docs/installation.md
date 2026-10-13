@@ -82,7 +82,9 @@ mise use -g github:phongndo/frame
 frame new --cwd "$PWD"
 ```
 
-Pin a version with `github:phongndo/frame@0.1.0`, including in a project's `mise.toml`.
+Pin a version with `github:phongndo/frame@0.1.0`, including in a project's `mise.toml`. mise takes
+a release as the latest once it's a day old, so for a day after a release it installs the one
+before; name the new version to get it sooner.
 
 ## Nix
 

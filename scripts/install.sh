@@ -44,8 +44,14 @@ if [ -e "$destination" ] || [ -L "$destination" ]; then
 fi
 
 if [ "$version" = latest ]; then
-  metadata=$(curl -fsSL https://api.github.com/repos/phongndo/frame/releases/latest) || fail "no latest release is available; set FRAME_VERSION to a published tag"
-  version=$(printf '%s\n' "$metadata" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  # GitHub redirects the latest release's page to its tag. Unlike the API, it isn't limited to 60
+  # requests an hour per address, which shared addresses such as CI runners exhaust.
+  latest=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/phongndo/frame/releases/latest) ||
+    fail "could not look up the latest release; set FRAME_VERSION to a published tag"
+  case "$latest" in
+    */releases/tag/*) version=${latest##*/} ;;
+    *) fail "no latest release is available; set FRAME_VERSION to a published tag" ;;
+  esac
 fi
 case "$version" in v*) tag=$version ;; *) tag="v$version" ;; esac
 # vnightly is the mutable prerelease built from tested main.
