@@ -25,7 +25,7 @@ brew install phongndo/tap/frame
 frame new --cwd "$PWD"
 ```
 
-The tap automatically picks up stable releases within six hours; dispatching its updater applies a
+The tap automatically picks up stable releases within an hour; dispatching its updater applies a
 release immediately.
 
 ## Install script

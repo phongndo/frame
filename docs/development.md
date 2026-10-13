@@ -196,13 +196,17 @@ exercises command symlinks, Lua configuration, a real detached Session, terminal
 reinstallation, a corrupt-download update, and `frame update` to the nightly channel using a
 private runtime directory.
 
-The [Release workflow](../.github/workflows/release.yml) runs manually from `main`, or from a
-matching version tag after CI. It requires successful `CI` and `Distribution` push runs for that
-exact commit on `main`, and publishes the already-tested archives without rebuilding. A draft
-becomes public only after all assets and the generated Homebrew formula have uploaded. Published
-release files are immutable; bump the version for a correction. Keep the version in
-[version.hpp](../include/frame/version.hpp), [CMake](../CMakeLists.txt), [flake.nix](../flake.nix),
-and [pyproject.toml](../pyproject.toml) consistent when bumping it.
+To release, bump the version and merge it. The [Release workflow](../.github/workflows/release.yml)
+runs on every push to `main` and acts when the version has no release yet: it waits for successful
+`CI` and `Distribution` push runs for that exact commit, and publishes the already-tested archives
+without rebuilding. If it fails, fix `main` and the next push retries, or run it manually from
+`main`. A draft becomes public only after all assets and the generated Homebrew formula have
+uploaded. Published release files are immutable; bump the version for a correction. Keep the
+version in [version.hpp](../include/frame/version.hpp), [CMake](../CMakeLists.txt),
+[flake.nix](../flake.nix), and [pyproject.toml](../pyproject.toml) consistent when bumping it.
+The [Installs workflow](../.github/workflows/installs.yml) then installs each stable release with
+Homebrew, the install script, mise, and Nix on every platform and checks the version; it runs
+again daily.
 
 The [Nightly workflow](../.github/workflows/nightly.yml) runs daily from `main` under the same
 qualification and republishes those tested archives, renamed by `distribution.py retag`, as the
@@ -210,7 +214,7 @@ mutable `vnightly` prerelease. Packages ship [install.sh](../scripts/install.sh)
 installation records its owner in `share/frame/installation`; `frame update` reruns that shipped
 installer, so keep the receipt format and installer environment compatible across releases.
 
-The Homebrew tap consumes the generated `frame.rb` from stable releases on its schedule. An optional
+The Homebrew tap consumes the generated `frame.rb` from stable releases hourly. An optional
 `HOMEBREW_TAP_TOKEN` repository secret can dispatch the updater immediately; publishing does not
 require that secret. User installation and update instructions live in [Installation](installation.md).
 
