@@ -1,10 +1,15 @@
 name: Release
 
+# Publishes the project version when a push to main carries one that has no release yet, once that
+# commit's CI and Distribution runs pass (see "Release packages" in docs/development.md). The
+# Installs workflow then installs it the ways the README documents. Dispatching it from main
+# retries a failed release.
+
 on:
   workflow_dispatch:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -15,9 +20,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  version:
+    name: Find an unreleased version
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Skip a released version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(python3 scripts/ci/distribution.py version)"
+          if [[ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" == false ]]; then
+            echo "$tag is already released; bump the version to release again."
+            exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: version
+    if: needs.version.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -25,26 +57,30 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Require tested source and matching version
+      - name: Wait for the commit's CI and Distribution runs
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
+          tag: ${{ needs.version.outputs.tag }}
         run: |
           set -euo pipefail
-          tag="$(python3 scripts/ci/distribution.py version)"
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            [[ "$GITHUB_REF_NAME" == "$tag" ]]
-          else
-            [[ "$GITHUB_REF" == refs/heads/main ]]
-          fi
+          [[ "$GITHUB_REF" == refs/heads/main ]]
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
           if existing="$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha 2>/dev/null)"; then
             [[ "$existing" == "$GITHUB_SHA" ]]
           fi
           for workflow in quality.yml distribution.yml; do
-            run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$GITHUB_SHA&status=success&per_page=100" \
-              --jq '.workflow_runs | map(select(.event == "push" and .head_branch == "main")) | first | .id // empty')"
-            [[ -n "$run_id" ]] || { echo "No successful $workflow push run for $GITHUB_SHA" >&2; exit 1; }
+            # The push that started this run started those too; give them time to appear.
+            run_id=
+            for _ in {1..30}; do
+              run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$GITHUB_SHA&event=push&branch=main" \
+                --jq '.workflow_runs[0].id // empty')"
+              [[ -n "$run_id" ]] && break
+              sleep 10
+            done
+            [[ -n "$run_id" ]] || { echo "No $workflow push run for $GITHUB_SHA" >&2; exit 1; }
+            gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 60 >/dev/null ||
+              { echo "$workflow failed for $GITHUB_SHA" >&2; exit 1; }
           done
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -90,6 +126,8 @@ jobs:
           EOF
           if draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null)"; then
             [[ "$draft" == true ]] || { echo 'Published releases are immutable; bump the version.' >&2; exit 1; }
+            # A draft left by an earlier attempt may have been for another commit.
+            gh release edit "$RELEASE_TAG" --target "$GITHUB_SHA"
           else
             gh release create "$RELEASE_TAG" --draft --target "$GITHUB_SHA" \
               --title "Frame $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
@@ -109,5 +147,10 @@ jobs:
           if [[ -n "$GH_TOKEN" ]]; then
             gh api --method POST repos/phongndo/homebrew-tap/dispatches -f event_type=frame-release
           else
-            echo 'The Homebrew tap updater will pick up this release on its next scheduled run.'
+            echo 'The Homebrew tap updater will pick up this release on its next hourly run.'
           fi
+
+  installs:
+    needs: [version, publish]
+    if: ${{ !contains(needs.version.outputs.tag, '-') }}
+    uses: ./.github/workflows/installs.yml
