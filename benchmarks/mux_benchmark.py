@@ -3746,28 +3746,20 @@ def lifecycle_churn(runtime: MuxRuntime, repetitions: int) -> dict[str, Any]:
         final_range = max(final) - min(final)
         preceding_p95 = percentile(preceding, 0.95)
         final_p95 = percentile(final, 0.95)
-        x_mean = (plateau_cycles - 1) / 2
-        denominator = sum((index - x_mean) ** 2 for index in range(plateau_cycles))
-        final_mean = sum(final) / len(final)
-        numerator = sum(
-            (index - x_mean) * (value - final_mean) for index, value in enumerate(final)
-        )
-        slope = numerator / denominator
+        # Daemon RSS moves in allocator steps of a few hundred KiB that land in any cycle, so a
+        # regression slope over one window measures where a step fell rather than growth.
         plateau = {
             "evaluated": True,
             "window_cycles": plateau_cycles,
             "preceding_p95_bytes": preceding_p95,
             "final_p95_bytes": final_p95,
             "final_range_bytes": final_range,
-            "final_slope_bytes_per_cycle": slope,
             "maximum_final_range_bytes": 2 * 1_024 * 1_024,
             "maximum_p95_growth_bytes": 1 * 1_024 * 1_024,
-            "maximum_final_slope_bytes_per_cycle": 4_096,
         }
         if (
             final_range > plateau["maximum_final_range_bytes"]
             or final_p95 > preceding_p95 + plateau["maximum_p95_growth_bytes"]
-            or slope > plateau["maximum_final_slope_bytes_per_cycle"]
         ):
             raise RuntimeError(
                 f"lifecycle churn did not return to a bounded memory plateau: {plateau}"
