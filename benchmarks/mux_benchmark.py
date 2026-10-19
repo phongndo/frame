@@ -33,7 +33,6 @@ if str(ROOT) not in sys.path:
 
 from benchmarks.benchmark_manifest import (  # noqa: E402
     ManifestError,
-    expected_failure,
     load_manifest,
     suite_workloads,
     unsupported_result,
@@ -4133,21 +4132,6 @@ def main() -> int:
         "lifecycle_churn": lifecycle_churn,
     }
 
-    def classify_failure(workload: str, result: dict[str, Any]) -> dict[str, Any]:
-        if result.get("status") != "failed":
-            return result
-        error = result.get("error")
-        reviewed = expected_failure(
-            manifest,
-            arguments.multiplexer,
-            workload,
-            error if isinstance(error, str) else "",
-        )
-        if reviewed is not None:
-            result["failure_expected"] = True
-            result["failure_classification"] = reviewed["classification"]
-        return result
-
     selected = [
         (scenario, operations[scenario["id"]]) for scenario in selected_scenarios
     ]
@@ -4157,7 +4141,7 @@ def main() -> int:
             workloads[name] = unsupported_result(scenario, arguments.multiplexer)
             continue
         if name != "attach_to_visible":
-            workloads[name] = classify_failure(name, run_operation(operation))
+            workloads[name] = run_operation(operation)
             continue
 
         attach_samples: list[int] = []
@@ -4178,7 +4162,7 @@ def main() -> int:
             attach_cpu.append(result["workload_cpu"])
             resources_after_workload = result.get("resources_after_workload")
         if attach_failure is not None:
-            workloads[name] = classify_failure(name, attach_failure)
+            workloads[name] = attach_failure
         else:
             workloads[name] = {
                 "status": "completed",

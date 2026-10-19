@@ -10,6 +10,8 @@ from typing import Any
 
 MANIFEST_SCHEMA = 4
 SUBJECTS = ("direct", "frame", "tmux", "zellij", "herdr")
+# Frame and its direct baseline gate a run; other multiplexers' failures are data.
+GATED_SUBJECTS = frozenset({"direct", "frame"})
 PROCESS_STATUSES = ("completed", "failed", "unsupported")
 
 
@@ -386,32 +388,6 @@ def validate_manifest(manifest: Any) -> None:
         value = practical.get(name)
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
             raise ManifestError(f"comparison_policy.{name} is invalid")
-    expected_failures = comparison_policy.get("expected_failures")
-    if not isinstance(expected_failures, list):
-        raise ManifestError("comparison_policy.expected_failures must be an array")
-    failure_signatures: list[tuple[str, str, str]] = []
-    workload_subjects = {
-        workload["id"]: set(workload["subjects"]) for workload in workloads
-    }
-    for index, failure in enumerate(expected_failures):
-        label = f"comparison_policy.expected_failures[{index}]"
-        if not isinstance(failure, dict):
-            raise ManifestError(f"{label} must be an object")
-        subject = _nonempty_string(failure.get("subject"), f"{label}.subject")
-        workload = _nonempty_string(failure.get("workload"), f"{label}.workload")
-        _nonempty_string(failure.get("classification"), f"{label}.classification")
-        error_contains = _nonempty_string(
-            failure.get("error_contains"), f"{label}.error_contains"
-        )
-        if subject not in SUBJECTS or workload not in workload_subjects:
-            raise ManifestError(f"{label} identifies an unknown subject or workload")
-        if subject not in workload_subjects[workload]:
-            raise ManifestError(f"{label} identifies an unsupported workload")
-        failure_signatures.append((subject, workload, error_contains))
-    if len(failure_signatures) != len(set(failure_signatures)):
-        raise ManifestError(
-            "comparison_policy.expected_failures contains duplicate signatures"
-        )
 
     budgets = manifest.get("regression_budgets")
     scope = budgets.get("scope") if isinstance(budgets, dict) else None
@@ -442,19 +418,6 @@ def validate_manifest(manifest: Any) -> None:
     endpoints = _string_list(lab.get("endpoints"), "terminal_lab.endpoints")
     if "input_to_photon_ns" not in endpoints:
         raise ManifestError("terminal_lab must define an input-to-photon endpoint")
-
-
-def expected_failure(
-    manifest: dict[str, Any], subject: str, workload: str, error: str
-) -> dict[str, str] | None:
-    for failure in manifest["comparison_policy"]["expected_failures"]:
-        if (
-            failure["subject"] == subject
-            and failure["workload"] == workload
-            and failure["error_contains"] in error
-        ):
-            return failure
-    return None
 
 
 def unsupported_result(workload: dict[str, Any], subject: str) -> dict[str, str]:

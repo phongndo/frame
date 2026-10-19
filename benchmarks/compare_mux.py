@@ -15,7 +15,12 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from benchmark_manifest import comparison_sampling, load_manifest, unsupported_result
+from benchmark_manifest import (
+    GATED_SUBJECTS,
+    comparison_sampling,
+    load_manifest,
+    unsupported_result,
+)
 from validate_report import (
     ReportError,
     validate_comparison_report,
@@ -78,13 +83,13 @@ def merge_blocks(blocks: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def block_failure(
-    destination: Path, identifier: str, block: int, error: Exception
+def capture_failure(
+    destination: Path, identifier: str, error: Exception
 ) -> dict[str, Any]:
-    """Record a sampled block that crashed or reported an unreviewed failure.
+    """Record a capture that crashed or produced a rejected report.
 
-    The subject's own failed result, when its fragment exists, keeps its error text and
-    classification; otherwise the harness error and stderr tail stand in for it.
+    The subject's own failed result, when its fragment exists, keeps its error text;
+    otherwise the harness error and stderr tail stand in for it.
     """
     try:
         stderr_tail = destination.with_suffix(".stderr.log").read_text(
@@ -106,7 +111,6 @@ def block_failure(
         recorded = None
     if isinstance(recorded, dict) and recorded.get("status") == "failed":
         failure.update(recorded)
-    failure["block"] = block
     return failure
 
 
@@ -378,7 +382,7 @@ def run_subject_workload(
         )
     elif subject != "direct":
         command.extend([f"--{subject}", str(executables[subject])])
-    if subject not in {"direct", "frame"}:
+    if subject not in GATED_SUBJECTS:
         command.append("--allow-workload-failures")
     with destination.with_suffix(".stderr.log").open("w", encoding="utf-8") as stderr:
         subprocess.run(
@@ -389,11 +393,7 @@ def run_subject_workload(
             stderr=stderr,
         )
     report = json.loads(destination.read_text(encoding="utf-8"))
-    validate_process_report(
-        report,
-        load_manifest(arguments.manifest),
-        allow_failures=subject not in {"direct", "frame"},
-    )
+    validate_process_report(report, load_manifest(arguments.manifest))
     return report
 
 
@@ -507,13 +507,12 @@ def main() -> int:
                 )
                 result = fragment["workloads"][workload["id"]]
             except (subprocess.SubprocessError, ValueError) as error:
-                if not sampled:
+                if subject in GATED_SUBJECTS and not sampled:
                     raise
-                # One failed block of many must not discard the other subjects and
-                # workloads: the pooled result fails and final validation rejects it.
-                result = block_failure(
-                    destination, workload["id"], task["block"], error
-                )
+                # Another multiplexer's failure is a recorded outcome. One failed Frame or
+                # direct block of many must not discard the other subjects and workloads:
+                # the pooled result fails and final validation rejects it.
+                result = capture_failure(destination, workload["id"], error)
             if fragment is not None:
                 environment_valid = environment_valid and bool(
                     fragment.get("environment_valid")
@@ -615,8 +614,8 @@ def main() -> int:
     arguments.output.write_text(encoded, encoding="utf-8")
     print(encoded, end="")
     try:
-        # Recorded block failures reach here; reviewed competitor failures remain valid.
-        validate_comparison_report(report, manifest, allow_failures=True)
+        # Recorded Frame and direct block failures are rejected here.
+        validate_comparison_report(report, manifest)
     except ReportError as error:
         print(
             f"comparison report {arguments.output} failed validation: {error}; "

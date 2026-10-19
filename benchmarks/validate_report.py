@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from benchmark_manifest import (
+    GATED_SUBJECTS,
     ManifestError,
     comparison_sampling,
-    expected_failure,
     load_manifest,
     workload_map,
 )
@@ -114,10 +114,12 @@ def validate_process_report(
     report: dict[str, Any],
     manifest: dict[str, Any],
     *,
-    allow_failures: bool,
     sampled_blocks: dict[str, tuple[int, int]] | None = None,
 ) -> None:
     """Validate one subject report.
+
+    A Frame or direct workload failure invalidates the report; another multiplexer's failure
+    is a recorded outcome.
 
     sampled_blocks maps comparison-sampled workload IDs to (blocks, repetitions per block).
     Only comparison reports pass it; every other report keeps its report-wide count.
@@ -173,25 +175,9 @@ def validate_process_report(
                 raise ReportError(f"unsupported workload {identifier} was not explicit")
             continue
         if status == "failed":
-            error = result.get("error")
-            if not allow_failures:
-                raise ReportError(f"workload {identifier} failed: {error}")
-            reviewed = expected_failure(
-                manifest,
-                subject,
-                identifier,
-                error if isinstance(error, str) else "",
-            )
-            if reviewed is None:
+            if subject in GATED_SUBJECTS:
                 raise ReportError(
-                    f"{subject} workload {identifier} has an unreviewed failure: {error}"
-                )
-            if (
-                result.get("failure_expected") is not True
-                or result.get("failure_classification") != reviewed["classification"]
-            ):
-                raise ReportError(
-                    f"workload {identifier} omitted its reviewed failure classification"
+                    f"workload {identifier} failed: {result.get('error')}"
                 )
             continue
         if status != "completed":
@@ -281,7 +267,7 @@ def validate_process_report(
 
 
 def validate_comparison_report(
-    report: dict[str, Any], manifest: dict[str, Any], *, allow_failures: bool
+    report: dict[str, Any], manifest: dict[str, Any]
 ) -> None:
     if report.get("schema") != COMPARISON_SCHEMA:
         raise ReportError(f"comparison report must use schema {COMPARISON_SCHEMA}")
@@ -356,12 +342,7 @@ def validate_comparison_report(
             if isinstance(repetitions, int)
             else None
         )
-        validate_process_report(
-            result,
-            manifest,
-            allow_failures=allow_failures,
-            sampled_blocks=sampled_blocks,
-        )
+        validate_process_report(result, manifest, sampled_blocks=sampled_blocks)
         if result.get("multiplexer") != "direct" or sampled_blocks is None:
             continue
         for identifier, control in controls.items():
@@ -400,7 +381,6 @@ def main() -> int:
     parser.add_argument("--process", type=Path)
     parser.add_argument("--comparison", type=Path)
     parser.add_argument("--micro", type=Path)
-    parser.add_argument("--allow-failures", action="store_true")
     arguments = parser.parse_args()
     if (
         sum(
@@ -413,17 +393,9 @@ def main() -> int:
     try:
         manifest = load_manifest(arguments.manifest)
         if arguments.process is not None:
-            validate_process_report(
-                load_object(arguments.process),
-                manifest,
-                allow_failures=arguments.allow_failures,
-            )
+            validate_process_report(load_object(arguments.process), manifest)
         elif arguments.comparison is not None:
-            validate_comparison_report(
-                load_object(arguments.comparison),
-                manifest,
-                allow_failures=arguments.allow_failures,
-            )
+            validate_comparison_report(load_object(arguments.comparison), manifest)
         else:
             assert arguments.micro is not None
             validate_micro_report(load_object(arguments.micro))

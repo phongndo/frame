@@ -1190,33 +1190,7 @@
     "practical_effect_thresholds": {
       "minimum_relative_change": 0.05,
       "minimum_latency_change_ns": 50000
-    },
-    "expected_failures": [
-      {
-        "subject": "zellij",
-        "workload": "blocked_pty",
-        "classification": "subject_backpressure_disconnect",
-        "error_contains": "lost connection"
-      },
-      {
-        "subject": "herdr",
-        "workload": "blocked_pty",
-        "classification": "subject_input_loss_under_backpressure",
-        "error_contains": "__FRAME_PTY_FAILED__"
-      },
-      {
-        "subject": "herdr",
-        "workload": "blocked_pty",
-        "classification": "subject_input_stall_under_backpressure",
-        "error_contains": "PTY write timed out"
-      },
-      {
-        "subject": "zellij",
-        "workload": "blocked_pty",
-        "classification": "subject_backpressure_disconnect",
-        "error_contains": "Received empty unknown from server"
-      }
-    ]
+    }
   },
   "suites": {
     "comparison": [

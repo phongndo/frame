@@ -74,9 +74,9 @@ Samples within a block are correlated, so the direct-baseline confidence interva
 blocks, and direct-control drift pairs each block's own before and after controls. A block that
 crashes or fails is recorded with its error, fragment, and stderr tail; its subject's pooled result
 fails, and the remaining blocks and workloads still run. The comparison then writes the report and
-validates it, so an unreviewed failure exits nonzero after the evidence is saved. Other workloads
-still stop at their first unreviewed failure. Validation requires every declared block in pooled
-results and direct after-controls. Gate and extension captures ignore `comparison_sampling` and
+validates it, so a Frame or direct failure exits nonzero after the evidence is saved. Other Frame
+and direct workloads still stop at their first failure. Validation requires every declared block in
+pooled results and direct after-controls. Gate and extension captures ignore `comparison_sampling` and
 keep one repetition count per report.
 
 `interactive_open_loop` uses this because each 120 Hz key arrives after the probe, client, daemon,
@@ -116,8 +116,9 @@ any subject-side resize coalescing delay. Per-subject trigger bindings and inter
 manifest.
 
 Reports retain raw distributions, source/manifest identity, executable SHA-256 values, and failures
-or unsupported capabilities as outcomes rather than samples. Cross-subject validation admits only
-failure signatures reviewed in the manifest; new adapter/competitor failures fail validation.
+or unsupported capabilities as outcomes rather than samples. Only Frame and the direct control gate
+a comparison. Another multiplexer's failure, including a crashed or rejected capture, is recorded
+with its error and the run continues; scheduled CI reports it as a warning.
 Each comparison attempt retains its execution order, raw per-workload reports, and subprocess
 stderr in a unique run directory beside the requested output (`NAME.fragments/run-*`), including
 when capture or validation fails. The scheduled benchmark artifact includes these fragments.

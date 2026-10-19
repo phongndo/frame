@@ -100,8 +100,21 @@ python3 benchmarks/compare_mux.py \
   --output "${comparison_output}" >/dev/null
 python3 benchmarks/validate_report.py \
   --manifest "${manifest}" \
-  --comparison "${comparison_output}" \
-  --allow-failures
+  --comparison "${comparison_output}"
+# Validation rejects Frame and direct failures, so the rest belong to other multiplexers: warn only.
+python3 - "${comparison_output}" <<'PY'
+import json
+import sys
+
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+for result in report["results"]:
+    for workload, outcome in result["workloads"].items():
+        if outcome["status"] == "failed":
+            error = str(outcome.get("error") or "no error recorded")[:1000]
+            for character, escaped in (("%", "%25"), ("\r", "%0D"), ("\n", "%0A")):
+                error = error.replace(character, escaped)
+            print(f"::warning title={result['multiplexer']} {workload} failed::{error}")
+PY
 
 printf 'benchmark reports:\n  %s\n  %s\n  %s\n  %s\n' \
   "${output}" "${mux_output}" "${profile_output}" "${comparison_output}"

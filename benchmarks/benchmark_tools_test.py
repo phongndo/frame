@@ -23,9 +23,10 @@ from unittest import mock
 
 from annotate_micro_report import git_metadata
 from benchmark_manifest import (
+    GATED_SUBJECTS,
+    SUBJECTS,
     ManifestError,
     comparison_sampling,
-    expected_failure,
     load_manifest,
     suite_workloads,
     unsupported_result,
@@ -893,7 +894,7 @@ class ComparisonEvidenceTest(unittest.TestCase):
                 destination = args[-1]
                 destination.write_text(json.dumps(failed), encoding="utf-8")
                 fragments.append(destination)
-                raise ValueError("unreviewed failure: PTY write timed out")
+                raise ValueError("rejected report: PTY write timed out")
 
             with (
                 mock.patch("sys.argv", arguments),
@@ -1001,7 +1002,7 @@ class ComparisonEvidenceTest(unittest.TestCase):
         status, report, _ = self.sampled_comparison()
 
         self.assertEqual(status, 0)
-        validate_comparison_report(report, manifest, allow_failures=False)
+        validate_comparison_report(report, manifest)
         order = [
             task
             for task in report["execution_order"]
@@ -1090,7 +1091,7 @@ class ComparisonEvidenceTest(unittest.TestCase):
                 destination.write_text(
                     json.dumps({"workloads": {identifier: failed}}), encoding="utf-8"
                 )
-                return ReportError("zellij workload has an unreviewed failure")
+                return ReportError("zellij report failed validation")
             return None
 
         status, report, stderr = self.sampled_comparison(fail)
@@ -1123,7 +1124,64 @@ class ComparisonEvidenceTest(unittest.TestCase):
             results["frame"]["workloads"]["warm_scroll"]["status"], "completed"
         )
         with self.assertRaisesRegex(ReportError, sampled["id"]):
-            validate_comparison_report(report, manifest, allow_failures=True)
+            validate_comparison_report(report, manifest)
+
+    def test_other_multiplexer_failures_never_fail_the_comparison(self) -> None:
+        manifest, sampled, blocks, _ = self.sampled_workload()
+
+        def fail(
+            subject: str, identifier: str, block: int, destination: Path
+        ) -> Exception | None:
+            if (subject, identifier) == ("zellij", "warm_scroll"):
+                # An unsampled capture that crashes before writing its report.
+                destination.with_suffix(".stderr.log").write_text(
+                    "zellij lost connection", encoding="utf-8"
+                )
+                return subprocess.CalledProcessError(1, ["mux_benchmark.py"])
+            if (subject, identifier, block) == ("herdr", sampled["id"], 1):
+                return ReportError("herdr report failed validation")
+            return None
+
+        status, report, stderr = self.sampled_comparison(fail)
+
+        self.assertEqual(status, 0, stderr)
+        validate_comparison_report(report, manifest)
+        results = {result["multiplexer"]: result for result in report["results"]}
+        crashed = results["zellij"]["workloads"]["warm_scroll"]
+        self.assertEqual(crashed["status"], "failed")
+        self.assertIn("CalledProcessError", crashed["error"])
+        self.assertIn("lost connection", crashed["stderr_tail"])
+        pooled = results["herdr"]["workloads"][sampled["id"]]
+        self.assertEqual(pooled["status"], "failed")
+        self.assertIn("herdr report failed validation", pooled["error"])
+        self.assertEqual(pooled["completed_blocks"], blocks - 1)
+        self.assertEqual(
+            results["zellij"]["workloads"][sampled["id"]]["status"], "completed"
+        )
+        self.assertEqual(
+            results["frame"]["workloads"]["warm_scroll"]["status"], "completed"
+        )
+
+    def test_only_frame_and_direct_failures_invalidate_a_report(self) -> None:
+        manifest, _, _, _ = self.sampled_workload()
+        _, report, _ = self.sampled_comparison()
+        failed = {"status": "failed", "error": "probe timeout"}
+        for result in report["results"]:
+            subject = result["multiplexer"]
+            single = {
+                **result,
+                "scenario_ids": ["warm_scroll"],
+                "workloads": {"warm_scroll": failed},
+            }
+            with self.subTest(subject=subject):
+                if subject in GATED_SUBJECTS:
+                    with self.assertRaisesRegex(ReportError, "failed: probe timeout"):
+                        validate_process_report(single, manifest)
+                else:
+                    validate_process_report(single, manifest)
+        self.assertEqual(
+            {result["multiplexer"] for result in report["results"]}, set(SUBJECTS)
+        )
 
     def test_block_bootstrap_widens_plateaued_confidence(self) -> None:
         baseline = [[10] * 100 for _ in range(5)]
@@ -1174,13 +1232,13 @@ class ComparisonEvidenceTest(unittest.TestCase):
             "workloads": {sampled["id"]: frame["workloads"][sampled["id"]]},
         }
         with self.assertRaisesRegex(ReportError, "expected 1 or 2"):
-            validate_process_report(standalone, manifest, allow_failures=False)
+            validate_process_report(standalone, manifest)
         unsampled = copy.deepcopy(frame)
         warm = unsampled["workloads"]["warm_scroll"]
         warm["repetitions"] = 4
         warm["key_to_outer_bytes"]["samples_ns"] *= 2
         with self.assertRaisesRegex(ReportError, "expected 1 or 2"):
-            validate_process_report(unsampled, manifest, allow_failures=False)
+            validate_process_report(unsampled, manifest)
 
     def test_comparison_validation_requires_every_declared_block(self) -> None:
         manifest, sampled, blocks, scale = self.sampled_workload()
@@ -1225,11 +1283,11 @@ class ComparisonEvidenceTest(unittest.TestCase):
                 document = copy.deepcopy(report)
                 corrupt(select(document))
                 with self.assertRaisesRegex(ReportError, message):
-                    validate_comparison_report(document, manifest, allow_failures=True)
+                    validate_comparison_report(document, manifest)
         failed_after = copy.deepcopy(report)
         after(failed_after).update(status="failed", error="probe timeout")
         with self.assertRaisesRegex(ReportError, "after-control .* probe timeout"):
-            validate_comparison_report(failed_after, manifest, allow_failures=True)
+            validate_comparison_report(failed_after, manifest)
 
     def test_a_failed_block_fails_the_pooled_workload(self) -> None:
         completed = {
@@ -1663,50 +1721,6 @@ class BenchmarkManifestTest(unittest.TestCase):
             [1, 2, 4, 8, 16],
         )
         self.assertEqual(manifest["deterministic_budgets"]["status"], "reviewed")
-
-    def test_only_reviewed_subject_failures_are_expected(self) -> None:
-        manifest = load_manifest()
-
-        reviewed = expected_failure(
-            manifest,
-            "herdr",
-            "blocked_pty",
-            "peer emitted __FRAME_PTY_FAILED__ after input loss",
-        )
-        reviewed_stall = expected_failure(
-            manifest,
-            "herdr",
-            "blocked_pty",
-            "PTY write timed out after 1167360/1902592 bytes",
-        )
-        reviewed_disconnect = expected_failure(
-            manifest,
-            "zellij",
-            "blocked_pty",
-            "Received empty unknown from server",
-        )
-        unreviewed = expected_failure(
-            manifest,
-            "herdr",
-            "tui_redraw",
-            "native probe failed",
-        )
-
-        self.assertEqual(
-            reviewed["classification"] if reviewed is not None else None,
-            "subject_input_loss_under_backpressure",
-        )
-        self.assertEqual(
-            reviewed_stall["classification"] if reviewed_stall is not None else None,
-            "subject_input_stall_under_backpressure",
-        )
-        self.assertEqual(
-            reviewed_disconnect["classification"]
-            if reviewed_disconnect is not None
-            else None,
-            "subject_backpressure_disconnect",
-        )
-        self.assertIsNone(unreviewed)
 
 
 class TerminalLabContractTest(unittest.TestCase):
