@@ -9,6 +9,7 @@ from pathlib import Path
 
 from tests.mux.test_extension_runtime import HELLO, PROC, PROC_RESULT, ExtensionPeer
 from tests.support.mux_harness import (
+    Client,
     FrameServer,
     SessionState,
     wait_for_process_exit,
@@ -378,17 +379,31 @@ frame.keymap.set("prefix", "z", "test.hosttimeout")
             (Path(self.server.environment["HOME"]) / "picker-context.json").read_text()
         )
 
+    def expect_picker_closed(self, context: dict, client: Client | None = None) -> None:
+        client = client or self.client
+        wait_for_process_exit(context["pid"])
+
+        # Exit precedes the daemon observing the disconnect, and keys still go to the
+        # focused picker Surface until then. Type only after a frame has dropped it.
+        def closed() -> bool | None:
+            client.drain(0.002)
+            return True if "Frame picker" not in client.screen_text() else None
+
+        wait_until(
+            "the picker Surface to close", closed, diagnostics=client.diagnostics
+        )
+
     def test_host_crash_revokes_its_running_picker(self) -> None:
         context = self.open_picker()
         self.client.prefix("x")
-        wait_for_process_exit(context["pid"])
+        self.expect_picker_closed(context)
         self.client.send("HOST_CRASH_RECOVERED\n")
         self.session.pane().expect_output("HOST_CRASH_RECOVERED")
 
     def test_host_watchdog_revokes_its_running_picker(self) -> None:
         context = self.open_picker()
         self.client.prefix("z")
-        wait_for_process_exit(context["pid"])
+        self.expect_picker_closed(context)
         self.client.send("HOST_TIMEOUT_RECOVERED\n")
         self.session.pane().expect_output("HOST_TIMEOUT_RECOVERED")
 
@@ -439,7 +454,7 @@ frame.keymap.set("prefix", "z", "test.hosttimeout")
             (Path(server.environment["HOME"]) / "picker-context.json").read_text()
         )
         client.send("q")
-        wait_for_process_exit(context["pid"])
+        self.expect_picker_closed(context, client)
         client.send("NO_STATUS_INPUT\n")
         session.pane().expect_output("NO_STATUS_INPUT")
 
@@ -482,7 +497,7 @@ frame.keymap.set("prefix", "z", "test.hosttimeout")
         context = self.open_picker()
         self.assertEqual(context["session"], self.session.state().id)
         self.client.send("q")
-        wait_for_process_exit(context["pid"])
+        self.expect_picker_closed(context)
         self.client.send("AFTER_PICKER\n")
         self.session.pane().expect_output("AFTER_PICKER")
 
