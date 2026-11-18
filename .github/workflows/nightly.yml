@@ -75,6 +75,7 @@ jobs:
             exit 1
           fi
           python3 scripts/ci/distribution.py retag --tag vnightly --output build/nightly "${archives[@]}"
+          [[ "$(find build/nightly -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 3 ]]
           (cd build/nightly && sha256sum --check ./*.sha256)
 
       - name: Publish mutable prerelease
